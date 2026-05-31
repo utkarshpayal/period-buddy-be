@@ -64,7 +64,15 @@ const userSchema = new mongoose.Schema(
     isProfileComplete: {
       type: Boolean,
       default: false,
-    }
+    }, 
+    tokenEarned: {
+      type: Number,
+      default: 0,
+    },
+    streakCount: {
+      type: Number,
+      default: 0,
+  },
   },
   {
     timestamps: true,
