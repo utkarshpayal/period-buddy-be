@@ -51,6 +51,7 @@ Standard error wrapper:
 | Video reels | `/api/reels/*` |
 | Health concerns encyclopedia | `/api/health-issues/*` |
 | Hygiene and sexual wellbeing | `/api/wellbeing/*` |
+| Content management web app | `/api/content/*` |
 
 ## Health
 
@@ -210,6 +211,171 @@ Response:
   }
 }
 ```
+
+## Content Management Web App
+
+All `/api/content/*` routes require an admin bearer token. They are intended for the `period-buddy-content` web app and wrap the app's content models behind one API surface.
+
+Supported `type` values:
+
+`blog`, `video`, `question-answer`, `health-issue`, `wellbeing`
+
+Aliases are accepted for common names, for example `reel`/`reels` for `video` and `qa` for `question-answer`.
+
+### GET `/api/content/types`
+
+Returns supported content types and their status values.
+
+### GET `/api/content/summary`
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "total": 42,
+    "byType": {
+      "blog": { "total": 10, "published": 8, "draft": 2 },
+      "video": { "total": 12, "active": 11, "inactive": 1 },
+      "question-answer": { "total": 20, "published": 18, "draft": 2 }
+    }
+  }
+}
+```
+
+### GET `/api/content?type=all&status=all&search=period&page=1&limit=20`
+
+Query params:
+
+`type`: `all`, `blog`, `video`, `question-answer`, `health-issue`, `wellbeing`
+
+`status`: `all`, `published`, `draft`, `active`, `inactive`
+
+`category`, `tag`/`tags`, `resourceType`, and `featured` are supported where relevant.
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "type": "all",
+    "items": [
+      {
+        "id": "contentId",
+        "type": "blog",
+        "title": "Period Myths Debunked",
+        "status": "draft",
+        "imageUrl": "https://..."
+      }
+    ],
+    "pagination": { "page": 1, "limit": 20, "total": 42, "pages": 3 },
+    "totalsByType": { "blog": 10, "video": 12, "question-answer": 20 }
+  }
+}
+```
+
+### POST `/api/content/:type`
+
+Creates content for the selected type. `status` can be `published`/`active` or `draft`/`inactive`.
+
+Blog payload:
+
+```json
+{
+  "title": "Period Myths Debunked",
+  "content": "Full article",
+  "excerpt": "Short summary",
+  "coverImageUrl": "https://...",
+  "category": "Education",
+  "tags": ["periods"],
+  "author": "Period Buddy Team",
+  "readTimeMinutes": 5,
+  "status": "published"
+}
+```
+
+Video payload:
+
+```json
+{
+  "title": "Cycle Phases",
+  "thumbnailUrl": "https://...",
+  "videoUrl": "https://cdn.example.com/video.mp4",
+  "creatorName": "Dr. Sarah",
+  "duration": "0:15",
+  "category": "Wellness",
+  "status": "active",
+  "pollQuestion": "Next topic?",
+  "pollOptions": [{ "optionId": "o1", "topic": "Stress", "votes": 0 }]
+}
+```
+
+Q&A payload:
+
+```json
+{
+  "question": "Is brown period blood normal?",
+  "answer": "Dark brown blood is often normal at the start or end of a period...",
+  "category": "periods",
+  "tags": ["brown blood", "periods"],
+  "status": "published"
+}
+```
+
+Health issue payload:
+
+```json
+{
+  "title": "PCOS / PCOD",
+  "category": "Hormonal Equilibrium",
+  "summary": "Short clinical summary",
+  "guide": "Detailed guide",
+  "imageUrl": "https://...",
+  "status": "active"
+}
+```
+
+Wellbeing payload:
+
+```json
+{
+  "type": "hygiene",
+  "title": "Period Product Guide",
+  "summary": "Compare pads, tampons, cups, discs, and underwear.",
+  "extendedGuide": ["Change products regularly"],
+  "status": "active"
+}
+```
+
+### GET `/api/content/:type/:idOrSlug`
+
+Returns one content item. Blogs and Q&A can be fetched by slug as well as id.
+
+### PUT `/api/content/:type/:id`
+
+Updates content. Uses the same fields as create payloads. Blogs also accept `imageUrl` as an alias for `coverImageUrl`; videos accept `videoUrl` as an alias for `directMp4Url`.
+
+### PATCH `/api/content/:type/:id/publish`
+
+Sets visibility/status.
+
+```json
+{ "status": "published" }
+```
+
+or
+
+```json
+{ "status": "draft" }
+```
+
+For videos, health issues, and wellbeing resources use `active` or `inactive`.
+
+### DELETE `/api/content/:type/:id`
+
+Soft-deletes the item by making it draft/inactive.
 
 ## Cycle Tracker
 
