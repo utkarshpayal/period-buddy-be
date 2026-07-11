@@ -2,6 +2,24 @@ import { body, validationResult } from 'express-validator';
 import { ERROR_MESSAGES } from '../constants/errorMessages.js';
 import { validatePasswordStrength } from '../utils/password.js';
 
+const normalizeProfilePicture = (value) => {
+  if (value === undefined || value === null || typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(trimmedValue);
+    return ['http:', 'https:'].includes(url.protocol) ? trimmedValue : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 export const validateSignup = [
   body('firstName')
     .trim()
@@ -98,10 +116,7 @@ export const validateOnboarding = [
     .withMessage(ERROR_MESSAGES.INVALID_PHONE),
 
   body('profilePicture')
-    .optional({ nullable: true, checkFalsy: true })
-    .trim()
-    .isURL()
-    .withMessage('Profile picture must be a valid URL'),
+    .customSanitizer(normalizeProfilePicture),
 ];
 
 export const validateProfileUpdate = [
@@ -134,10 +149,7 @@ export const validateProfileUpdate = [
     .withMessage('Invalid gender'),
 
   body('profilePicture')
-    .optional({ nullable: true, checkFalsy: true })
-    .trim()
-    .isURL()
-    .withMessage('Profile picture must be a valid URL'),
+    .customSanitizer(normalizeProfilePicture),
 ];
 
 export const validateChangePassword = [

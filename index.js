@@ -43,20 +43,14 @@ connectDB().then(() => {
    Security & Core Middleware
 ────────────────────────────────────────────────────────── */
 app.use(helmet());
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || '*')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-
-app.use(cors({
-  origin(origin, callback) {
-    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    return callback(new Error('Not allowed by CORS'));
-  },
+const corsOptions = {
+  origin: true,
   credentials: true,
-}));
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // Rate limiting — 100 requests per 15 minutes per IP
 const limiter = rateLimit({

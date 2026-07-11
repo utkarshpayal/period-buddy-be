@@ -118,15 +118,17 @@ export const login = async (req, res, next) => {
 export const onboarding = async (req, res, next) => {
   try {
     const { dateOfBirth, gender, phone, profilePicture } = req.body;
+    const updates = {
+      isProfileComplete: true,
+      ...pickDefined(
+        { dateOfBirth, gender, phone, profilePicture },
+        ['dateOfBirth', 'gender', 'phone', 'profilePicture']
+      ),
+    };
+
     const updatedUser = await User.findByIdAndUpdate(
       req.userId,
-      {
-        isProfileComplete: true,
-        dateOfBirth,
-        gender,
-        phone,
-        profilePicture,
-      },
+      updates,
       {
         new: true,
         runValidators: true,
