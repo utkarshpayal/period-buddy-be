@@ -2,6 +2,8 @@
 
 A production-ready authentication system built with Node.js, Express, and MongoDB.
 
+Full production API reference for all Period Buddy frontend features is available in [API_DOCUMENTATION.md](./API_DOCUMENTATION.md).
+
 ## Features
 
 - ✅ User Registration (Signup)

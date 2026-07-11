@@ -3,23 +3,27 @@
 import express from "express";
 
 import {
+  askQuestion,
   createQuestionAnswer,
   getAllQuestionAnswers,
   getSingleQuestionAnswer,
   updateQuestionAnswer,
   deleteQuestionAnswer,
 } from "../controllers/questionAnswerController.js";
+import { authenticate, authorize, optionalAuth } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-router.post("/", createQuestionAnswer);
+router.post("/", authenticate, authorize('admin'), createQuestionAnswer);
 
-router.get("/", getAllQuestionAnswers);
+router.get("/", optionalAuth, getAllQuestionAnswers);
 
-router.get("/:id", getSingleQuestionAnswer);
+router.post("/ask", optionalAuth, askQuestion);
 
-router.put("/:id", updateQuestionAnswer);
+router.get("/:id", optionalAuth, getSingleQuestionAnswer);
 
-router.delete("/:id", deleteQuestionAnswer);
+router.put("/:id", authenticate, authorize('admin'), updateQuestionAnswer);
+
+router.delete("/:id", authenticate, authorize('admin'), deleteQuestionAnswer);
 
 export default router;

@@ -1,59 +1,68 @@
+import logger from '../utils/logger.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
-import { ERROR_MESSAGES } from '../constants/errorMessages.js';
+
+export const notFound = (req, res, next) => {
+  const error = new Error(`Not found - ${req.originalUrl}`);
+  res.status(HTTP_STATUS.NOT_FOUND);
+  next(error);
+};
 
 export const errorHandler = (err, req, res, next) => {
-  console.error('Error:', err);
+  let statusCode = err.statusCode || (res.statusCode !== 200 ? res.statusCode : HTTP_STATUS.INTERNAL_SERVER_ERROR);
 
-  // Mongoose validation error
+  // Log the error with context
+  logger.error('http_error', {
+    action: 'http_error',
+    statusCode,
+    method: req.method,
+    url: req.originalUrl,
+    userId: req.userId || null,
+    errorMessage: err.message,
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
+  });
+
+  // Mongoose validation errors
   if (err.name === 'ValidationError') {
-    const messages = Object.values(err.errors).map((error) => error.message);
-    return res.status(HTTP_STATUS.UNPROCESSABLE_ENTITY).json({
+    const messages = Object.values(err.errors).map((e) => e.message);
+    return res.status(400).json({
       success: false,
-      statusCode: HTTP_STATUS.UNPROCESSABLE_ENTITY,
+      statusCode: HTTP_STATUS.BAD_REQUEST,
       message: 'Validation Error',
       errors: messages,
     });
   }
 
-  // Mongoose duplicate key error
+  if (err.name === 'CastError') {
+    statusCode = HTTP_STATUS.BAD_REQUEST;
+    return res.status(statusCode).json({
+      success: false,
+      statusCode,
+      message: `Invalid ${err.path || 'identifier'}`,
+    });
+  }
+
+  // Mongoose duplicate key
   if (err.code === 11000) {
-    const field = Object.keys(err.keyPattern)[0];
-    return res.status(HTTP_STATUS.CONFLICT).json({
+    const field = Object.keys(err.keyValue || {})[0];
+    return res.status(409).json({
       success: false,
       statusCode: HTTP_STATUS.CONFLICT,
-      message: `${field} already exists`,
+      message: `${field ? `${field} already exists` : 'Duplicate entry'}`,
     });
   }
 
   // JWT errors
   if (err.name === 'JsonWebTokenError') {
-    return res.status(HTTP_STATUS.UNAUTHORIZED).json({
-      success: false,
-      statusCode: HTTP_STATUS.UNAUTHORIZED,
-      message: ERROR_MESSAGES.INVALID_TOKEN,
-    });
+    return res.status(401).json({ success: false, statusCode: HTTP_STATUS.UNAUTHORIZED, message: 'Invalid token' });
   }
-
   if (err.name === 'TokenExpiredError') {
-    return res.status(HTTP_STATUS.UNAUTHORIZED).json({
-      success: false,
-      statusCode: HTTP_STATUS.UNAUTHORIZED,
-      message: ERROR_MESSAGES.TOKEN_EXPIRED,
-    });
+    return res.status(401).json({ success: false, statusCode: HTTP_STATUS.UNAUTHORIZED, message: 'Token expired' });
   }
 
-  // Default error
-  res.status(err.statusCode || HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+  return res.status(statusCode).json({
     success: false,
-    statusCode: err.statusCode || HTTP_STATUS.INTERNAL_SERVER_ERROR,
-    message: err.message || ERROR_MESSAGES.INTERNAL_SERVER_ERROR,
-  });
-};
-
-export const notFound = (req, res) => {
-  res.status(HTTP_STATUS.NOT_FOUND).json({
-    success: false,
-    statusCode: HTTP_STATUS.NOT_FOUND,
-    message: 'Route not found',
+    statusCode,
+    message: err.message || 'Internal Server Error',
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   });
 };

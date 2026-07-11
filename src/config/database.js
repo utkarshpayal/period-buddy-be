@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import logger from '../utils/logger.js';
 
 export const connectDB = async () => {
   try {
@@ -7,10 +8,10 @@ export const connectDB = async () => {
       useUnifiedTopology: true,
     });
 
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
+    logger.info('mongodb_connected', { action: 'mongodb_connected', host: conn.connection.host });
     return conn;
   } catch (error) {
-    console.error(`Error connecting to MongoDB: ${error.message}`);
+    logger.error('mongodb_connection_error', { action: 'mongodb_connection_error', error: error.message });
     process.exit(1);
   }
 };
@@ -18,8 +19,8 @@ export const connectDB = async () => {
 export const disconnectDB = async () => {
   try {
     await mongoose.disconnect();
-    console.log('MongoDB Disconnected');
+    logger.info('mongodb_disconnected', { action: 'mongodb_disconnected' });
   } catch (error) {
-    console.error(`Error disconnecting from MongoDB: ${error.message}`);
+    logger.error('mongodb_disconnect_error', { action: 'mongodb_disconnect_error', error: error.message });
   }
 };

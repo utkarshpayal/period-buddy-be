@@ -2,56 +2,150 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
+import rateLimit from 'express-rate-limit';
 import { connectDB } from './src/config/database.js';
+import { seedDatabase } from './src/utils/seeder.js';
 import { errorHandler, notFound } from './src/middleware/errorHandler.js';
+import httpLogger from './src/utils/httpLogger.js';
+import logger from './src/utils/logger.js';
+import { authenticate } from './src/middleware/authMiddleware.js';
+import { logout as logoutController } from './src/controllers/authController.js';
+
+// Route imports
 import authRoutes from './src/routes/authRoutes.js';
-import questionAnswerRoutes from "./src/routes/questionAnswerRoutes.js";
+import questionAnswerRoutes from './src/routes/questionAnswerRoutes.js';
+import cycleRoutes from './src/routes/cycleRoutes.js';
+import habitRoutes from './src/routes/habitRoutes.js';
+import consultationRoutes from './src/routes/consultationRoutes.js';
+import partnerRoutes from './src/routes/partnerRoutes.js';
+import healthIssueRoutes from './src/routes/healthIssueRoutes.js';
+import blogRoutes from './src/routes/blogRoutes.js';
+import communityRoutes from './src/routes/communityRoutes.js';
+import nominationRoutes from './src/routes/nominationRoutes.js';
+import wellbeingRoutes from './src/routes/wellbeingRoutes.js';
+import reelRoutes from './src/routes/reelRoutes.js';
+import forestRoutes from './src/routes/forestRoutes.js';
+import buddyRoutes from './src/routes/buddyRoutes.js';
+
 // Load environment variables
 dotenv.config();
 
-// Initialize Express app
 const app = express();
 
-// Connect to MongoDB
-connectDB();
+/* ──────────────────────────────────────────────────────────
+   Database
+────────────────────────────────────────────────────────── */
+connectDB().then(() => {
+  seedDatabase();
+});
 
-// Middleware
+/* ──────────────────────────────────────────────────────────
+   Security & Core Middleware
+────────────────────────────────────────────────────────── */
 app.use(helmet());
-app.use(cors());
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '*')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+}));
+
+// Rate limiting — 100 requests per 15 minutes per IP
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests, please try again later.' },
+});
+app.use('/api', limiter);
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Health check route
+// HTTP request logging (Morgan → Winston)
+app.use(httpLogger);
+
+/* ──────────────────────────────────────────────────────────
+   Health Check
+────────────────────────────────────────────────────────── */
 app.get('/health', (req, res) => {
   res.status(200).json({
     success: true,
-    message: 'Server is running',
+    message: 'Period Buddy API is running',
+    version: '2.0.0',
     timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
   });
 });
 
-// API Routes
+/* ──────────────────────────────────────────────────────────
+   API Routes
+────────────────────────────────────────────────────────── */
 app.use('/api/auth', authRoutes);
+app.post('/api/logout', authenticate, logoutController);
+app.use('/api/questions', questionAnswerRoutes);
+app.use('/api/cycle', cycleRoutes);
+app.use('/api/habits', habitRoutes);
+app.use('/api/consultation', consultationRoutes);
+app.use('/api/partner', partnerRoutes);
+app.use('/api/health-issues', healthIssueRoutes);
+app.use('/api/blogs', blogRoutes);
+app.use('/api/community', communityRoutes);
+app.use('/api/nominations', nominationRoutes);
+app.use('/api/wellbeing', wellbeingRoutes);
+app.use('/api/reels', reelRoutes);
+app.use('/api/forest', forestRoutes);
+app.use('/api/buddies', buddyRoutes);
 
-
-app.use("/api/questions", questionAnswerRoutes);
-// 404 handler
+/* ──────────────────────────────────────────────────────────
+   Error Handling
+────────────────────────────────────────────────────────── */
 app.use(notFound);
-
-// Error handling middleware (should be last)
 app.use(errorHandler);
 
-// Start server
+/* ──────────────────────────────────────────────────────────
+   Start Server
+────────────────────────────────────────────────────────── */
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV}`);
+  logger.info('server_started', {
+    action: 'server_started',
+    port: PORT,
+    environment: process.env.NODE_ENV || 'development',
+    pid: process.pid,
+  });
 });
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (err) => {
-  console.error('Unhandled Rejection:', err);
+/* ──────────────────────────────────────────────────────────
+   Process Error Handlers
+────────────────────────────────────────────────────────── */
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('unhandled_rejection', { action: 'unhandled_rejection', reason: String(reason) });
   process.exit(1);
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('uncaught_exception', { action: 'uncaught_exception', error: error.message, stack: error.stack });
+  process.exit(1);
+});
+
+process.on('SIGTERM', () => {
+  logger.info('process_sigterm', { action: 'process_sigterm', message: 'SIGTERM received, shutting down gracefully' });
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  logger.info('process_sigint', { action: 'process_sigint', message: 'SIGINT received, shutting down gracefully' });
+  process.exit(0);
 });
 
 export default app;

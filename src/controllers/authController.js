@@ -1,9 +1,14 @@
 import User from '../models/User.js';
+import CycleLog from '../models/CycleLog.js';
+import CycleSettings from '../models/CycleSettings.js';
+import Habit from '../models/Habit.js';
 import { comparePassword } from '../utils/password.js';
 import { generateToken } from '../utils/jwt.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants/errorMessages.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
+import { pickDefined, todayDateKey } from '../utils/apiHelpers.js';
+import { computeCyclePredictions } from '../utils/cycle.js';
 
 /**
  * User Signup Controller
@@ -113,7 +118,6 @@ export const login = async (req, res, next) => {
 export const onboarding = async (req, res, next) => {
   try {
     const { dateOfBirth, gender, phone, profilePicture } = req.body;
-    console.log('Onboarding data received:', { dateOfBirth, gender, phone, profilePicture }, req.userId);
     const updatedUser = await User.findByIdAndUpdate(
       req.userId,
       {
@@ -130,11 +134,7 @@ export const onboarding = async (req, res, next) => {
     );
 
     if (!updatedUser) {
-      return sendResponse(
-        res,
-        HTTP_STATUS.NOT_FOUND,
-        "User not found"
-      );
+      return sendError(res, HTTP_STATUS.NOT_FOUND, ERROR_MESSAGES.USER_NOT_FOUND);
     }
 
     return sendResponse(
@@ -174,18 +174,18 @@ export const getProfile = async (req, res, next) => {
  */
 export const updateProfile = async (req, res, next) => {
   try {
-    const { firstName, lastName, phone, dateOfBirth, gender, profilePicture } = req.body;
+    const updates = pickDefined(req.body, [
+      'firstName',
+      'lastName',
+      'phone',
+      'dateOfBirth',
+      'gender',
+      'profilePicture',
+    ]);
 
     const user = await User.findByIdAndUpdate(
       req.userId,
-      {
-        firstName,
-        lastName,
-        phone,
-        dateOfBirth,
-        gender,
-        profilePicture,
-      },
+      updates,
       { new: true, runValidators: true }
     );
 
@@ -268,9 +268,49 @@ export const deleteAccount = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.UNAUTHORIZED, 'Password is incorrect');
     }
 
-    await User.findByIdAndDelete(req.userId);
+    user.isActive = false;
+    user.email = `deleted_${user._id}_${user.email}`;
+    await user.save();
 
     return sendResponse(res, HTTP_STATUS.OK, 'Account deleted successfully');
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Home/dashboard summary used by the Period Buddy landing dashboard.
+ */
+export const getDashboardSummary = async (req, res, next) => {
+  try {
+    const [user, settings, logs, habits] = await Promise.all([
+      User.findById(req.userId),
+      CycleSettings.findOne({ userId: req.userId }),
+      CycleLog.find({ userId: req.userId }).sort({ dateKey: -1 }).limit(90),
+      Habit.find({ userId: req.userId, isActive: true }),
+    ]);
+
+    if (!user) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, ERROR_MESSAGES.USER_NOT_FOUND);
+    }
+
+    const trackedDays = logs.filter((log) =>
+      log.note?.trim() || (log.symptoms || []).length > 0 || (log.flow && log.flow !== 'none')
+    ).length;
+    const today = todayDateKey();
+    const completedHabitsToday = habits.filter((habit) => habit.completedDates?.includes(today)).length;
+    const forestHealth = Math.min(100, Math.max(45, 55 + trackedDays * 4 + completedHabitsToday * 2));
+    const predictions = settings ? computeCyclePredictions(settings) : null;
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Dashboard summary fetched', {
+      user: user.toJSON(),
+      tokens: user.tokenEarned || 0,
+      trackedDays,
+      forestHealth,
+      activeHabits: habits.length,
+      predictions,
+      recentLogs: logs.slice(0, 7),
+    });
   } catch (error) {
     next(error);
   }

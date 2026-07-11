@@ -72,7 +72,16 @@ const userSchema = new mongoose.Schema(
     streakCount: {
       type: Number,
       default: 0,
-  },
+    },
+    savedCommunityPosts: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'CommunityPost',
+    }],
+    reportedCommunityPosts: [{
+      postId: { type: mongoose.Schema.Types.ObjectId, ref: 'CommunityPost' },
+      reason: { type: String, trim: true, maxlength: 300 },
+      reportedAt: { type: Date, default: Date.now },
+    }],
   },
   {
     timestamps: true,

@@ -3,7 +3,7 @@ export const sendResponse = (res, statusCode, message, data = null, token = null
     success: statusCode < 400,
     statusCode,
     message,
-    ...(data && { data }),
+    ...(data !== undefined && { data }),
     ...(token && { token }),
   };
 
@@ -24,7 +24,7 @@ export const sendValidationError = (res, errors) => {
     statusCode: 422,
     message: 'Validation failed',
     errors: errors.map((error) => ({
-      field: error.param,
+      field: error.path || error.param,
       message: error.msg,
     })),
   });

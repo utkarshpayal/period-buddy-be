@@ -78,6 +78,91 @@ export const validateLogin = [
     .withMessage('Password is required'),
 ];
 
+export const validateOnboarding = [
+  body('dateOfBirth')
+    .notEmpty()
+    .withMessage('Date of birth is required')
+    .isISO8601()
+    .withMessage('Invalid date format'),
+
+  body('gender')
+    .notEmpty()
+    .withMessage('Gender is required')
+    .isIn(['male', 'female', 'other', 'prefer_not_to_say'])
+    .withMessage('Invalid gender'),
+
+  body('phone')
+    .optional({ nullable: true, checkFalsy: true })
+    .trim()
+    .isMobilePhone()
+    .withMessage(ERROR_MESSAGES.INVALID_PHONE),
+
+  body('profilePicture')
+    .optional({ nullable: true, checkFalsy: true })
+    .trim()
+    .isURL()
+    .withMessage('Profile picture must be a valid URL'),
+];
+
+export const validateProfileUpdate = [
+  body('firstName')
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 50 })
+    .withMessage('First name must be between 2 and 50 characters'),
+
+  body('lastName')
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 50 })
+    .withMessage('Last name must be between 2 and 50 characters'),
+
+  body('phone')
+    .optional({ nullable: true, checkFalsy: true })
+    .trim()
+    .isMobilePhone()
+    .withMessage(ERROR_MESSAGES.INVALID_PHONE),
+
+  body('dateOfBirth')
+    .optional({ nullable: true, checkFalsy: true })
+    .isISO8601()
+    .withMessage('Invalid date format'),
+
+  body('gender')
+    .optional({ nullable: true, checkFalsy: true })
+    .isIn(['male', 'female', 'other', 'prefer_not_to_say'])
+    .withMessage('Invalid gender'),
+
+  body('profilePicture')
+    .optional({ nullable: true, checkFalsy: true })
+    .trim()
+    .isURL()
+    .withMessage('Profile picture must be a valid URL'),
+];
+
+export const validateChangePassword = [
+  body('currentPassword')
+    .notEmpty()
+    .withMessage('Current password is required'),
+
+  body('newPassword')
+    .notEmpty()
+    .withMessage('New password is required')
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters')
+    .custom((value) => {
+      if (!validatePasswordStrength(value)) {
+        throw new Error(ERROR_MESSAGES.INVALID_PASSWORD_FORMAT);
+      }
+      return true;
+    }),
+];
+
+export const validateDeleteAccount = [
+  body('password')
+    .notEmpty()
+    .withMessage('Password is required'),
+];
 
 export const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
@@ -87,7 +172,7 @@ export const handleValidationErrors = (req, res, next) => {
       statusCode: 422,
       message: 'Validation failed',
       errors: errors.array().map((error) => ({
-        field: error.param,
+        field: error.path || error.param,
         message: error.msg,
       })),
     });

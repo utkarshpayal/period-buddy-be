@@ -6,16 +6,16 @@ import User from '../models/User.js';
 
 export const authenticate = async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
+    const [scheme, token] = req.headers.authorization?.split(' ') || [];
 
-    if (!token) {
+    if (scheme !== 'Bearer' || !token) {
       return sendError(res, HTTP_STATUS.UNAUTHORIZED, ERROR_MESSAGES.NO_TOKEN);
     }
 
     const decoded = verifyToken(token);
     const user = await User.findById(decoded.userId);
 
-    if (!user) {
+    if (!user || !user.isActive) {
       return sendError(res, HTTP_STATUS.UNAUTHORIZED, ERROR_MESSAGES.USER_NOT_FOUND);
     }
 
@@ -41,12 +41,12 @@ export const authorize = (...roles) => {
 
 export const optionalAuth = async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
+    const [scheme, token] = req.headers.authorization?.split(' ') || [];
 
-    if (token) {
+    if (scheme === 'Bearer' && token) {
       const decoded = verifyToken(token);
       const user = await User.findById(decoded.userId);
-      if (user) {
+      if (user && user.isActive) {
         req.user = user;
         req.userId = decoded.userId;
       }
