@@ -12,7 +12,82 @@ import {
   pickDefined,
 } from '../utils/apiHelpers.js';
 
-const DEFAULT_COMPANION_REPLY = 'That is a valid thing to wonder about. Try keywords like brown blood, period cramps, hygiene, intimacy, discharge, PMS, contraception, or cycle tracking so I can give a more specific answer.';
+const DEFAULT_COMPANION_REPLY = 'That is a valid thing to wonder about. I do not have a precise match yet, but you can ask in everyday words about brown blood, period cramps, hygiene, discharge, PMS, contraception, cycle tracking, or intimacy.';
+const COMPANION_DISCLAIMER = 'Nura Companion shares general education and is not a diagnosis or emergency service.';
+const MAX_QUESTION_LENGTH = 500;
+const SUGGESTED_QUESTIONS = [
+  'Is brown period blood normal?',
+  'Why are cramps worse this month?',
+  'How should I clean during my period?',
+  'Can PMS affect mood?',
+];
+const STOP_WORDS = new Set([
+  'about',
+  'after',
+  'again',
+  'also',
+  'because',
+  'before',
+  'does',
+  'doing',
+  'during',
+  'from',
+  'have',
+  'help',
+  'into',
+  'just',
+  'like',
+  'mean',
+  'more',
+  'much',
+  'normal',
+  'period',
+  'periods',
+  'should',
+  'that',
+  'their',
+  'there',
+  'this',
+  'when',
+  'where',
+  'with',
+  'what',
+  'why',
+  'will',
+  'your',
+]);
+const URGENT_PATTERNS = [
+  /\b(self[-\s]?harm|suicid(e|al)|kill myself)\b/i,
+  /\b(bleeding during pregnancy|pregnant and bleeding)\b/i,
+  /\b(soaking|fills?)\b.*\b(pad|pads|tampon|tampons)\b/i,
+  /\b(faint|fainting|dizzy|dizziness)\b/i,
+  /\b(fever|high temperature)\b.*\b(pelvic|period|cramp|pain)\b/i,
+  /\b(severe|unbearable|worst)\b.*\b(pain|cramp|cramps)\b/i,
+];
+const URGENT_COMPANION_REPLY = 'This could need urgent help. If you are soaking pads quickly, feeling faint, have fever with pelvic pain, severe one-sided or unbearable pain, bleeding during pregnancy, or thoughts of self-harm, contact emergency care or a trusted local clinician now.';
+const QUESTION_CATEGORY_ALIASES = {
+  body: 'female_body',
+  cycle: 'tracking',
+  emergency: 'health',
+  female: 'female_body',
+  'female body': 'female_body',
+  fertility: 'fertility',
+  general: 'general',
+  health: 'health',
+  hygiene: 'hygiene',
+  intimacy: 'sexual_health',
+  mental: 'mental_health',
+  'mental health': 'mental_health',
+  ovulation: 'fertility',
+  period: 'periods',
+  periods: 'periods',
+  pms: 'symptoms',
+  sex: 'sexual_health',
+  'sexual health': 'sexual_health',
+  symptoms: 'symptoms',
+  tracking: 'tracking',
+  wellness: 'health',
+};
 
 const fallbackKnowledge = [
   {
@@ -37,6 +112,88 @@ const fallbackKnowledge = [
   },
 ];
 
+const normalizeQueryTerms = (query) => {
+  const normalized = query
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 3 && !STOP_WORDS.has(term));
+
+  return [...new Set(normalized)].slice(0, 8);
+};
+
+const hasUrgentPattern = (query) => URGENT_PATTERNS.some((pattern) => pattern.test(query));
+
+const scoreQuestionAnswer = (qa, query, terms) => {
+  const normalizedQuery = query.toLowerCase();
+  const question = String(qa.question || '').toLowerCase();
+  const answer = String(qa.answer || '').toLowerCase();
+  const shortAnswer = String(qa.shortAnswer || '').toLowerCase();
+  const tags = (qa.tags || []).join(' ').toLowerCase();
+  const haystack = `${question} ${shortAnswer} ${answer} ${tags}`;
+  let score = 0;
+
+  if (question.includes(normalizedQuery)) score += 80;
+  if (answer.includes(normalizedQuery)) score += 30;
+  if (shortAnswer.includes(normalizedQuery)) score += 25;
+
+  terms.forEach((term) => {
+    if (question.includes(term)) score += 12;
+    if (tags.includes(term)) score += 10;
+    if (shortAnswer.includes(term)) score += 6;
+    if (answer.includes(term)) score += 3;
+  });
+
+  if (terms.length > 1 && terms.every((term) => haystack.includes(term))) score += 12;
+  if (qa.isFeatured) score += 4;
+  score += Math.min(Number(qa.views || 0), 100) / 100;
+
+  return score;
+};
+
+const findBestQuestionAnswer = async (query) => {
+  const terms = normalizeQueryTerms(query);
+  const regexTerms = terms.length ? terms : [query].filter((term) => term.length >= 3);
+
+  if (!regexTerms.length) return null;
+
+  const termFilters = regexTerms.flatMap((term) => {
+    const regex = new RegExp(escapeRegex(term), 'i');
+
+    return [
+      { question: regex },
+      { answer: regex },
+      { shortAnswer: regex },
+      { tags: regex },
+    ];
+  });
+
+  const candidates = await QuestionAnswer.find({
+    isPublished: true,
+    $or: termFilters,
+  })
+    .sort({ isFeatured: -1, views: -1, updatedAt: -1 })
+    .limit(16);
+
+  const [best] = candidates
+    .map((qa) => ({ qa, score: scoreQuestionAnswer(qa, query, terms) }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  return best?.qa || null;
+};
+
+const findFallbackAnswer = (query) => {
+  const lowered = query.toLowerCase();
+  return fallbackKnowledge.find((entry) => entry.keywords.some((keyword) => lowered.includes(keyword)))?.answer || '';
+};
+
+const normalizeQuestionCategory = (value) => {
+  const normalized = String(value || 'general').trim().toLowerCase().replace(/[_-]+/g, ' ');
+  return QUESTION_CATEGORY_ALIASES[normalized] || normalized.replace(/\s+/g, '_');
+};
+
 const createUniqueSlug = async (question, existingId = null) => {
   const baseSlug = slugify(question, { lower: true, strict: true }).slice(0, 90) || `qa-${Date.now()}`;
   let slug = baseSlug;
@@ -55,10 +212,11 @@ const createUniqueSlug = async (question, existingId = null) => {
 
 export const createQuestionAnswer = async (req, res, next) => {
   try {
-    const { question, answer, category } = req.body;
+    const { question, answer } = req.body;
+    const category = normalizeQuestionCategory(req.body.category);
 
-    if (!question?.trim() || !answer?.trim() || !category) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'question, answer, and category are required');
+    if (!question?.trim() || !answer?.trim()) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'question and answer are required');
     }
 
     const slug = await createUniqueSlug(question);
@@ -66,6 +224,7 @@ export const createQuestionAnswer = async (req, res, next) => {
       ...req.body,
       question: question.trim(),
       answer: answer.trim(),
+      category,
       tags: normalizeStringArray(req.body.tags),
       symptoms: normalizeStringArray(req.body.symptoms),
       bodyPart: normalizeStringArray(req.body.bodyPart),
@@ -140,36 +299,42 @@ export const askQuestion = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'question is required');
     }
 
-    const qa = await QuestionAnswer.findOne({
-      isPublished: true,
-      $or: [
-        { question: { $regex: escapeRegex(query), $options: 'i' } },
-        { answer: { $regex: escapeRegex(query), $options: 'i' } },
-        { tags: { $in: query.split(/\s+/).map((term) => new RegExp(escapeRegex(term), 'i')) } },
-      ],
-    }).sort({ isFeatured: -1, views: -1 });
+    if (query.length > MAX_QUESTION_LENGTH) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, `question must be ${MAX_QUESTION_LENGTH} characters or fewer`);
+    }
 
-    let answer = qa?.answer || '';
-    if (!answer) {
-      const lowered = query.toLowerCase();
-      answer = fallbackKnowledge.find((entry) => entry.keywords.some((keyword) => lowered.includes(keyword)))?.answer
-        || DEFAULT_COMPANION_REPLY;
+    let qa = null;
+    let answer = '';
+    let source = 'fallback';
+
+    if (hasUrgentPattern(query)) {
+      answer = URGENT_COMPANION_REPLY;
+      source = 'urgent_safety';
+    } else {
+      qa = await findBestQuestionAnswer(query);
+      answer = qa?.answer || findFallbackAnswer(query) || DEFAULT_COMPANION_REPLY;
+      source = qa ? 'knowledge_base' : 'fallback';
     }
 
     if (qa) {
-      qa.views += 1;
+      qa.views = Number(qa.views || 0) + 1;
       await qa.save();
     }
 
+    let tokensAwarded = 0;
     if (req.userId) {
       await User.findByIdAndUpdate(req.userId, { $inc: { tokenEarned: 2 } });
+      tokensAwarded = 2;
     }
 
     return sendResponse(res, HTTP_STATUS.OK, 'Companion answer fetched', {
       question: query,
       answer,
-      source: qa ? 'knowledge_base' : 'fallback',
+      source,
       matchedQuestion: qa || null,
+      suggestedQuestions: SUGGESTED_QUESTIONS,
+      disclaimer: COMPANION_DISCLAIMER,
+      tokensAwarded,
     });
   } catch (error) {
     next(error);
@@ -186,7 +351,7 @@ export const getSingleQuestionAnswer = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Question not found');
     }
 
-    qa.views += 1;
+    qa.views = Number(qa.views || 0) + 1;
     await qa.save();
 
     return sendResponse(res, HTTP_STATUS.OK, 'Question answer fetched', qa);
@@ -229,6 +394,7 @@ export const updateQuestionAnswer = async (req, res, next) => {
     if (updates.question) {
       updates.slug = await createUniqueSlug(updates.question, req.params.id);
     }
+    if (updates.category !== undefined) updates.category = normalizeQuestionCategory(updates.category);
     ['bodyPart', 'gender', 'ageGroups', 'tags', 'symptoms', 'relatedProducts', 'sourceLinks'].forEach((field) => {
       if (updates[field] !== undefined) updates[field] = normalizeStringArray(updates[field]);
     });

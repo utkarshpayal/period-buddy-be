@@ -17,11 +17,33 @@ import { computeCyclePredictions } from '../utils/cycle.js';
  */
 export const signup = async (req, res, next) => {
   try {
-    const { firstName, lastName, email, password, phone, dateOfBirth, gender } = req.body;
+    const { firstName, lastName, email, password, phone, dateOfBirth, gender, role, adminCode, inviteCode, adminInviteCode } = req.body;
+    const requestedAdminCode = adminCode || inviteCode || adminInviteCode;
+    const validAdminCode = process.env.ADMIN_INVITE_CODE || 'utkarsh-admin';
+    const shouldCreateAdmin = role === 'admin' && requestedAdminCode === validAdminCode;
 
     // Check if user already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
+      if (shouldCreateAdmin && existingUser.role !== 'admin') {
+        existingUser.role = 'admin';
+        await existingUser.save();
+
+        const token = generateToken({
+          userId: existingUser._id,
+          email: existingUser.email,
+          role: existingUser.role,
+        });
+
+        return sendResponse(
+          res,
+          HTTP_STATUS.OK,
+          'Admin access granted successfully',
+          existingUser.toJSON(),
+          token
+        );
+      }
+
       return sendError(res, HTTP_STATUS.CONFLICT, ERROR_MESSAGES.EMAIL_ALREADY_EXISTS);
     }
 
@@ -34,6 +56,7 @@ export const signup = async (req, res, next) => {
       phone,
       dateOfBirth,
       gender,
+      role: shouldCreateAdmin ? 'admin' : 'user',
     });
 
     await user.save();

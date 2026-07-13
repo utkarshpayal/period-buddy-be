@@ -12,15 +12,57 @@ import {
   normalizeStringArray,
 } from '../utils/apiHelpers.js';
 
-const serializePost = (post, user) => {
+const ANONYMOUS_USER = { firstName: 'Anonymous', lastName: '', profilePicture: null };
+
+/**
+ * Resolve author for a post or comment:
+ * - If isAnonymous AND the requester is NOT the author → mask with ANONYMOUS_USER
+ * - If isAnonymous AND the requester IS the author → return real user + isOwn flag
+ * - If not anonymous → return real user as-is
+ */
+const resolveAuthor = (authorObj, authorId, requestingUserId) => {
+  const isOwn = String(authorId) === String(requestingUserId);
+  if (isOwn) return { ...((authorObj?.toObject ? authorObj.toObject() : authorObj) || {}), isOwn: true };
+  return ANONYMOUS_USER;
+};
+
+const serializePost = (post, user, requestingUserId) => {
   const object = post.toObject ? post.toObject() : post;
   const likedBy = object.likedBy || [];
   const savedPosts = user?.savedCommunityPosts || [];
 
+  // Resolve post author
+  const postAuthorId = object.userId?._id ?? object.userId;
+  const resolvedPostUser = object.isAnonymous
+    ? resolveAuthor(object.userId, postAuthorId, requestingUserId)
+    : (object.userId?.toObject ? object.userId.toObject() : object.userId);
+
+  // Resolve each comment's author
+  const comments = (object.comments || []).map((comment) => {
+    const commentAuthorId = comment.userId?._id ?? comment.userId;
+    const isCommentOwn = String(commentAuthorId) === String(requestingUserId);
+
+    let resolvedCommentUser;
+    if (comment.isAnonymous) {
+      // Anonymous comment: mask for others, reveal (with isOwn) for the author
+      resolvedCommentUser = isCommentOwn
+        ? { ...((comment.userId?.toObject ? comment.userId.toObject() : comment.userId) || {}), isOwn: true }
+        : ANONYMOUS_USER;
+    } else {
+      // Non-anonymous comment: show real user, but still attach isOwn for the author
+      const rawUser = comment.userId?.toObject ? comment.userId.toObject() : comment.userId;
+      resolvedCommentUser = isCommentOwn ? { ...(rawUser || {}), isOwn: true } : rawUser;
+    }
+
+    return { ...comment, userId: resolvedCommentUser };
+  });
+
   return {
     ...object,
     id: object._id,
-    commentsCount: object.comments?.length || 0,
+    userId: resolvedPostUser,
+    comments,
+    commentsCount: comments.length,
     likedByMe: likedBy.some((id) => String(id) === String(user?._id)),
     savedByMe: savedPosts.some((id) => String(id) === String(object._id)),
     likedBy: undefined,
@@ -45,13 +87,14 @@ export const getPosts = async (req, res, next) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(Number(limit))
-        .populate('userId', 'firstName lastName profilePicture'),
+        .populate('userId', 'firstName lastName profilePicture')
+        .populate('comments.userId', 'firstName lastName profilePicture'),
       CommunityPost.countDocuments(filter),
       User.findById(req.userId).select('savedCommunityPosts reportedCommunityPosts'),
     ]);
 
     return sendResponse(res, HTTP_STATUS.OK, 'Posts fetched', {
-      posts: posts.map((post) => serializePost(post, user)),
+      posts: posts.map((post) => serializePost(post, user, req.userId)),
       pagination: buildPagination({ page, limit, total }),
     });
   } catch (error) {
@@ -68,7 +111,7 @@ export const createPost = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Post content is required');
     }
 
-    const post = await CommunityPost.create({
+    const created = await CommunityPost.create({
       userId: req.userId,
       title,
       content: content.trim(),
@@ -80,16 +123,25 @@ export const createPost = async (req, res, next) => {
     logger.info('community_post_created', {
       action: 'community_post_created',
       userId: req.userId,
-      postId: post._id,
+      postId: created._id,
       category,
-      isAnonymous: post.isAnonymous,
+      isAnonymous: created.isAnonymous,
     });
 
-    return sendResponse(res, HTTP_STATUS.CREATED, 'Post created', post);
+    // Populate userId so serializePost can set isOwn:true for the creator
+    const [post, user] = await Promise.all([
+      CommunityPost.findById(created._id)
+        .populate('userId', 'firstName lastName profilePicture')
+        .populate('comments.userId', 'firstName lastName profilePicture'),
+      User.findById(req.userId).select('savedCommunityPosts reportedCommunityPosts'),
+    ]);
+
+    return sendResponse(res, HTTP_STATUS.CREATED, 'Post created', serializePost(post, user, req.userId));
   } catch (error) {
     next(error);
   }
 };
+
 
 /** GET /api/community/:id — Get single post */
 export const getPostById = async (req, res, next) => {
@@ -99,11 +151,13 @@ export const getPostById = async (req, res, next) => {
     }
 
     const [post, user] = await Promise.all([
-      CommunityPost.findOne({ _id: req.params.id, isActive: true }).populate('userId', 'firstName lastName profilePicture'),
+      CommunityPost.findOne({ _id: req.params.id, isActive: true })
+        .populate('userId', 'firstName lastName profilePicture')
+        .populate('comments.userId', 'firstName lastName profilePicture'),
       User.findById(req.userId).select('savedCommunityPosts reportedCommunityPosts'),
     ]);
     if (!post) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Post not found');
-    return sendResponse(res, HTTP_STATUS.OK, 'Post', serializePost(post, user));
+    return sendResponse(res, HTTP_STATUS.OK, 'Post', serializePost(post, user, req.userId));
   } catch (error) {
     next(error);
   }
@@ -147,17 +201,28 @@ export const addComment = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid post id');
     }
 
-    const post = await CommunityPost.findOne({ _id: req.params.id, isActive: true });
+    const [post, author] = await Promise.all([
+      CommunityPost.findOne({ _id: req.params.id, isActive: true }),
+      User.findById(req.userId).select('firstName lastName profilePicture'),
+    ]);
     if (!post) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Post not found');
+
+    const anonymous = normalizeBoolean(isAnonymous, true);
 
     post.comments.push({
       userId: req.userId,
       content: content.trim(),
-      isAnonymous: normalizeBoolean(isAnonymous, true),
+      isAnonymous: anonymous,
     });
     await post.save();
 
-    const comment = post.comments[post.comments.length - 1];
+    const comment = post.comments[post.comments.length - 1].toObject();
+
+    // Always return the real author info to the commenter (isOwn: true),
+    // even when the comment is anonymous — other users will see "Anonymous".
+    const resolvedUser = anonymous
+      ? { ...(author?.toObject ? author.toObject() : author), isOwn: true }
+      : (author?.toObject ? author.toObject() : author);
 
     logger.info('community_comment_added', {
       action: 'community_comment_added',
@@ -167,7 +232,7 @@ export const addComment = async (req, res, next) => {
     });
 
     return sendResponse(res, HTTP_STATUS.CREATED, 'Comment added', {
-      comment,
+      comment: { ...comment, userId: resolvedUser },
       commentsCount: post.comments.length,
     });
   } catch (error) {
@@ -260,3 +325,44 @@ export const reportPost = async (req, res, next) => {
     next(error);
   }
 };
+
+/** DELETE /api/community/:id/comment/:commentId — Delete own comment */
+export const deleteComment = async (req, res, next) => {
+  try {
+    const { id, commentId } = req.params;
+
+    if (!isValidObjectId(id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid post id');
+    }
+    if (!isValidObjectId(commentId)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid comment id');
+    }
+
+    const post = await CommunityPost.findOne({ _id: id, isActive: true });
+    if (!post) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Post not found');
+
+    const comment = post.comments.id(commentId);
+    if (!comment) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Comment not found');
+
+    if (String(comment.userId) !== String(req.userId)) {
+      return sendError(res, HTTP_STATUS.FORBIDDEN, 'You can only delete your own comments');
+    }
+
+    post.comments.pull({ _id: commentId });
+    await post.save();
+
+    logger.info('community_comment_deleted', {
+      action: 'community_comment_deleted',
+      userId: req.userId,
+      postId: id,
+      commentId,
+    });
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Comment deleted', {
+      commentsCount: post.comments.length,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+

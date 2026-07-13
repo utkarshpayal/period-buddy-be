@@ -19,6 +19,29 @@ import {
 
 const ACTIVE_STATUSES = new Set(['active', 'published', 'live', 'enabled']);
 const INACTIVE_STATUSES = new Set(['inactive', 'draft', 'unpublished', 'archived', 'disabled']);
+const QUESTION_CATEGORY_ALIASES = {
+  body: 'female_body',
+  cycle: 'tracking',
+  emergency: 'health',
+  female: 'female_body',
+  'female body': 'female_body',
+  fertility: 'fertility',
+  general: 'general',
+  health: 'health',
+  hygiene: 'hygiene',
+  intimacy: 'sexual_health',
+  mental: 'mental_health',
+  'mental health': 'mental_health',
+  ovulation: 'fertility',
+  period: 'periods',
+  periods: 'periods',
+  pms: 'symptoms',
+  sex: 'sexual_health',
+  'sexual health': 'sexual_health',
+  symptoms: 'symptoms',
+  tracking: 'tracking',
+  wellness: 'health',
+};
 
 const TYPE_ALIASES = {
   blog: 'blog',
@@ -56,6 +79,10 @@ const trimOrUndefined = (value) => {
 };
 
 const normalizeContentType = (value) => TYPE_ALIASES[String(value || '').trim().toLowerCase()] || null;
+const normalizeQuestionCategory = (value) => {
+  const normalized = String(value || 'general').trim().toLowerCase().replace(/[_-]+/g, ' ');
+  return QUESTION_CATEGORY_ALIASES[normalized] || normalized.replace(/\s+/g, '_');
+};
 
 const resolveStatusFilter = (status) => {
   if (!status || String(status).toLowerCase() === 'all') return { valid: true, value: null };
@@ -517,7 +544,7 @@ const createQuestionAnswer = async (body) => {
     ...body,
     question,
     answer,
-    category: trimOrUndefined(body.category) || 'general',
+    category: normalizeQuestionCategory(body.category),
     bodyPart: normalizeStringArray(body.bodyPart),
     gender: normalizeStringArray(body.gender),
     ageGroups: normalizeStringArray(body.ageGroups),
@@ -701,6 +728,7 @@ const buildQuestionAnswerUpdates = async (body, id) => {
     updates.question = question;
     updates.slug = await createUniqueSlug(QuestionAnswer, question, id);
   }
+  if (updates.category !== undefined) updates.category = normalizeQuestionCategory(updates.category);
   ['bodyPart', 'gender', 'ageGroups', 'tags', 'symptoms', 'relatedProducts', 'sourceLinks'].forEach((field) => {
     if (updates[field] !== undefined) updates[field] = normalizeStringArray(updates[field]);
   });

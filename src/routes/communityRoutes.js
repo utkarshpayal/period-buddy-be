@@ -60,4 +60,11 @@ router.post('/:id/comment', authenticate, communityController.addComment);
  */
 router.delete('/:id', authenticate, communityController.deletePost);
 
+/**
+ * @route   DELETE /api/community/:id/comment/:commentId
+ * @desc    Delete own comment from a post
+ * @access  Private
+ */
+router.delete('/:id/comment/:commentId', authenticate, communityController.deleteComment);
+
 export default router;
