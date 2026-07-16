@@ -1,45 +1,35 @@
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import logger from './logger.js';
 
-let transporter = null;
+let resendInstance = null;
 let attemptedInit = false;
 
-const isConfigured = () =>
-  Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+const isConfigured = () => Boolean(process.env.RESEND_API_KEY);
 
-const getTransporter = () => {
-  if (attemptedInit) return transporter;
+const getResendInstance = () => {
+  if (attemptedInit) return resendInstance;
   attemptedInit = true;
 
   if (!isConfigured()) {
     logger.warn('mailer_not_configured', {
       action: 'mailer_not_configured',
-      message: 'SMTP_HOST/SMTP_USER/SMTP_PASS not set — emails will be logged instead of sent',
+      message: 'RESEND_API_KEY not set — emails will be logged instead of sent',
     });
     return null;
   }
 
-  transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT) || 587,
-    secure: Number(process.env.SMTP_PORT) === 465,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
-
-  return transporter;
+  resendInstance = new Resend(process.env.RESEND_API_KEY);
+  return resendInstance;
 };
 
 /**
- * Sends an email. Falls back to a structured log entry when SMTP isn't
- * configured (local/dev), so the surrounding request can still succeed.
+ * Sends an email using the Resend SDK.
+ * Falls back to logging when Resend isn't configured in dev.
  */
 export const sendMail = async ({ to, subject, html, text, replyTo }) => {
-  const activeTransporter = getTransporter();
+  const resend = getResendInstance();
 
-  if (!activeTransporter) {
+  if (!resend) {
     logger.info('mail_skipped_not_configured', {
       action: 'mail_skipped_not_configured',
       to,
@@ -49,16 +39,31 @@ export const sendMail = async ({ to, subject, html, text, replyTo }) => {
   }
 
   try {
-    await activeTransporter.sendMail({
-      from: process.env.MAIL_FROM || `"Nura" <${process.env.SMTP_USER}>`,
+    const response = await resend.emails.send({
+      from: process.env.MAIL_FROM || 'Nura <onboarding@resend.dev>',
       to,
-      replyTo,
       subject,
       html,
       text,
+      reply_to: replyTo,
     });
 
-    logger.info('mail_sent', { action: 'mail_sent', to, subject });
+    if (response.error) {
+      logger.error('mail_send_failed', {
+        action: 'mail_send_failed',
+        to,
+        subject,
+        error: response.error.message,
+      });
+      return { delivered: false, reason: 'send_failed' };
+    }
+
+    logger.info('mail_sent', { 
+      action: 'mail_sent', 
+      to, 
+      subject, 
+      id: response.data?.id 
+    });
     return { delivered: true };
   } catch (error) {
     logger.error('mail_send_failed', {
