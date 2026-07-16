@@ -8,7 +8,7 @@ export const validateNewsletterSubscribe = [
     .withMessage('Email is required')
     .isEmail()
     .withMessage(ERROR_MESSAGES.INVALID_EMAIL)
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false }),
 ];
 
 export const validateContactMessage = [
@@ -25,7 +25,7 @@ export const validateContactMessage = [
     .withMessage('Email is required')
     .isEmail()
     .withMessage(ERROR_MESSAGES.INVALID_EMAIL)
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false }),
 
   body('topic')
     .optional()

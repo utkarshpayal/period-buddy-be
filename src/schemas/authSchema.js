@@ -41,7 +41,7 @@ export const validateSignup = [
     .withMessage('Email is required')
     .isEmail()
     .withMessage(ERROR_MESSAGES.INVALID_EMAIL)
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false }),
 
   body('password')
     .notEmpty()
@@ -81,7 +81,7 @@ export const validateLogin = [
     .withMessage('Email is required')
     .isEmail()
     .withMessage(ERROR_MESSAGES.INVALID_EMAIL)
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false }),
 
   body('password')
     .notEmpty()
