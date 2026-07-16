@@ -22,7 +22,8 @@ export const initWebSocket = (server) => {
     const token = parsedUrl.query.token;
 
     let userId = null;
-    if (token) {
+    const hasToken = token && token !== 'null' && token !== 'undefined' && token.trim() !== '';
+    if (hasToken) {
       try {
         const decoded = verifyToken(token);
         userId = decoded.userId;

@@ -19,7 +19,7 @@ export const verifyToken = (token) => {
     if (error.name === 'TokenExpiredError') {
       throw new Error('Token expired');
     }
-    throw new Error('Invalid token');
+    throw new Error(`Invalid token: ${error.message}`);
   }
 };
 

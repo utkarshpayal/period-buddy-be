@@ -30,6 +30,8 @@ import wellbeingRoutes from './src/routes/wellbeingRoutes.js';
 import reelRoutes from './src/routes/reelRoutes.js';
 import forestRoutes from './src/routes/forestRoutes.js';
 import buddyRoutes from './src/routes/buddyRoutes.js';
+import newsletterRoutes from './src/routes/newsletterRoutes.js';
+import contactRoutes from './src/routes/contactRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -104,6 +106,8 @@ app.use('/api/wellbeing', wellbeingRoutes);
 app.use('/api/reels', reelRoutes);
 app.use('/api/forest', forestRoutes);
 app.use('/api/buddies', buddyRoutes);
+app.use('/api/newsletter', newsletterRoutes);
+app.use('/api/contact', contactRoutes);
 
 /* ──────────────────────────────────────────────────────────
    Error Handling
