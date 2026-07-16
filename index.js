@@ -10,6 +10,9 @@ import httpLogger from './src/utils/httpLogger.js';
 import logger from './src/utils/logger.js';
 import { authenticate } from './src/middleware/authMiddleware.js';
 import { logout as logoutController } from './src/controllers/authController.js';
+import { createServer } from 'http';
+import { initWebSocket } from './src/config/websocket.js';
+
 
 // Route imports
 import authRoutes from './src/routes/authRoutes.js';
@@ -112,7 +115,10 @@ app.use(errorHandler);
    Start Server
 ────────────────────────────────────────────────────────── */
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+const server = createServer(app);
+initWebSocket(server);
+
+server.listen(PORT, () => {
   logger.info('server_started', {
     action: 'server_started',
     port: PORT,

@@ -66,7 +66,7 @@ export const getResourceById = async (req, res, next) => {
 /** POST /api/wellbeing — Admin: Create resource */
 export const createResource = async (req, res, next) => {
   try {
-    const { type, title, icon, color, summary, extendedGuide, items, order } = req.body;
+    const { type, title, icon, color, summary, extendedGuide, items, order, estimatedReadTime, videoUrl, audioUrl } = req.body;
 
     if (!type || !title || !summary) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'type, title, and summary are required');
@@ -84,6 +84,9 @@ export const createResource = async (req, res, next) => {
       extendedGuide: normalizeStringArray(extendedGuide),
       items,
       order,
+      estimatedReadTime: estimatedReadTime !== undefined ? Number(estimatedReadTime) : undefined,
+      videoUrl: videoUrl?.trim(),
+      audioUrl: audioUrl?.trim(),
     });
 
     logger.info('wellbeing_resource_created', { action: 'wellbeing_resource_created', id: resource._id, type, title });
@@ -104,7 +107,10 @@ export const updateResource = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'color must be a valid hex color');
     }
 
-    const updates = pickDefined(req.body, ['type', 'title', 'icon', 'color', 'summary', 'extendedGuide', 'items', 'order', 'isActive']);
+    const updates = pickDefined(req.body, [
+      'type', 'title', 'icon', 'color', 'summary', 'extendedGuide', 'items', 'order', 'isActive',
+      'estimatedReadTime', 'videoUrl', 'audioUrl'
+    ]);
     if (updates.extendedGuide !== undefined) updates.extendedGuide = normalizeStringArray(updates.extendedGuide);
 
     const resource = await WellbeingResource.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
@@ -165,7 +171,7 @@ export const drawGameCard = async (req, res, next) => {
     const normalizedIndex = index < 0 ? 0 : index;
     const reward = deck === 'positions' ? 2 : 1;
 
-    await User.findByIdAndUpdate(req.userId, { $inc: { tokenEarned: reward } });
+    await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: reward } });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Game card drawn', {
       deck,

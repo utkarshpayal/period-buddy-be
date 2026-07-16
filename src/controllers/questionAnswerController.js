@@ -26,11 +26,16 @@ const STOP_WORDS = new Set([
   'after',
   'again',
   'also',
+  'and',
+  'are',
   'because',
   'before',
+  'but',
+  'can',
   'does',
   'doing',
   'during',
+  'for',
   'from',
   'have',
   'help',
@@ -41,10 +46,12 @@ const STOP_WORDS = new Set([
   'more',
   'much',
   'normal',
+  'not',
   'period',
   'periods',
   'should',
   'that',
+  'the',
   'their',
   'there',
   'this',
@@ -54,8 +61,13 @@ const STOP_WORDS = new Set([
   'what',
   'why',
   'will',
+  'you',
   'your',
 ]);
+// Below this, a "match" only overlaps on generic/common terms and is more likely
+// to be noise than a genuine knowledge-base hit (e.g. off-topic questions that
+// happen to share a filler word with a stored answer). See askQuestion().
+const MIN_MATCH_SCORE = 15;
 const URGENT_PATTERNS = [
   /\b(self[-\s]?harm|suicid(e|al)|kill myself)\b/i,
   /\b(bleeding during pregnancy|pregnant and bleeding)\b/i,
@@ -147,7 +159,7 @@ const scoreQuestionAnswer = (qa, query, terms) => {
 
   if (terms.length > 1 && terms.every((term) => haystack.includes(term))) score += 12;
   if (qa.isFeatured) score += 4;
-  score += Math.min(Number(qa.views || 0), 100) / 100;
+  score += Math.min(Number(qa.viewCount || 0), 100) / 100;
 
   return score;
 };
@@ -173,12 +185,12 @@ const findBestQuestionAnswer = async (query) => {
     isPublished: true,
     $or: termFilters,
   })
-    .sort({ isFeatured: -1, views: -1, updatedAt: -1 })
+    .sort({ isFeatured: -1, viewCount: -1, updatedAt: -1 })
     .limit(16);
 
   const [best] = candidates
     .map((qa) => ({ qa, score: scoreQuestionAnswer(qa, query, terms) }))
-    .filter((entry) => entry.score > 0)
+    .filter((entry) => entry.score >= MIN_MATCH_SCORE)
     .sort((a, b) => b.score - a.score);
 
   return best?.qa || null;
@@ -317,13 +329,13 @@ export const askQuestion = async (req, res, next) => {
     }
 
     if (qa) {
-      qa.views = Number(qa.views || 0) + 1;
+      qa.viewCount = Number(qa.viewCount || 0) + 1;
       await qa.save();
     }
 
     let tokensAwarded = 0;
     if (req.userId) {
-      await User.findByIdAndUpdate(req.userId, { $inc: { tokenEarned: 2 } });
+      await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: 2 } });
       tokensAwarded = 2;
     }
 
@@ -351,7 +363,7 @@ export const getSingleQuestionAnswer = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Question not found');
     }
 
-    qa.views = Number(qa.views || 0) + 1;
+    qa.viewCount = Number(qa.viewCount || 0) + 1;
     await qa.save();
 
     return sendResponse(res, HTTP_STATUS.OK, 'Question answer fetched', qa);

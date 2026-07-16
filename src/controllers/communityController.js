@@ -3,6 +3,7 @@ import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
+import { broadcastToRoom } from '../config/websocket.js';
 import {
   buildPagination,
   escapeRegex,
@@ -33,9 +34,16 @@ const serializePost = (post, user, requestingUserId) => {
 
   // Resolve post author
   const postAuthorId = object.userId?._id ?? object.userId;
-  const resolvedPostUser = object.isAnonymous
-    ? resolveAuthor(object.userId, postAuthorId, requestingUserId)
-    : (object.userId?.toObject ? object.userId.toObject() : object.userId);
+  const isPostOwn = String(postAuthorId) === String(requestingUserId);
+  let resolvedPostUser;
+  if (object.isAnonymous) {
+    // Anonymous post: mask for others, reveal (with isOwn) for the author
+    resolvedPostUser = resolveAuthor(object.userId, postAuthorId, requestingUserId);
+  } else {
+    // Non-anonymous post: show real user, but still attach isOwn for the author
+    const rawUser = object.userId?.toObject ? object.userId.toObject() : object.userId;
+    resolvedPostUser = isPostOwn ? { ...(rawUser || {}), isOwn: true } : rawUser;
+  }
 
   // Resolve each comment's author
   const comments = (object.comments || []).map((comment) => {
@@ -54,7 +62,7 @@ const serializePost = (post, user, requestingUserId) => {
       resolvedCommentUser = isCommentOwn ? { ...(rawUser || {}), isOwn: true } : rawUser;
     }
 
-    return { ...comment, userId: resolvedCommentUser };
+    return { ...comment, id: comment._id, userId: resolvedCommentUser };
   });
 
   return {
@@ -136,7 +144,20 @@ export const createPost = async (req, res, next) => {
       User.findById(req.userId).select('savedCommunityPosts reportedCommunityPosts'),
     ]);
 
-    return sendResponse(res, HTTP_STATUS.CREATED, 'Post created', serializePost(post, user, req.userId));
+    const serialized = serializePost(post, user, req.userId);
+
+    try {
+      broadcastToRoom('community', {
+        type: 'community_notification',
+        notificationType: 'post',
+        senderId: req.userId,
+        post: serialized,
+      });
+    } catch (wsErr) {
+      logger.warn('ws_broadcast_failed', { error: wsErr.message });
+    }
+
+    return sendResponse(res, HTTP_STATUS.CREATED, 'Post created', serialized);
   } catch (error) {
     next(error);
   }
@@ -176,15 +197,31 @@ export const toggleLike = async (req, res, next) => {
     const alreadyLiked = post.likedBy.some((id) => String(id) === String(req.userId));
     if (alreadyLiked) {
       post.likedBy.pull(req.userId);
-      post.likes = Math.max(0, post.likes - 1);
+      // `likes` is a virtual alias for `likeCount` (see Community.js) — only touch
+      // the real field here, otherwise the virtual setter double-applies the delta.
+      post.likeCount = Math.max(0, post.likeCount - 1);
     } else {
       post.likedBy.push(req.userId);
-      post.likes += 1;
+      post.likeCount += 1;
     }
     await post.save();
 
+    if (!alreadyLiked && String(post.userId) !== String(req.userId)) {
+      try {
+        broadcastToRoom(`user_${post.userId}`, {
+          type: 'community_notification',
+          notificationType: 'like',
+          senderId: req.userId,
+          postId: post._id,
+        });
+      } catch (wsErr) {
+        logger.warn('ws_broadcast_failed', { error: wsErr.message });
+      }
+    }
+
     return sendResponse(res, HTTP_STATUS.OK, alreadyLiked ? 'Unliked' : 'Liked', {
       likes: post.likes,
+      likeCount: post.likeCount,
       likedByMe: !alreadyLiked,
     });
   } catch (error) {
@@ -214,9 +251,11 @@ export const addComment = async (req, res, next) => {
       content: content.trim(),
       isAnonymous: anonymous,
     });
+    post.commentCount = post.comments.length;
     await post.save();
 
-    const comment = post.comments[post.comments.length - 1].toObject();
+    const rawComment = post.comments[post.comments.length - 1];
+    const comment = rawComment && typeof rawComment.toObject === 'function' ? rawComment.toObject() : rawComment;
 
     // Always return the real author info to the commenter (isOwn: true),
     // even when the comment is anonymous — other users will see "Anonymous".
@@ -231,8 +270,37 @@ export const addComment = async (req, res, next) => {
       commentId: comment._id,
     });
 
+    try {
+      broadcastToRoom('community', {
+        type: 'community_notification',
+        notificationType: 'comment',
+        senderId: req.userId,
+        postId: post._id,
+        comment: {
+          ...comment,
+          userId: author?.toObject ? author.toObject() : author,
+        },
+      });
+    } catch (wsErr) {
+      logger.warn('ws_broadcast_failed', { error: wsErr.message });
+    }
+
+    if (String(post.userId) !== String(req.userId)) {
+      try {
+        broadcastToRoom(`user_${post.userId}`, {
+          type: 'community_notification',
+          notificationType: 'comment',
+          senderId: req.userId,
+          postId: post._id,
+          commentId: comment._id,
+        });
+      } catch (wsErr) {
+        logger.warn('ws_broadcast_failed', { error: wsErr.message });
+      }
+    }
+
     return sendResponse(res, HTTP_STATUS.CREATED, 'Comment added', {
-      comment: { ...comment, userId: resolvedUser },
+      comment: { ...comment, id: comment._id, userId: resolvedUser },
       commentsCount: post.comments.length,
     });
   } catch (error) {
@@ -269,14 +337,14 @@ export const toggleSave = async (req, res, next) => {
     const post = await CommunityPost.findOne({ _id: req.params.id, isActive: true });
     if (!post) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Post not found');
 
-    const user = await User.findById(req.userId).select('savedCommunityPosts tokenEarned');
+    const user = await User.findById(req.userId).select('savedCommunityPosts walletBalance');
     const alreadySaved = user.savedCommunityPosts.some((id) => String(id) === String(post._id));
 
     if (alreadySaved) {
       user.savedCommunityPosts = user.savedCommunityPosts.filter((id) => String(id) !== String(post._id));
     } else {
       user.savedCommunityPosts.push(post._id);
-      user.tokenEarned = (user.tokenEarned || 0) + 3;
+      user.walletBalance = (user.walletBalance || 0) + 3;
     }
     await user.save();
 
@@ -308,6 +376,8 @@ export const reportPost = async (req, res, next) => {
         reason: reason?.trim() || 'No reason provided',
       });
       await user.save();
+      post.reportCount = (post.reportCount || 0) + 1;
+      await post.save();
     }
 
     logger.info('community_post_reported', {
@@ -344,11 +414,13 @@ export const deleteComment = async (req, res, next) => {
     const comment = post.comments.id(commentId);
     if (!comment) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Comment not found');
 
-    if (String(comment.userId) !== String(req.userId)) {
+    const commentAuthorId = comment.userId?._id ?? comment.userId;
+    if (String(commentAuthorId) !== String(req.userId)) {
       return sendError(res, HTTP_STATUS.FORBIDDEN, 'You can only delete your own comments');
     }
 
     post.comments.pull({ _id: commentId });
+    post.commentCount = post.comments.length;
     await post.save();
 
     logger.info('community_comment_deleted', {

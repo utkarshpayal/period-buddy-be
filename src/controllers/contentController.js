@@ -162,8 +162,8 @@ const serializeBlog = (document, options = {}) => {
     status: object.isPublished ? 'published' : 'draft',
     imageUrl: object.coverImageUrl,
     metrics: {
-      views: object.views || 0,
-      likes: object.likes || 0,
+      views: object.viewCount || 0,
+      likes: object.likeCount || 0,
     },
   };
 };
@@ -179,8 +179,8 @@ const serializeVideo = (document) => {
     videoUrl: object.directMp4Url,
     imageUrl: object.thumbnailUrl,
     metrics: {
-      views: object.views || 0,
-      likes: object.likes || 0,
+      views: object.viewCount || 0,
+      likes: object.likeCount || 0,
     },
   };
 };
@@ -195,8 +195,8 @@ const serializeQuestionAnswer = (document) => {
     title: object.question,
     status: object.isPublished ? 'published' : 'draft',
     metrics: {
-      views: object.views || 0,
-      likes: object.likes || 0,
+      views: object.viewCount || 0,
+      likes: object.likeCount || 0,
     },
   };
 };
@@ -492,6 +492,9 @@ const createBlog = async (body) => {
     tags: normalizeStringArray(body.tags),
     author: trimOrUndefined(body.author) || 'Period Buddy Team',
     readTimeMinutes: body.readTimeMinutes,
+    seoTitle: trimOrUndefined(body.seoTitle),
+    seoDescription: trimOrUndefined(body.seoDescription),
+    keywords: normalizeStringArray(body.keywords),
     isPublished: visibility.value,
     publishedAt: visibility.value ? (body.publishedAt ? new Date(body.publishedAt) : new Date()) : null,
   });
@@ -580,6 +583,11 @@ const createHealthIssue = async (body) => {
     summary,
     guide,
     imageUrl: trimOrUndefined(body.imageUrl || body.coverImageUrl),
+    symptoms: normalizeStringArray(body.symptoms),
+    causes: normalizeStringArray(body.causes),
+    treatment: trimOrUndefined(body.treatment),
+    prevention: trimOrUndefined(body.prevention),
+    whenToSeeDoctor: trimOrUndefined(body.whenToSeeDoctor),
     order: body.order,
     isActive: visibility.value,
   });
@@ -609,6 +617,9 @@ const createWellbeing = async (body) => {
     items: body.items,
     order: body.order,
     isActive: visibility.value,
+    estimatedReadTime: body.estimatedReadTime !== undefined ? Number(body.estimatedReadTime) : (body.readTimeMinutes !== undefined ? Number(body.readTimeMinutes) : undefined),
+    videoUrl: trimOrUndefined(body.videoUrl || body.directMp4Url),
+    audioUrl: trimOrUndefined(body.audioUrl),
   });
 
   return { document: resource, serialize: serializeWellbeing };
@@ -646,6 +657,9 @@ const buildBlogUpdates = async (body, id) => {
     'tags',
     'author',
     'readTimeMinutes',
+    'seoTitle',
+    'seoDescription',
+    'keywords',
     'publishedAt',
   ]);
 
@@ -743,9 +757,18 @@ const buildQuestionAnswerUpdates = async (body, id) => {
 const buildHealthIssueUpdates = (body) => {
   if (!validateColor(body.color)) return { error: 'color must be a valid hex color' };
 
-  const updates = pickDefined(body, ['title', 'category', 'icon', 'color', 'summary', 'guide', 'imageUrl', 'order']);
+  const updates = pickDefined(body, [
+    'title', 'category', 'icon', 'color', 'summary', 'guide', 'imageUrl', 'order',
+    'symptoms', 'causes', 'treatment', 'prevention', 'whenToSeeDoctor'
+  ]);
   if (body.content !== undefined && updates.guide === undefined) updates.guide = body.content;
   if (body.coverImageUrl !== undefined && updates.imageUrl === undefined) updates.imageUrl = body.coverImageUrl;
+
+  if (updates.symptoms !== undefined) updates.symptoms = normalizeStringArray(updates.symptoms);
+  if (updates.causes !== undefined) updates.causes = normalizeStringArray(updates.causes);
+  if (updates.treatment !== undefined) updates.treatment = trimOrUndefined(updates.treatment);
+  if (updates.prevention !== undefined) updates.prevention = trimOrUndefined(updates.prevention);
+  if (updates.whenToSeeDoctor !== undefined) updates.whenToSeeDoctor = trimOrUndefined(updates.whenToSeeDoctor);
 
   const visibility = resolveVisibilityInput(body);
   if (visibility.invalid) return { error: 'Invalid status' };
@@ -757,10 +780,20 @@ const buildHealthIssueUpdates = (body) => {
 const buildWellbeingUpdates = (body) => {
   if (!validateColor(body.color)) return { error: 'color must be a valid hex color' };
 
-  const updates = pickDefined(body, ['type', 'title', 'icon', 'color', 'summary', 'extendedGuide', 'items', 'order']);
+  const updates = pickDefined(body, [
+    'type', 'title', 'icon', 'color', 'summary', 'extendedGuide', 'items', 'order',
+    'estimatedReadTime', 'videoUrl', 'audioUrl'
+  ]);
   if (body.resourceType !== undefined && updates.type === undefined) updates.type = body.resourceType;
   if (body.content !== undefined && updates.extendedGuide === undefined) updates.extendedGuide = body.content;
   if (updates.extendedGuide !== undefined) updates.extendedGuide = normalizeStringArray(updates.extendedGuide);
+
+  if (body.readTimeMinutes !== undefined && updates.estimatedReadTime === undefined) {
+    updates.estimatedReadTime = Number(body.readTimeMinutes);
+  }
+  if (body.directMp4Url !== undefined && updates.videoUrl === undefined) {
+    updates.videoUrl = body.directMp4Url;
+  }
 
   const visibility = resolveVisibilityInput(body);
   if (visibility.invalid) return { error: 'Invalid status' };

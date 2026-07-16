@@ -1,26 +1,63 @@
 import mongoose from 'mongoose';
+import { blogCategoryEnum, blogStatusEnum } from '../enums/enums.js';
 
 const blogSchema = new mongoose.Schema(
   {
     title: { type: String, required: true, trim: true },
     slug: { type: String, required: true, unique: true },
     content: { type: String, required: true },
-    excerpt: { type: String, trim: true, maxlength: 300 },
+    excerpt: { type: String, trim: true, maxlength: 1000 },
     coverImageUrl: { type: String },
-    category: { type: String, trim: true, default: 'General' },
+    category: {
+      type: String,
+      trim: true,
+      enum: Object.values(blogCategoryEnum),
+      default: blogCategoryEnum.GENERAL,
+    },
     tags: [{ type: String, trim: true }],
+
+    // authorId references User — author (string) kept for backward compat
+    authorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     author: { type: String, trim: true, default: 'Period Buddy Team' },
-    readTimeMinutes: { type: Number, default: 5 },
+
+    readTimeMinutes: { type: Number, default: 0 },
+
+    // SEO fields
+    seoTitle: { type: String, trim: true },
+    seoDescription: { type: String, trim: true },
+    canonicalUrl: { type: String, trim: true },
+
+    // Publication
     isPublished: { type: Boolean, default: false },
+    status: {
+      type: String,
+      enum: Object.values(blogStatusEnum),
+      default: blogStatusEnum.DRAFT,
+    },
     publishedAt: { type: Date },
-    views: { type: Number, default: 0 },
-    likes: { type: Number, default: 0 },
+
+    // Counters — viewCount/likeCount are the production names
+    viewCount: { type: Number, default: 0 },
+    likeCount: { type: Number, default: 0 },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  }
 );
 
-blogSchema.index({ isPublished: 1, publishedAt: -1 });
+blogSchema.index({ status: 1, publishedAt: -1 });
 blogSchema.index({ slug: 1 });
 blogSchema.index({ tags: 1 });
+blogSchema.index({ authorId: 1 });
+
+blogSchema.virtual('viewsCount').get(function () {
+  return this.viewCount;
+});
+
+blogSchema.virtual('likesCount').get(function () {
+  return this.likeCount;
+});
 
 export default mongoose.model('Blog', blogSchema);

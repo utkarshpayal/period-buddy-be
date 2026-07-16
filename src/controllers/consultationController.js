@@ -1,10 +1,12 @@
 import Doctor from '../models/Doctor.js';
 import Consultation from '../models/Consultation.js';
+import ConsultationMessage from '../models/ConsultationMessage.js';
 import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
 import { escapeRegex, isValidObjectId } from '../utils/apiHelpers.js';
+import { broadcastToRoom } from '../config/websocket.js';
 
 /** GET /api/consultation/doctors?search= — List all available doctors */
 export const getDoctors = async (req, res, next) => {
@@ -45,7 +47,7 @@ export const bookConsultation = async (req, res, next) => {
       userId: req.userId,
       doctorId,
       status: { $in: ['paid', 'active'] },
-    });
+    }).populate('doctorId');
     if (existing) {
       return sendResponse(res, HTTP_STATUS.OK, 'Consultation already booked', existing);
     }
@@ -56,6 +58,7 @@ export const bookConsultation = async (req, res, next) => {
       amountPaid: doctor.pricePerSession,
       currency: doctor.currency,
       status: 'paid',
+      paymentStatus: 'paid',
       startedAt: new Date(),
       messages: [
         {
@@ -65,8 +68,14 @@ export const bookConsultation = async (req, res, next) => {
       ],
     });
 
+    await ConsultationMessage.create({
+      consultationId: consultation._id,
+      sender: 'doctor',
+      text: `Hello! I am ${doctor.name}. Your confidential dashboard log has been successfully shared. How can I guide your wellness milestones today?`,
+    });
+
     // Award tokens for booking
-    await User.findByIdAndUpdate(req.userId, { $inc: { tokenEarned: 10 } });
+    await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: 10 } });
     // Increment doctor consultation count
     await Doctor.findByIdAndUpdate(doctorId, { $inc: { totalConsultations: 1 } });
 
@@ -77,6 +86,8 @@ export const bookConsultation = async (req, res, next) => {
       doctorName: doctor.name,
       amount: doctor.pricePerSession,
     });
+
+    await consultation.populate('doctorId');
 
     return sendResponse(res, HTTP_STATUS.CREATED, 'Consultation booked successfully', consultation);
   } catch (error) {
@@ -108,7 +119,13 @@ export const getMessages = async (req, res, next) => {
     const consultation = await Consultation.findOne({ _id: req.params.id, userId: req.userId });
     if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation not found');
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Messages fetched', consultation.messages);
+    const messages = await ConsultationMessage.find({ consultationId: consultation._id }).sort({ sentAt: 1 });
+
+    if (messages.length === 0 && consultation.messages && consultation.messages.length > 0) {
+      return sendResponse(res, HTTP_STATUS.OK, 'Messages fetched', consultation.messages);
+    }
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Messages fetched', messages);
   } catch (error) {
     next(error);
   }
@@ -134,7 +151,8 @@ export const sendMessage = async (req, res, next) => {
     // Update status to active if first user message
     if (consultation.status === 'paid') consultation.status = 'active';
 
-    consultation.messages.push({ sender: 'user', text: text.trim() });
+    const userText = text.trim();
+    consultation.messages.push({ sender: 'user', text: userText });
 
     // Simulate doctor's auto-reply
     const doctorReply = 'Understood. Our logging engine is checking your cycle history trend structures to fine-tune diagnostic assessments. Please provide any related physical updates.';
@@ -142,13 +160,32 @@ export const sendMessage = async (req, res, next) => {
 
     await consultation.save();
 
+    const msgUser = await ConsultationMessage.create({
+      consultationId: consultation._id,
+      sender: 'user',
+      text: userText,
+    });
+
+    const msgDoctor = await ConsultationMessage.create({
+      consultationId: consultation._id,
+      sender: 'doctor',
+      text: doctorReply,
+    });
+
     logger.info('consultation_message_sent', {
       action: 'consultation_message_sent',
       userId: req.userId,
       consultationId: consultation._id,
     });
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Message sent', consultation.messages.slice(-2));
+    const responseData = [msgUser, msgDoctor];
+
+    // Broadcast messages to active consultation room
+    broadcastToRoom(`consultation_${consultation._id}`, {
+      messages: responseData,
+    });
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Message sent', responseData);
   } catch (error) {
     next(error);
   }

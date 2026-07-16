@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { hashPassword } from '../utils/password.js';
+import { userRoleEnum, genderEnum } from '../enums/enums.js';
 
 const userSchema = new mongoose.Schema(
   {
@@ -31,68 +32,64 @@ const userSchema = new mongoose.Schema(
       minlength: 8,
       select: false,
     },
-    phone: {
-      type: String,
-      trim: true,
-    },
-    dateOfBirth: {
-      type: Date,
-    },
-    gender: {
-      type: String,
-      enum: ['male', 'female', 'other', 'prefer_not_to_say'],
-    },
-    isEmailVerified: {
-      type: Boolean,
-      default: false,
-    },
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
+    phone: { type: String, trim: true },
+    dateOfBirth: { type: Date },
+    gender: { type: String, enum: Object.values(genderEnum) },
+
+    // Auth & status
+    isEmailVerified: { type: Boolean, default: false },
+    isActive: { type: Boolean, default: true },
     role: {
       type: String,
-      enum: ['user', 'admin'],
-      default: 'user',
+      enum: Object.values(userRoleEnum),
+      default: userRoleEnum.USER,
     },
-    lastLogin: {
-      type: Date,
-    },
-    profilePicture: {
+    lastLogin: { type: Date },
+
+    // Profile
+    profilePicture: { type: String },
+    isProfileComplete: { type: Boolean, default: false },
+
+    // Rewards — walletBalance replaces tokensEarned
+    walletBalance: { type: Number, default: 0 },
+
+    // Streaks
+    streakCount: { type: Number, default: 0 },
+    lastStreakDate: { type: String }, // 'YYYY-MM-DD'
+
+    // Locale / notification
+    timezone: { type: String, trim: true },
+    country: { type: String, trim: true },
+    language: { type: String, trim: true, default: 'en' },
+    notificationToken: { type: String, trim: true },
+
+    // Subscription
+    subscriptionPlan: {
       type: String,
+      enum: ['free', 'basic', 'premium'],
+      default: 'free',
     },
-    isProfileComplete: {
-      type: Boolean,
-      default: false,
-    }, 
-    tokenEarned: {
-      type: Number,
-      default: 0,
-    },
-    streakCount: {
-      type: Number,
-      default: 0,
-    },
-    savedCommunityPosts: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'CommunityPost',
-    }],
-    reportedCommunityPosts: [{
-      postId: { type: mongoose.Schema.Types.ObjectId, ref: 'CommunityPost' },
-      reason: { type: String, trim: true, maxlength: 300 },
-      reportedAt: { type: Date, default: Date.now },
-    }],
+    subscriptionExpiry: { type: Date },
+
+    // Soft delete
+    deletedAt: { type: Date, default: null },
+
+    // Community feed — saved posts and self-reported posts (used by communityController)
+    savedCommunityPosts: [{ type: mongoose.Schema.Types.ObjectId, ref: 'CommunityPost' }],
+    reportedCommunityPosts: [
+      {
+        postId: { type: mongoose.Schema.Types.ObjectId, ref: 'CommunityPost' },
+        reason: { type: String, trim: true },
+        reportedAt: { type: Date, default: Date.now },
+      },
+    ],
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
 // Hash password before saving
 userSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) {
-    return next();
-  }
+  if (!this.isModified('password')) return next();
 
   try {
     this.password = await hashPassword(this.password);
@@ -102,14 +99,14 @@ userSchema.pre('save', async function (next) {
   }
 });
 
-// Don't return password by default
+// Strip password from JSON output
 userSchema.methods.toJSON = function () {
-  const userObject = this.toObject();
-  delete userObject.password;
-  return userObject;
+  const obj = this.toObject({ virtuals: false });
+  delete obj.password;
+  return obj;
 };
 
-// Index for email for faster queries
 userSchema.index({ email: 1 });
+userSchema.index({ isActive: 1, createdAt: -1 });
 
 export default mongoose.model('User', userSchema);

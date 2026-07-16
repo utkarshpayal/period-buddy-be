@@ -55,13 +55,18 @@ export const nominateBuddy = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'You cannot nominate yourself');
     }
 
+    const inviteCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
     const nomination = await Nomination.create({
       nominatorId: req.userId,
       nomineeEmail,
       nomineeName,
       message,
       nomineeId: nomineeUser?._id || null,
-      status: nomineeUser ? 'pending' : 'pending',
+      status: 'pending',
+      inviteCode,
+      expiresAt,
     });
 
     logger.info('buddy_nominated', {
@@ -86,9 +91,13 @@ export const respondToNomination = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'status must be accepted or declined');
     }
 
+    const updates = { status };
+    if (status === 'accepted') updates.acceptedAt = new Date();
+    if (status === 'declined') updates.rejectedAt = new Date();
+
     const nomination = await Nomination.findOneAndUpdate(
       { _id: req.params.id, nomineeId: req.userId },
-      { status },
+      updates,
       { new: true }
     );
 

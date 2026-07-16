@@ -1,4 +1,5 @@
 import Partner from '../models/Partner.js';
+import PartnerMessage from '../models/PartnerMessage.js';
 import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
@@ -7,6 +8,8 @@ import CycleLog from '../models/CycleLog.js';
 import logger from '../utils/logger.js';
 import crypto from 'crypto';
 import { computeCyclePredictions } from '../utils/cycle.js';
+import { broadcastToRoom } from '../config/websocket.js';
+
 
 function generateCode() {
   return `NURA-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
@@ -75,13 +78,13 @@ export const connectPartner = async (req, res, next) => {
     // Link both sides
     await Partner.findOneAndUpdate(
       { userId: partnerProfile.userId },
-      { partnerId: req.userId, isConnected: true, connectedAt: new Date(), inviteCode: null, inviteCodeExpiry: null },
+      { partnerId: req.userId, isConnected: true, connectionStatus: 'connected', connectedAt: new Date(), inviteCode: null, inviteCodeExpiry: null },
       { new: true }
     );
 
     await Partner.findOneAndUpdate(
       { userId: req.userId },
-      { partnerId: partnerProfile.userId, isConnected: true, connectedAt: new Date() },
+      { partnerId: partnerProfile.userId, isConnected: true, connectionStatus: 'connected', connectedAt: new Date() },
       { upsert: true, new: true }
     );
 
@@ -141,17 +144,26 @@ export const getPartnerSharedData = async (req, res, next) => {
     const data = {
       permissions: perms,
     };
-    if (perms.shareCyclePhase) {
+
+    // Alerts depend on cycle predictions but are a distinct permission from
+    // shareCyclePhase, so predictions are computed independently of whether
+    // the phase itself is shared (previously alerts silently broke when
+    // shareCyclePhase was off, since it reused `data.cycle`).
+    let predictions = null;
+    if (perms.shareCyclePhase || perms.shareAlerts) {
       const settings = await CycleSettings.findOne({ userId: myProfile.partnerId });
       if (settings) {
-        const predictions = computeCyclePredictions(settings);
-        data.cycle = {
-          currentPhase: predictions.currentPhase,
-          currentCycleDay: predictions.currentCycleDay,
-          nextPeriodDaysAway: predictions.nextPeriodDaysAway,
-          nextPeriodDate: predictions.nextPeriodDate,
-        };
+        predictions = computeCyclePredictions(settings);
       }
+    }
+
+    if (perms.shareCyclePhase && predictions) {
+      data.cycle = {
+        currentPhase: predictions.currentPhase,
+        currentCycleDay: predictions.currentCycleDay,
+        nextPeriodDaysAway: predictions.nextPeriodDaysAway,
+        nextPeriodDate: predictions.nextPeriodDate,
+      };
     }
     if (perms.shareSymptoms) {
       const logs = await CycleLog.find({ userId: myProfile.partnerId })
@@ -168,7 +180,7 @@ export const getPartnerSharedData = async (req, res, next) => {
       }));
     }
     if (perms.shareAlerts) {
-      data.alerts = data.cycle?.nextPeriodDaysAway <= 3
+      data.alerts = predictions && predictions.nextPeriodDaysAway <= 3
         ? ['Next period is expected soon. Offer gentle reminders and support.']
         : [];
     }
@@ -183,7 +195,15 @@ export const getPartnerSharedData = async (req, res, next) => {
 export const getMessages = async (req, res, next) => {
   try {
     const profile = await Partner.findOne({ userId: req.userId });
-    return sendResponse(res, HTTP_STATUS.OK, 'Messages', profile?.messages || []);
+    if (!profile) return sendResponse(res, HTTP_STATUS.OK, 'Messages', []);
+
+    const messages = await PartnerMessage.find({ partnerId: profile._id }).sort({ sentAt: 1 });
+
+    if (messages.length === 0 && profile.messages && profile.messages.length > 0) {
+      return sendResponse(res, HTTP_STATUS.OK, 'Messages', profile.messages);
+    }
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Messages', messages);
   } catch (error) {
     next(error);
   }
@@ -201,20 +221,38 @@ export const sendMessage = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.FORBIDDEN, 'No connected partner');
     }
 
-    // Save message in user profile
+    // Save message in user profile (deprecated)
     myProfile.messages.push({ sender: 'user', text: text.trim() });
     await myProfile.save();
 
-    // Also push to partner profile
-    await Partner.findOneAndUpdate(
-      { userId: myProfile.partnerId },
-      { $push: { messages: { sender: 'partner', text: text.trim() } } }
-    );
-
-    return sendResponse(res, HTTP_STATUS.OK, 'Message sent', {
+    const msgUser = await PartnerMessage.create({
+      partnerId: myProfile._id,
+      sender: 'user',
       text: text.trim(),
-      sentAt: new Date().toISOString(),
     });
+
+    broadcastToRoom(`partner_${myProfile._id}`, {
+      message: msgUser,
+    });
+
+    // Also push to partner profile
+    const partnerProfile = await Partner.findOne({ userId: myProfile.partnerId });
+    if (partnerProfile) {
+      partnerProfile.messages.push({ sender: 'partner', text: text.trim() });
+      await partnerProfile.save();
+
+      const msgPartner = await PartnerMessage.create({
+        partnerId: partnerProfile._id,
+        sender: 'partner',
+        text: text.trim(),
+      });
+
+      broadcastToRoom(`partner_${partnerProfile._id}`, {
+        message: msgPartner,
+      });
+    }
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Message sent', msgUser);
   } catch (error) {
     next(error);
   }
@@ -231,7 +269,7 @@ export const disconnectPartner = async (req, res, next) => {
     const partnerId = profile.partnerId;
     await Partner.updateMany(
       { userId: { $in: [req.userId, partnerId] } },
-      { partnerId: null, isConnected: false, connectedAt: null }
+      { partnerId: null, isConnected: false, connectionStatus: 'disconnected', connectedAt: null }
     );
 
     logger.info('partner_disconnected', { action: 'partner_disconnected', userId: req.userId, partnerId });

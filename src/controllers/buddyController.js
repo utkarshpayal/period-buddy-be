@@ -1,11 +1,13 @@
 import crypto from 'crypto';
 import BuddyMatch from '../models/BuddyMatch.js';
+import BuddyMessage from '../models/BuddyMessage.js';
 import CycleSettings from '../models/CycleSettings.js';
 import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { computeCyclePredictions } from '../utils/cycle.js';
 import { escapeRegex, isValidObjectId } from '../utils/apiHelpers.js';
+import { broadcastToRoom } from '../config/websocket.js';
 
 const aliases = ['Mystic Peony', 'Cosmic Fern', 'Aura Amber', 'Lunar Sage', 'Velvet Iris', 'Bloom Nova'];
 
@@ -48,7 +50,7 @@ const getAvatarSeed = (name) => name.split(/\s+/).map((part) => part[0]).join(''
 
 const buildMatchFromUser = async (candidate, currentSettings) => {
   const settings = await CycleSettings.findOne({ userId: candidate._id });
-  const alias = aliases[hashToIndex(candidate._id, aliases.length)];
+  const alias = `${candidate.firstName} ${candidate.lastName}`;
   const candidatePredictions = settings ? computeCyclePredictions(settings) : null;
   const currentPredictions = currentSettings ? computeCyclePredictions(currentSettings) : null;
   const cycleDelta = settings && currentSettings ? Math.abs(settings.cycleLength - currentSettings.cycleLength) : 4;
@@ -140,6 +142,8 @@ export const nominateBuddy = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Buddy match not found');
     }
 
+    const welcomeText = 'Hey period buddy. Our cycle windows look close this month. How are you feeling today?';
+
     const match = await BuddyMatch.create({
       userId: req.userId,
       buddyUserId: candidate.isRealUser ? candidate.id : null,
@@ -150,15 +154,80 @@ export const nominateBuddy = async (req, res, next) => {
       cycleOverlapDays: candidate.cycleOverlapDays,
       compatibility: candidate.compatibility,
       similarities: candidate.similarities,
+      lastMessage: welcomeText,
+      lastMessageAt: new Date(),
+      unreadCount: 0,
       messages: [
         {
           sender: 'buddy',
-          text: 'Hey period buddy. Our cycle windows look close this month. How are you feeling today?',
+          text: welcomeText,
         },
       ],
     });
 
-    await User.findByIdAndUpdate(req.userId, { $inc: { tokenEarned: 25 } });
+    await BuddyMessage.create({
+      matchId: match._id,
+      sender: 'buddy',
+      text: welcomeText,
+    });
+
+    // If it's a real user candidate, create the reciprocal active match for User B pointing back to User A
+    if (candidate.isRealUser) {
+      // 1. End any existing active buddy matches User B has
+      await BuddyMatch.updateMany(
+        { userId: candidate.id, status: 'active' },
+        { status: 'ended', endedAt: new Date() }
+      );
+
+      // 2. Fetch User A's cycle settings to compute predictions and compatibility for User B
+      const settingsA = await CycleSettings.findOne({ userId: req.userId });
+      const settingsB = await CycleSettings.findOne({ userId: candidate.id });
+      const predictionsA = settingsA ? computeCyclePredictions(settingsA) : null;
+      const predictionsB = settingsB ? computeCyclePredictions(settingsB) : null;
+
+      const cycleDelta = settingsA && settingsB ? Math.abs(settingsA.cycleLength - settingsB.cycleLength) : 4;
+      const samePhase = predictionsA?.currentPhase === predictionsB?.currentPhase;
+      const compatibility = Math.max(70, Math.min(98, 95 - cycleDelta * 2 + (samePhase ? 5 : 0)));
+      const cycleOverlapDays = Math.max(0, 28 - cycleDelta);
+      const cyclePhase = `${predictionsA?.currentPhase || 'Cycle'} Phase`;
+      const similarities = [
+        `${settingsA?.cycleLength || 28}-Day Cycle`,
+        samePhase ? 'Similar Current Phase' : 'Nearby Cycle Pattern',
+        'Private Wellness Tracking',
+      ];
+
+      const userA = await User.findById(req.userId);
+      const aliasA = userA ? `${userA.firstName} ${userA.lastName}` : 'Period Buddy';
+
+      const buddyMatch = await BuddyMatch.create({
+        userId: candidate.id,
+        buddyUserId: req.userId,
+        matchKey: req.userId,
+        alias: aliasA,
+        avatarSeed: getAvatarSeed(aliasA),
+        cyclePhase,
+        cycleOverlapDays,
+        compatibility,
+        similarities,
+        lastMessage: welcomeText,
+        lastMessageAt: new Date(),
+        unreadCount: 0,
+        messages: [
+          {
+            sender: 'buddy',
+            text: welcomeText,
+          },
+        ],
+      });
+
+      await BuddyMessage.create({
+        matchId: buddyMatch._id,
+        sender: 'buddy',
+        text: welcomeText,
+      });
+    }
+
+    await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: 25 } });
 
     return sendResponse(res, HTTP_STATUS.CREATED, 'Buddy nominated', {
       match,
@@ -174,7 +243,13 @@ export const getBuddyMessages = async (req, res, next) => {
     const match = await BuddyMatch.findOne({ userId: req.userId, status: 'active' });
     if (!match) return sendError(res, HTTP_STATUS.NOT_FOUND, 'No active Period Buddy');
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Buddy messages fetched', match.messages);
+    const messages = await BuddyMessage.find({ matchId: match._id }).sort({ sentAt: 1 });
+
+    if (messages.length === 0 && match.messages && match.messages.length > 0) {
+      return sendResponse(res, HTTP_STATUS.OK, 'Buddy messages fetched', match.messages);
+    }
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Buddy messages fetched', messages);
   } catch (error) {
     next(error);
   }
@@ -189,16 +264,59 @@ export const sendBuddyMessage = async (req, res, next) => {
     const match = await BuddyMatch.findOne({ userId: req.userId, status: 'active' });
     if (!match) return sendError(res, HTTP_STATUS.NOT_FOUND, 'No active Period Buddy');
 
-    match.messages.push({ sender: 'me', text: text.trim() });
-    const reply = 'Totally. Let us check our habit updates later and compare how the day felt.';
-    match.messages.push({ sender: 'buddy', text: reply });
-    await match.save();
-    await User.findByIdAndUpdate(req.userId, { $inc: { tokenEarned: 2 } });
+    const userText = text.trim();
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Buddy message sent', {
-      messages: match.messages.slice(-2),
-      tokensAwarded: 2,
+    // ──────────────────────────────────────────────────────────
+    // Message Persistence (Sender)
+    // ──────────────────────────────────────────────────────────
+    match.messages.push({ sender: 'me', text: userText });
+    match.lastMessage = userText;
+    match.lastMessageAt = new Date();
+    await match.save();
+
+    const msgMe = await BuddyMessage.create({
+      matchId: match._id,
+      sender: 'me',
+      text: userText,
     });
+
+    await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: 2 } });
+
+    // ──────────────────────────────────────────────────────────
+    // Reciprocal Message Persistence & Real-time Update (Receiver)
+    // ──────────────────────────────────────────────────────────
+    if (match.buddyUserId) {
+      const buddyMatch = await BuddyMatch.findOne({ userId: match.buddyUserId, buddyUserId: req.userId, status: 'active' });
+      if (buddyMatch) {
+        buddyMatch.messages.push({ sender: 'buddy', text: userText });
+        buddyMatch.lastMessage = userText;
+        buddyMatch.lastMessageAt = new Date();
+        buddyMatch.unreadCount = (buddyMatch.unreadCount || 0) + 1;
+        await buddyMatch.save();
+
+        const msgBuddy = await BuddyMessage.create({
+          matchId: buddyMatch._id,
+          sender: 'buddy',
+          text: userText,
+        });
+
+        // Broadcast to receiver (User B) listening on `buddy_${req.userId}`
+        broadcastToRoom(`buddy_${req.userId}`, {
+          messages: [msgBuddy],
+          tokensAwarded: 0,
+        });
+      }
+    }
+
+    const responseData = {
+      messages: [msgMe],
+      tokensAwarded: 2,
+    };
+
+    // Broadcast to sender (User A) listening on `buddy_${match.matchKey}`
+    broadcastToRoom(`buddy_${match.matchKey}`, responseData);
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Buddy message sent', responseData);
   } catch (error) {
     next(error);
   }
@@ -212,6 +330,14 @@ export const endActiveBuddy = async (req, res, next) => {
       { new: true }
     );
     if (!match) return sendError(res, HTTP_STATUS.NOT_FOUND, 'No active Period Buddy');
+
+    if (match.buddyUserId) {
+      // Also end reciprocal match for User B
+      await BuddyMatch.findOneAndUpdate(
+        { userId: match.buddyUserId, buddyUserId: req.userId, status: 'active' },
+        { status: 'ended', endedAt: new Date() }
+      );
+    }
 
     return sendResponse(res, HTTP_STATUS.OK, 'Active buddy ended', match);
   } catch (error) {

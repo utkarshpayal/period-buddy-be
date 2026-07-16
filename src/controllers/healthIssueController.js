@@ -2,7 +2,7 @@ import HealthIssue from '../models/HealthIssue.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
-import { HEX_COLOR_REGEX, isValidObjectId, pickDefined } from '../utils/apiHelpers.js';
+import { HEX_COLOR_REGEX, isValidObjectId, pickDefined, normalizeStringArray } from '../utils/apiHelpers.js';
 
 /** GET /api/health-issues — List all health issues */
 export const getHealthIssues = async (req, res, next) => {
@@ -36,7 +36,10 @@ export const getHealthIssueById = async (req, res, next) => {
 /** POST /api/health-issues — Admin: Create health issue */
 export const createHealthIssue = async (req, res, next) => {
   try {
-    const { title, category, icon, color, summary, guide, imageUrl, order } = req.body;
+    const {
+      title, category, icon, color, summary, guide, imageUrl, order,
+      symptoms, causes, treatment, prevention, whenToSeeDoctor
+    } = req.body;
 
     if (!title || !category || !summary || !guide) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'title, category, summary, and guide are required');
@@ -45,7 +48,21 @@ export const createHealthIssue = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'color must be a valid hex color');
     }
 
-    const issue = await HealthIssue.create({ title, category, icon, color, summary, guide, imageUrl, order });
+    const issue = await HealthIssue.create({
+      title,
+      category,
+      icon,
+      color,
+      summary,
+      guide,
+      imageUrl,
+      order,
+      symptoms: normalizeStringArray(symptoms),
+      causes: normalizeStringArray(causes),
+      treatment: treatment ? String(treatment).trim() : undefined,
+      prevention: prevention ? String(prevention).trim() : undefined,
+      whenToSeeDoctor: whenToSeeDoctor ? String(whenToSeeDoctor).trim() : undefined,
+    });
 
     logger.info('health_issue_created', { action: 'health_issue_created', id: issue._id, title });
 
@@ -65,7 +82,17 @@ export const updateHealthIssue = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'color must be a valid hex color');
     }
 
-    const updates = pickDefined(req.body, ['title', 'category', 'icon', 'color', 'summary', 'guide', 'imageUrl', 'order', 'isActive']);
+    const updates = pickDefined(req.body, [
+      'title', 'category', 'icon', 'color', 'summary', 'guide', 'imageUrl', 'order', 'isActive',
+      'symptoms', 'causes', 'treatment', 'prevention', 'whenToSeeDoctor'
+    ]);
+
+    if (updates.symptoms !== undefined) updates.symptoms = normalizeStringArray(updates.symptoms);
+    if (updates.causes !== undefined) updates.causes = normalizeStringArray(updates.causes);
+    if (updates.treatment !== undefined) updates.treatment = updates.treatment ? String(updates.treatment).trim() : undefined;
+    if (updates.prevention !== undefined) updates.prevention = updates.prevention ? String(updates.prevention).trim() : undefined;
+    if (updates.whenToSeeDoctor !== undefined) updates.whenToSeeDoctor = updates.whenToSeeDoctor ? String(updates.whenToSeeDoctor).trim() : undefined;
+
     const issue = await HealthIssue.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
     if (!issue) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Health issue not found');
     return sendResponse(res, HTTP_STATUS.OK, 'Health issue updated', issue);

@@ -29,7 +29,8 @@
     "morgan-json": "^1.1.0",
     "multer": "^2.2.0",
     "slugify": "^1.6.9",
-    "winston": "^3.19.0"
+    "winston": "^3.19.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

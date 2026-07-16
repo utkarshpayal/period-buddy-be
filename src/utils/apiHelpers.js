@@ -4,7 +4,11 @@ export const DATE_KEY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 export const MONTH_KEY_REGEX = /^\d{4}-\d{2}$/;
 export const HEX_COLOR_REGEX = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
 
-export const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
+// mongoose.Types.ObjectId.isValid() also returns true for any 12-character
+// string (it can build an ObjectId from 12 raw bytes), which wrongly treats
+// 12-char slugs (e.g. "what-is-pcos") as ids. Require the canonical 24-char
+// hex form so id-vs-slug routing behaves correctly.
+export const isValidObjectId = (id) => /^[0-9a-fA-F]{24}$/.test(String(id)) && mongoose.Types.ObjectId.isValid(id);
 
 export const escapeRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 

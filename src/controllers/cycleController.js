@@ -14,6 +14,7 @@ import {
 } from '../utils/apiHelpers.js';
 import {
   buildCycleAnalytics,
+  calculateTrackingStreak,
   computeCyclePredictions,
   diffDays,
   getCyclePhase,
@@ -26,7 +27,20 @@ import {
 /** POST /api/cycle/log — Upsert a day's cycle log */
 export const saveCycleLog = async (req, res, next) => {
   try {
-    const { dateKey, flow, mood, energy, symptoms, note } = req.body;
+    const {
+      dateKey,
+      flow,
+      mood,
+      energy,
+      symptoms,
+      note,
+      sleepHours,
+      waterIntake,
+      weight,
+      temperature,
+      stressLevel,
+      medication
+    } = req.body;
 
     if (!dateKey || !validateDateKey(dateKey)) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'dateKey is required (YYYY-MM-DD)');
@@ -34,13 +48,19 @@ export const saveCycleLog = async (req, res, next) => {
 
     const date = dateFromDateKey(dateKey);
     const settings = await CycleSettings.findOne({ userId: req.userId });
-    const cycleDay = settings
-      ? Math.max(1, diffDays(date, settings.lastPeriodStartDate) + 1)
-      : null;
-    const normalizedCycleDay = cycleDay ? ((cycleDay - 1) % (settings?.cycleLength || 28)) + 1 : null;
+    // Offset (in days) from the tracked cycle start; can be negative for dates
+    // logged before lastPeriodStartDate (e.g. backfilled history).
+    const cycleLength = settings?.cycleLength || 28;
+    const offset = settings ? diffDays(date, settings.lastPeriodStartDate) : undefined;
+    // Wrap with a true modulo (not JS's remainder, which keeps the sign of the
+    // dividend) so dates before the tracked start land on the correct day of the
+    // *previous* cycle instead of all collapsing onto cycleDay 1 / "period".
+    const normalizedCycleDay = offset !== undefined
+      ? (((offset % cycleLength) + cycleLength) % cycleLength) + 1
+      : undefined;
     const phase = normalizedCycleDay
-      ? getCyclePhase(normalizedCycleDay, settings?.periodLength || 5, settings?.cycleLength || 28)
-      : null;
+      ? getCyclePhase(normalizedCycleDay, settings?.periodLength || 5, cycleLength)
+      : undefined;
 
     const isNewLog = !(await CycleLog.findOne({ userId: req.userId, dateKey }));
     const tokensEarned = isNewLog ? 5 : 1;
@@ -54,9 +74,19 @@ export const saveCycleLog = async (req, res, next) => {
         note: note?.trim(),
         cycleDay: normalizedCycleDay,
         phase,
-        tokensEarned,
+        rewardPoints: tokensEarned,
+        sleepHours,
+        waterIntake,
+        weight,
+        temperature,
+        stressLevel,
+        medication: medication !== undefined ? normalizeStringArray(medication) : undefined,
       },
-      ['date', 'flow', 'mood', 'energy', 'symptoms', 'note', 'cycleDay', 'phase', 'tokensEarned']
+      [
+        'date', 'flow', 'mood', 'energy', 'symptoms', 'note', 'cycleDay', 'phase',
+        'rewardPoints', 'sleepHours', 'waterIntake', 'weight',
+        'temperature', 'stressLevel', 'medication'
+      ]
     );
 
     const cycleLog = await CycleLog.findOneAndUpdate(
@@ -65,10 +95,16 @@ export const saveCycleLog = async (req, res, next) => {
       { new: true, upsert: true, runValidators: true }
     );
 
-    // Update user token count
+    // Update user token count and tracking streak
+    const userUpdates = {};
     if (isNewLog) {
-      await User.findByIdAndUpdate(req.userId, { $inc: { tokenEarned: tokensEarned } });
+      userUpdates.$inc = { walletBalance: tokensEarned };
     }
+    const allUserLogs = await CycleLog.find({ userId: req.userId });
+    const currentStreak = calculateTrackingStreak(allUserLogs);
+    userUpdates.$set = { streakCount: currentStreak };
+
+    await User.findByIdAndUpdate(req.userId, userUpdates);
 
     logger.info('cycle_log_saved', {
       action: 'cycle_log_saved',
@@ -140,7 +176,17 @@ export const getCycleSettings = async (req, res, next) => {
 /** POST /api/cycle/settings — Create/update cycle settings + compute predictions */
 export const saveCycleSettings = async (req, res, next) => {
   try {
-    const { lastPeriodStartDate, cycleLength, periodLength, remindersEnabled, reminderDaysBefore } = req.body;
+    const {
+      lastPeriodStartDate,
+      cycleLength,
+      periodLength,
+      remindersEnabled,
+      reminderDaysBefore,
+      ovulationReminder,
+      fertilityReminder,
+      pregnancyMode,
+      trackingGoal
+    } = req.body;
 
     if (!lastPeriodStartDate) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'lastPeriodStartDate is required');
@@ -156,8 +202,28 @@ export const saveCycleSettings = async (req, res, next) => {
     }
 
     const updates = pickDefined(
-      { lastPeriodStartDate, cycleLength, periodLength, remindersEnabled, reminderDaysBefore },
-      ['lastPeriodStartDate', 'cycleLength', 'periodLength', 'remindersEnabled', 'reminderDaysBefore']
+      {
+        lastPeriodStartDate,
+        cycleLength,
+        periodLength,
+        remindersEnabled,
+        reminderDaysBefore,
+        ovulationReminder,
+        fertilityReminder,
+        pregnancyMode,
+        trackingGoal
+      },
+      [
+        'lastPeriodStartDate',
+        'cycleLength',
+        'periodLength',
+        'remindersEnabled',
+        'reminderDaysBefore',
+        'ovulationReminder',
+        'fertilityReminder',
+        'pregnancyMode',
+        'trackingGoal'
+      ]
     );
 
     const settings = await CycleSettings.findOneAndUpdate(
@@ -209,7 +275,7 @@ export const getCycleStats = async (req, res, next) => {
     const logs = await CycleLog.find({ userId: req.userId });
 
     const totalDaysLogged = logs.length;
-    const totalTokens = logs.reduce((sum, l) => sum + (l.tokensEarned || 0), 0);
+    const totalTokens = logs.reduce((sum, l) => sum + (l.rewardPoints || l.tokensEarned || 0), 0);
 
     const symptomFreq = {};
     logs.forEach(log => {

@@ -1,17 +1,13 @@
 import mongoose from 'mongoose';
 
-const buddyMessageSchema = new mongoose.Schema(
-  {
-    sender: { type: String, enum: ['me', 'buddy'], required: true },
-    text: { type: String, required: true, trim: true, maxlength: 1000 },
-    sentAt: { type: Date, default: Date.now },
-  },
-  { _id: true }
-);
-
 const buddyMatchSchema = new mongoose.Schema(
   {
-    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      index: true,
+    },
     buddyUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     matchKey: { type: String, required: true, trim: true },
     alias: { type: String, required: true, trim: true },
@@ -20,10 +16,23 @@ const buddyMatchSchema = new mongoose.Schema(
     cycleOverlapDays: { type: Number, default: 0 },
     compatibility: { type: Number, min: 0, max: 100, default: 80 },
     similarities: [{ type: String, trim: true }],
-    status: { type: String, enum: ['active', 'ended'], default: 'active', index: true },
+    status: {
+      type: String,
+      enum: ['active', 'ended'],
+      default: 'active',
+      index: true,
+    },
+
+    // Messaging summary (BuddyMessage is now the canonical collection)
+    lastMessage: { type: String, trim: true },
+    lastMessageAt: { type: Date },
+    unreadCount: { type: Number, default: 0, min: 0 },
+
     nominatedAt: { type: Date, default: Date.now },
     endedAt: { type: Date },
-    messages: [buddyMessageSchema],
+
+    /** @deprecated use BuddyMessage collection */
+    messages: { type: Array, default: [] },
   },
   { timestamps: true }
 );

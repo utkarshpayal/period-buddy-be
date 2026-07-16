@@ -61,7 +61,7 @@ const calculateForest = async (userId) => {
     }));
 
   return {
-    tokens: user?.tokenEarned || 0,
+    tokens: user?.walletBalance || 0,
     currentHealth,
     healthyTreeCount,
     averageHealth: trees.length
@@ -107,13 +107,16 @@ export const logForestCare = async (req, res, next) => {
         careType,
         note: req.body.note?.trim() || '',
         healthDelta: existing ? existing.healthDelta : 5,
-        tokensEarned,
+        rewardPoints: tokensEarned,
+        duration: req.body.duration !== undefined ? Number(req.body.duration) : undefined,
+        treeType: req.body.treeType?.trim(),
+        completed: req.body.completed !== undefined ? !!req.body.completed : undefined,
       },
       { new: true, upsert: true, runValidators: true }
     );
 
     if (tokensEarned > 0) {
-      await User.findByIdAndUpdate(req.userId, { $inc: { tokenEarned: tokensEarned } });
+      await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: tokensEarned } });
     }
 
     const status = await calculateForest(req.userId);

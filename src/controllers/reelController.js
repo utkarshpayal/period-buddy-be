@@ -62,7 +62,7 @@ export const getReelById = async (req, res, next) => {
 
     const reel = await Reel.findOneAndUpdate(
       { _id: req.params.id, isActive: true },
-      { $inc: { views: 1 } },
+      { $inc: { viewCount: 1 } },
       { new: true }
     );
     if (!reel) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Reel not found');
@@ -176,12 +176,12 @@ export const recordView = async (req, res, next) => {
 
     const reel = await Reel.findOneAndUpdate(
       { _id: req.params.id, isActive: true },
-      { $inc: { views: 1 } },
+      { $inc: { viewCount: 1 } },
       { new: true }
     );
     if (!reel) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Reel not found');
 
-    return sendResponse(res, HTTP_STATUS.OK, 'View recorded', { views: reel.views });
+    return sendResponse(res, HTTP_STATUS.OK, 'View recorded', { views: reel.viewCount, viewCount: reel.viewCount });
   } catch (error) {
     next(error);
   }
@@ -201,7 +201,7 @@ export const toggleFollowCreator = async (req, res, next) => {
       reel.followedBy = reel.followedBy.filter((id) => String(id) !== String(req.userId));
     } else {
       reel.followedBy.push(req.userId);
-      await User.findByIdAndUpdate(req.userId, { $inc: { tokenEarned: 2 } });
+      await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: 2 } });
     }
 
     await reel.save();
@@ -237,7 +237,7 @@ export const votePoll = async (req, res, next) => {
     option.votes += 1;
     reel.votes.push({ userId: req.userId, optionId });
     await reel.save();
-    await User.findByIdAndUpdate(req.userId, { $inc: { tokenEarned: 5 } });
+    await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: 5 } });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Vote counted', {
       votedOptionId: optionId,

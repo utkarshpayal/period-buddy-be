@@ -8,7 +8,12 @@ export const CYCLE_PHASES = ['period', 'follicular', 'ovulation', 'luteal'];
 export const getCyclePhase = (cycleDay, periodLength = 5, cycleLength = 28) => {
   if (cycleDay <= periodLength) return 'period';
 
-  const ovulationDay = Math.max(periodLength + 1, cycleLength - 14);
+  // ovulationDay is expressed as a 1-indexed cycleDay (previousStart == day 1),
+  // matching computeCyclePredictions' ovulationDate, which lands on
+  // cycleLength - 14 days *after* previousStart, i.e. cycleDay (cycleLength - 13).
+  // Keeping these in sync ensures the "ovulation" phase bucket lines up with the
+  // actual fertile window (ovulationDate -5 .. ovulationDate +1) computed there.
+  const ovulationDay = Math.max(periodLength + 1, cycleLength - 13);
   if (cycleDay < ovulationDay - 5) return 'follicular';
   if (cycleDay <= ovulationDay + 1) return 'ovulation';
 
@@ -100,4 +105,25 @@ export const buildCycleAnalytics = (logs = [], settings = null) => {
       ...item,
       estimatedCycleLength: settings?.cycleLength || null,
     }));
+};
+
+export const calculateTrackingStreak = (logs = []) => {
+  const loggedDates = new Set(logs.map((log) => log.dateKey));
+  let streak = 0;
+
+  const today = new Date();
+  let dateKey = today.toISOString().slice(0, 10);
+
+  if (!loggedDates.has(dateKey)) {
+    today.setDate(today.getDate() - 1);
+    dateKey = today.toISOString().slice(0, 10);
+  }
+
+  while (loggedDates.has(dateKey)) {
+    streak += 1;
+    today.setDate(today.getDate() - 1);
+    dateKey = today.toISOString().slice(0, 10);
+  }
+
+  return streak;
 };

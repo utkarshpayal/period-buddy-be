@@ -8,8 +8,8 @@ import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants/errorMessages.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { pickDefined, todayDateKey } from '../utils/apiHelpers.js';
-import { computeCyclePredictions } from '../utils/cycle.js';
-
+import { computeCyclePredictions, calculateTrackingStreak } from '../utils/cycle.js';
+import { userRoleEnum } from '../enums/enums.js';
 /**
  * User Signup Controller
  * @param {Object} req - Express request object
@@ -17,32 +17,11 @@ import { computeCyclePredictions } from '../utils/cycle.js';
  */
 export const signup = async (req, res, next) => {
   try {
-    const { firstName, lastName, email, password, phone, dateOfBirth, gender, role, adminCode, inviteCode, adminInviteCode } = req.body;
-    const requestedAdminCode = adminCode || inviteCode || adminInviteCode;
-    const validAdminCode = process.env.ADMIN_INVITE_CODE || 'utkarsh-admin';
-    const shouldCreateAdmin = role === 'admin' && requestedAdminCode === validAdminCode;
+    const { firstName, lastName, email, password, phone, dateOfBirth, gender } = req.body;
 
     // Check if user already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      if (shouldCreateAdmin && existingUser.role !== 'admin') {
-        existingUser.role = 'admin';
-        await existingUser.save();
-
-        const token = generateToken({
-          userId: existingUser._id,
-          email: existingUser.email,
-          role: existingUser.role,
-        });
-
-        return sendResponse(
-          res,
-          HTTP_STATUS.OK,
-          'Admin access granted successfully',
-          existingUser.toJSON(),
-          token
-        );
-      }
 
       return sendError(res, HTTP_STATUS.CONFLICT, ERROR_MESSAGES.EMAIL_ALREADY_EXISTS);
     }
@@ -56,7 +35,7 @@ export const signup = async (req, res, next) => {
       phone,
       dateOfBirth,
       gender,
-      role: shouldCreateAdmin ? 'admin' : 'user',
+      role:userRoleEnum.USER,
     });
 
     await user.save();
@@ -322,6 +301,13 @@ export const getDashboardSummary = async (req, res, next) => {
     const trackedDays = logs.filter((log) =>
       log.note?.trim() || (log.symptoms || []).length > 0 || (log.flow && log.flow !== 'none')
     ).length;
+
+    const currentStreak = calculateTrackingStreak(logs);
+    if (user.streakCount !== currentStreak) {
+      user.streakCount = currentStreak;
+      await user.save();
+    }
+
     const today = todayDateKey();
     const completedHabitsToday = habits.filter((habit) => habit.completedDates?.includes(today)).length;
     const forestHealth = Math.min(100, Math.max(45, 55 + trackedDays * 4 + completedHabitsToday * 2));
@@ -329,7 +315,7 @@ export const getDashboardSummary = async (req, res, next) => {
 
     return sendResponse(res, HTTP_STATUS.OK, 'Dashboard summary fetched', {
       user: user.toJSON(),
-      tokens: user.tokenEarned || 0,
+      tokens: user.walletBalance || 0,
       trackedDays,
       forestHealth,
       activeHabits: habits.length,

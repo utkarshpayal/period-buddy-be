@@ -1,4 +1,5 @@
 import Habit from '../models/Habit.js';
+import HabitCompletion from '../models/HabitCompletion.js';
 import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
@@ -6,10 +7,10 @@ import logger from '../utils/logger.js';
 import { HEX_COLOR_REGEX, isValidObjectId, todayDateKey } from '../utils/apiHelpers.js';
 
 const DEFAULT_HABITS = [
-  { title: 'Log Period Tracking Data', icon: 'calendar-outline', color: '#d946a6', tokens: 50 },
-  { title: 'Drink 8 Glasses of Water', icon: 'water-outline', color: '#06b6d4', tokens: 30 },
-  { title: 'Exercise or Sync Movement', icon: 'fitness-outline', color: '#22c55e', tokens: 60 },
-  { title: 'Mindfulness Meditation', icon: 'heart-outline', color: '#ec4899', tokens: 40 },
+  { title: 'Log Period Tracking Data', icon: 'calendar-outline', color: '#d946a6', rewardPoints: 50 },
+  { title: 'Drink 8 Glasses of Water', icon: 'water-outline', color: '#06b6d4', rewardPoints: 30 },
+  { title: 'Exercise or Sync Movement', icon: 'fitness-outline', color: '#22c55e', rewardPoints: 60 },
+  { title: 'Mindfulness Meditation', icon: 'heart-outline', color: '#ec4899', rewardPoints: 40 },
 ];
 
 const calculateStreak = (completedDates = []) => {
@@ -43,8 +44,13 @@ export const getHabits = async (req, res, next) => {
       title: h.title,
       icon: h.icon,
       color: h.color,
-      tokens: h.tokens,
-      streak: h.streak,
+      tokens: h.rewardPoints || 30,
+      rewardPoints: h.rewardPoints || 30,
+      // Recompute from completedDates rather than trusting the persisted
+      // `streak` field, which is only updated on toggle — without this,
+      // a habit missed for several days without being toggled would keep
+      // showing its old streak instead of resetting to 0.
+      streak: calculateStreak(h.completedDates),
       completed: h.completedDates.includes(todayKey),
     }));
 
@@ -58,8 +64,10 @@ export const getHabits = async (req, res, next) => {
 /** POST /api/habits — Add a new habit */
 export const createHabit = async (req, res, next) => {
   try {
-    const { title, icon, color } = req.body;
-    const tokens = req.body.tokens === undefined ? 30 : Number(req.body.tokens);
+    const { title, icon, color, frequency, target, reminderTime } = req.body;
+    const rewardPoints = req.body.rewardPoints !== undefined
+      ? Number(req.body.rewardPoints)
+      : (req.body.tokens !== undefined ? Number(req.body.tokens) : 30);
 
     if (!title?.trim()) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Habit title is required');
@@ -67,8 +75,8 @@ export const createHabit = async (req, res, next) => {
     if (title.trim().length > 100) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Habit title must be 100 characters or fewer');
     }
-    if (!Number.isInteger(tokens) || tokens < 1 || tokens > 200) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'tokens must be an integer between 1 and 200');
+    if (!Number.isInteger(rewardPoints) || rewardPoints < 1 || rewardPoints > 200) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'rewardPoints must be an integer between 1 and 200');
     }
     if (color && !HEX_COLOR_REGEX.test(color)) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'color must be a valid hex color');
@@ -79,13 +87,26 @@ export const createHabit = async (req, res, next) => {
       title: title.trim(),
       icon,
       color,
-      tokens,
+      rewardPoints,
+      frequency: frequency || 'daily',
+      target: target !== undefined ? Number(target) : 1,
+      reminderTime: reminderTime?.trim(),
     });
 
     logger.info('habit_created', { action: 'habit_created', userId: req.userId, habitId: habit._id, title });
 
     return sendResponse(res, HTTP_STATUS.CREATED, 'Habit created', {
-      id: habit._id, title: habit.title, icon: habit.icon, color: habit.color, tokens: habit.tokens, streak: 0, completed: false,
+      id: habit._id,
+      title: habit.title,
+      icon: habit.icon,
+      color: habit.color,
+      tokens: habit.rewardPoints,
+      rewardPoints: habit.rewardPoints,
+      frequency: habit.frequency,
+      target: habit.target,
+      reminderTime: habit.reminderTime,
+      streak: 0,
+      completed: false,
     });
   } catch (error) {
     next(error);
@@ -112,18 +133,25 @@ export const toggleHabit = async (req, res, next) => {
       // Uncomplete
       habit.completedDates = habit.completedDates.filter(d => d !== todayKey);
       habit.streak = calculateStreak(habit.completedDates);
-      tokensAwarded = -habit.tokens;
+      tokensAwarded = -(habit.rewardPoints || 30);
       const user = await User.findById(req.userId);
       if (user) {
-        user.tokenEarned = Math.max(0, (user.tokenEarned || 0) + tokensAwarded);
+        user.walletBalance = Math.max(0, (user.walletBalance || 0) + tokensAwarded);
         await user.save();
       }
+      await HabitCompletion.deleteOne({ habitId: habit._id, dateKey: todayKey });
     } else {
       // Complete
       habit.completedDates.push(todayKey);
       habit.streak = calculateStreak(habit.completedDates);
-      tokensAwarded = habit.tokens;
-      await User.findByIdAndUpdate(req.userId, { $inc: { tokenEarned: tokensAwarded } });
+      tokensAwarded = habit.rewardPoints || 30;
+      await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: tokensAwarded } });
+      await HabitCompletion.create({
+        habitId: habit._id,
+        userId: req.userId,
+        dateKey: todayKey,
+        rewardPoints: habit.rewardPoints || 30,
+      });
     }
 
     await habit.save();

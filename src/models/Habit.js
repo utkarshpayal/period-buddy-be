@@ -2,14 +2,34 @@ import mongoose from 'mongoose';
 
 const habitSchema = new mongoose.Schema(
   {
-    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      index: true,
+    },
     title: { type: String, required: true, trim: true, maxlength: 100 },
     icon: { type: String, default: 'calendar-outline' },
     color: { type: String, default: '#d946a6' },
-    tokens: { type: Number, default: 30, min: 1, max: 200 },
+
+    // rewardPoints replaces tokens
+    rewardPoints: { type: Number, default: 30, min: 1, max: 200 },
+
     streak: { type: Number, default: 0, min: 0 },
-    completedDates: [{ type: String }], // 'YYYY-MM-DD' keys
+
+    // New production fields
+    frequency: {
+      type: String,
+      enum: ['daily', 'weekly', 'custom'],
+      default: 'daily',
+    },
+    target: { type: Number, default: 1, min: 1 }, // times per frequency
+    reminderTime: { type: String, trim: true }, // 'HH:MM'
+
     isActive: { type: Boolean, default: true },
+
+    /** @deprecated use HabitCompletion collection */
+    completedDates: [{ type: String }], // 'YYYY-MM-DD' keys
   },
   { timestamps: true }
 );

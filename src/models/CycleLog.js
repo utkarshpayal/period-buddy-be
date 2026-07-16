@@ -2,10 +2,19 @@ import mongoose from 'mongoose';
 
 const cycleLogSchema = new mongoose.Schema(
   {
-    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      index: true,
+    },
     date: { type: Date, required: true },
     dateKey: { type: String, required: true }, // 'YYYY-MM-DD'
-    flow: { type: String, enum: ['none', 'light', 'medium', 'heavy', 'spotting'], default: 'none' },
+    flow: {
+      type: String,
+      enum: ['none', 'light', 'medium', 'heavy', 'spotting'],
+      default: 'none',
+    },
     mood: {
       type: String,
       enum: ['happy', 'calm', 'emotional', 'tired', 'sad', 'anxious', 'irritable', 'neutral', 'energetic'],
@@ -15,7 +24,17 @@ const cycleLogSchema = new mongoose.Schema(
     note: { type: String, trim: true, maxlength: 1000, default: '' },
     cycleDay: { type: Number },
     phase: { type: String, enum: ['period', 'follicular', 'ovulation', 'luteal'] },
-    tokensEarned: { type: Number, default: 0 },
+
+    // Reward points (rewardPoints replaces tokensEarned)
+    rewardPoints: { type: Number, default: 0 },
+
+    // Health tracking fields
+    sleepHours: { type: Number, min: 0, max: 24 },
+    waterIntake: { type: Number, min: 0 }, // ml
+    weight: { type: Number, min: 0 },      // kg
+    temperature: { type: Number },          // °C BBT
+    stressLevel: { type: Number, min: 1, max: 10 },
+    medication: [{ type: String, trim: true }],
   },
   { timestamps: true }
 );
