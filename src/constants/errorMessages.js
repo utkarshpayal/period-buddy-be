@@ -19,13 +19,33 @@ export const ERROR_MESSAGES = {
   // Validation Errors
   INVALID_PHONE: 'Please provide a valid phone number',
   INVALID_PASSWORD_FORMAT: 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character',
+
+  // OTP Errors
+  OTP_NOT_FOUND: 'No pending signup found for this email. Please sign up again.',
+  OTP_EXPIRED: 'This code has expired. Please request a new one.',
+  OTP_INVALID: 'Invalid verification code',
+  OTP_MAX_ATTEMPTS: 'Too many incorrect attempts. Please request a new code.',
+  OTP_RESEND_TOO_SOON: 'Please wait a moment before requesting another code.',
+
+  // Google Sign-In Errors
+  GOOGLE_TOKEN_MISSING: 'Google ID token is required',
+  GOOGLE_EMAIL_MISSING: 'Your Google account has no email address to sign in with',
+  GOOGLE_ONLY_ACCOUNT: 'This account was created with Google. Please use "Continue with Google" to sign in.',
+
+  // Upload Errors
+  NO_FILE_UPLOADED: 'No file was uploaded',
+  UPLOAD_FAILED: 'Failed to upload file',
 };
 
 export const SUCCESS_MESSAGES = {
   SIGNUP_SUCCESS: 'User registered successfully',
+  OTP_SENT: 'Verification code sent to your email',
+  OTP_RESENT: 'A new verification code has been sent to your email',
+  OTP_VERIFIED: 'Account verified successfully',
   LOGIN_SUCCESS: 'Login successful',
   LOGOUT_SUCCESS: 'Logout successful',
   PROFILE_FETCHED: 'Profile fetched successfully',
   EMAIL_VERIFIED: 'Email verified successfully',
   ONBOARDING_COMPLETE: 'Onboarding completed successfully',
+  FILE_UPLOADED: 'File uploaded successfully',
 };

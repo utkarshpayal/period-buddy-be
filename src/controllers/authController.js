@@ -1,8 +1,9 @@
 import User from '../models/User.js';
+import PendingSignup from '../models/PendingSignup.js';
 import CycleLog from '../models/CycleLog.js';
 import CycleSettings from '../models/CycleSettings.js';
 import Habit from '../models/Habit.js';
-import { comparePassword } from '../utils/password.js';
+import { comparePassword, hashPassword } from '../utils/password.js';
 import { generateToken } from '../utils/jwt.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants/errorMessages.js';
@@ -10,53 +11,180 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { pickDefined, todayDateKey } from '../utils/apiHelpers.js';
 import { computeCyclePredictions, calculateTrackingStreak } from '../utils/cycle.js';
 import { userRoleEnum } from '../enums/enums.js';
+import {
+  generateOtp,
+  hashOtp,
+  compareOtp,
+  getOtpExpiry,
+  OTP_EXPIRY_MINUTES,
+  OTP_RESEND_COOLDOWN_SECONDS,
+  OTP_MAX_ATTEMPTS,
+} from '../utils/otp.js';
+import { sendMail } from '../utils/mailer.js';
+import { getOtpEmailTemplate } from '../templates/emailTemplates.js';
+import { verifyGoogleIdToken } from '../utils/googleAuth.js';
+
+const sendOtpEmail = async ({ email, firstName, otp }) => {
+  await sendMail({
+    to: email,
+    subject: 'Your Nura verification code',
+    html: getOtpEmailTemplate({ firstName, otp, expiryMinutes: OTP_EXPIRY_MINUTES }),
+  });
+};
+
 /**
- * User Signup Controller
+ * User Signup Controller — stores the signup data + a hashed OTP in
+ * PendingSignup and emails the code. The User document is only created once
+ * verifyOtp succeeds (see below), so no account exists until validation.
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  */
 export const signup = async (req, res, next) => {
   try {
     const { firstName, lastName, email, password, phone, dateOfBirth, gender } = req.body;
+    const normalizedEmail = String(email).trim().toLowerCase();
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
+    // Check if a verified user already exists
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
-
       return sendError(res, HTTP_STATUS.CONFLICT, ERROR_MESSAGES.EMAIL_ALREADY_EXISTS);
     }
 
-    // Create new user
-    const user = new User({
-      firstName,
-      lastName,
-      email,
-      password,
-      phone,
-      dateOfBirth,
-      gender,
-      role:userRoleEnum.USER,
-    });
+    const otp = generateOtp();
+    const otpHash = await hashOtp(otp);
+    const hashedPassword = await hashPassword(password);
 
+    await PendingSignup.findOneAndUpdate(
+      { email: normalizedEmail },
+      {
+        email: normalizedEmail,
+        firstName,
+        lastName,
+        password: hashedPassword,
+        phone,
+        dateOfBirth,
+        gender,
+        otpHash,
+        otpExpiresAt: getOtpExpiry(),
+        otpAttempts: 0,
+        lastSentAt: new Date(),
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    await sendOtpEmail({ email: normalizedEmail, firstName, otp });
+
+    return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.OTP_SENT, {
+      email: normalizedEmail,
+      expiresInMinutes: OTP_EXPIRY_MINUTES,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Verifies the OTP for a pending signup and creates the real User account.
+ */
+export const verifyOtp = async (req, res, next) => {
+  try {
+    const { email, otp } = req.body;
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    const pending = await PendingSignup.findOne({ email: normalizedEmail });
+    if (!pending) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, ERROR_MESSAGES.OTP_NOT_FOUND);
+    }
+
+    if (pending.otpExpiresAt < new Date()) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.OTP_EXPIRED);
+    }
+
+    if (pending.otpAttempts >= OTP_MAX_ATTEMPTS) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.OTP_MAX_ATTEMPTS);
+    }
+
+    const isValid = await compareOtp(String(otp), pending.otpHash);
+    if (!isValid) {
+      pending.otpAttempts += 1;
+      await pending.save();
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.OTP_INVALID);
+    }
+
+    // Someone may have raced this signup between two verification attempts.
+    const existingUser = await User.findOne({ email: normalizedEmail });
+    if (existingUser) {
+      await PendingSignup.deleteOne({ _id: pending._id });
+      return sendError(res, HTTP_STATUS.CONFLICT, ERROR_MESSAGES.EMAIL_ALREADY_EXISTS);
+    }
+
+    const user = new User({
+      firstName: pending.firstName,
+      lastName: pending.lastName,
+      email: pending.email,
+      password: pending.password, // already hashed — bypass the pre-save hook
+      phone: pending.phone,
+      dateOfBirth: pending.dateOfBirth,
+      gender: pending.gender,
+      role: userRoleEnum.USER,
+      isEmailVerified: true,
+    });
+    // Password is already hashed (it came from PendingSignup) — skip the
+    // model's pre-save hashing hook so it isn't hashed a second time.
+    user.$locals.skipPasswordHash = true;
     await user.save();
 
-    // Generate token
+    await PendingSignup.deleteOne({ _id: pending._id });
+
     const token = generateToken({
       userId: user._id,
       email: user.email,
       role: user.role,
     });
 
-    // Get user data without password
-    const userData = user.toJSON();
-
     return sendResponse(
       res,
       HTTP_STATUS.CREATED,
-      SUCCESS_MESSAGES.SIGNUP_SUCCESS,
-      userData,
+      SUCCESS_MESSAGES.OTP_VERIFIED,
+      user.toJSON(),
       token
     );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Resends a fresh OTP for a pending signup, subject to a short cooldown.
+ */
+export const resendOtp = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    const pending = await PendingSignup.findOne({ email: normalizedEmail });
+    if (!pending) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, ERROR_MESSAGES.OTP_NOT_FOUND);
+    }
+
+    const secondsSinceLastSend = (Date.now() - pending.lastSentAt.getTime()) / 1000;
+    if (secondsSinceLastSend < OTP_RESEND_COOLDOWN_SECONDS) {
+      return sendError(res, HTTP_STATUS.TOO_MANY_REQUESTS, ERROR_MESSAGES.OTP_RESEND_TOO_SOON);
+    }
+
+    const otp = generateOtp();
+    pending.otpHash = await hashOtp(otp);
+    pending.otpExpiresAt = getOtpExpiry();
+    pending.otpAttempts = 0;
+    pending.lastSentAt = new Date();
+    await pending.save();
+
+    await sendOtpEmail({ email: normalizedEmail, firstName: pending.firstName, otp });
+
+    return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.OTP_RESENT, {
+      email: normalizedEmail,
+      expiresInMinutes: OTP_EXPIRY_MINUTES,
+    });
   } catch (error) {
     next(error);
   }
@@ -81,6 +209,12 @@ export const login = async (req, res, next) => {
     // Check if user is active
     if (!user.isActive) {
       return sendError(res, HTTP_STATUS.UNAUTHORIZED, 'Your account is inactive');
+    }
+
+    // Google-only accounts have no password — send them back to Google sign-in
+    // instead of letting bcrypt.compare blow up on an undefined hash.
+    if (!user.password) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.GOOGLE_ONLY_ACCOUNT);
     }
 
     // Compare passwords
@@ -116,16 +250,112 @@ export const login = async (req, res, next) => {
   }
 };
 
+/**
+ * Google Sign-In — verifies the ID token the client got from Google, then
+ * either logs in the matching account or creates a new one (skipping the
+ * OTP flow entirely, since Google has already verified the email).
+ */
+export const googleAuth = async (req, res, next) => {
+  try {
+    const { idToken } = req.body;
+
+    const payload = await verifyGoogleIdToken(idToken);
+    const { sub: googleId, email, given_name: givenName, family_name: familyName, picture, email_verified: emailVerified } = payload;
+
+    if (!email) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.GOOGLE_EMAIL_MISSING);
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    let user = await User.findOne({ $or: [{ googleId }, { email: normalizedEmail }] });
+
+    if (user) {
+      if (!user.isActive) {
+        return sendError(res, HTTP_STATUS.UNAUTHORIZED, 'Your account is inactive');
+      }
+
+      // A local account signing in with Google for the first time — link it
+      // rather than creating a duplicate account for the same email.
+      let didChange = false;
+      if (!user.googleId) {
+        user.googleId = googleId;
+        didChange = true;
+      }
+      if (!user.isEmailVerified && emailVerified) {
+        user.isEmailVerified = true;
+        didChange = true;
+      }
+      if (!user.profilePicture && picture) {
+        user.profilePicture = picture;
+        didChange = true;
+      }
+      user.lastLogin = new Date();
+      didChange = true;
+      if (didChange) await user.save();
+    } else {
+      // firstName/lastName require a 2-char minimum — Google occasionally
+      // supplies a single-character given/family name (or none at all).
+      user = new User({
+        firstName: givenName && givenName.trim().length >= 2 ? givenName.trim() : 'Nura',
+        lastName: familyName && familyName.trim().length >= 2 ? familyName.trim() : 'User',
+        email: normalizedEmail,
+        googleId,
+        authProvider: 'google',
+        profilePicture: picture,
+        isEmailVerified: Boolean(emailVerified),
+        role: userRoleEnum.USER,
+        lastLogin: new Date(),
+      });
+      await user.save();
+    }
+
+    const token = generateToken({
+      userId: user._id,
+      email: user.email,
+      role: user.role,
+    });
+
+    return sendResponse(
+      res,
+      HTTP_STATUS.OK,
+      SUCCESS_MESSAGES.LOGIN_SUCCESS,
+      user.toJSON(),
+      token
+    );
+  } catch (error) {
+    if (error.message?.includes('Invalid or expired Google') || error.message?.includes('not configured')) {
+      return sendError(res, HTTP_STATUS.UNAUTHORIZED, error.message);
+    }
+    next(error);
+  }
+};
+
+
+// One-time wallet bonus for finishing onboarding — the only tokens a fresh
+// account should have until the user actually logs something.
+const PROFILE_COMPLETE_BONUS = 20;
 
 export const onboarding = async (req, res, next) => {
   try {
     const { dateOfBirth, gender, phone, profilePicture } = req.body;
+
+    const existingUser = await User.findById(req.userId);
+    if (!existingUser) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, ERROR_MESSAGES.USER_NOT_FOUND);
+    }
+
+    const isFirstCompletion = !existingUser.isProfileComplete;
+
     const updates = {
       isProfileComplete: true,
       ...pickDefined(
         { dateOfBirth, gender, phone, profilePicture },
         ['dateOfBirth', 'gender', 'phone', 'profilePicture']
       ),
+      ...(isFirstCompletion && {
+        walletBalance: (existingUser.walletBalance || 0) + PROFILE_COMPLETE_BONUS,
+      }),
     };
 
     const updatedUser = await User.findByIdAndUpdate(
@@ -302,10 +532,14 @@ export const getDashboardSummary = async (req, res, next) => {
       log.note?.trim() || (log.symptoms || []).length > 0 || (log.flow && log.flow !== 'none')
     ).length;
 
-    const currentStreak = calculateTrackingStreak(logs);
-    if (user.streakCount !== currentStreak) {
-      user.streakCount = currentStreak;
-      await user.save();
+    // A brand-new account has no logs yet — leave the default streakCount (1,
+    // for "day one") alone until real tracking activity exists to derive from.
+    if (logs.length > 0) {
+      const currentStreak = calculateTrackingStreak(logs);
+      if (user.streakCount !== currentStreak) {
+        user.streakCount = currentStreak;
+        await user.save();
+      }
     }
 
     const today = todayDateKey();

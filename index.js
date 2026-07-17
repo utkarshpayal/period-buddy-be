@@ -1,7 +1,7 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
 import { connectDB } from './src/config/database.js';
 import { seedDatabase } from './src/utils/seeder.js';
@@ -32,9 +32,7 @@ import forestRoutes from './src/routes/forestRoutes.js';
 import buddyRoutes from './src/routes/buddyRoutes.js';
 import newsletterRoutes from './src/routes/newsletterRoutes.js';
 import contactRoutes from './src/routes/contactRoutes.js';
-
-// Load environment variables
-dotenv.config();
+import uploadRoutes from './src/routes/uploadRoutes.js';
 
 const app = express();
 
@@ -108,6 +106,7 @@ app.use('/api/forest', forestRoutes);
 app.use('/api/buddies', buddyRoutes);
 app.use('/api/newsletter', newsletterRoutes);
 app.use('/api/contact', contactRoutes);
+app.use('/api/upload', uploadRoutes);
 
 /* ──────────────────────────────────────────────────────────
    Error Handling

@@ -200,6 +200,29 @@ export const getNewsletterWelcomeTemplate = (email) => {
 };
 
 /**
+ * Template for Signup / Resend OTP verification email
+ */
+export const getOtpEmailTemplate = ({ firstName, otp, expiryMinutes }) => {
+  const content = `
+    <span class="badge">Verify your email</span>
+    <h2 style="margin-top: 0; color: #2E3A33; font-size: 24px; font-weight: 600;">Hi ${firstName || 'there'},</h2>
+    <p>Use the code below to verify your email and finish creating your Nura account.</p>
+
+    <div style="text-align: center; margin: 32px 0;">
+      <span style="display: inline-block; font-family: 'Courier New', monospace; font-size: 36px; font-weight: 700; letter-spacing: 10px; color: #2E3A33; background-color: #F2EBE5; padding: 16px 24px; border-radius: 12px;">
+        ${otp}
+      </span>
+    </div>
+
+    <p>This code expires in <strong>${expiryMinutes} minutes</strong>. If you didn't request this, you can safely ignore this email.</p>
+    <div class="divider"></div>
+    <p style="margin-bottom: 0;">Warmly,</p>
+    <p style="font-weight: 600; margin-top: 4px; color: #8FA89B;">The Nura Team</p>
+  `;
+  return emailLayout("Your Nura verification code", content);
+};
+
+/**
  * Template for Contact Form Submission Notification (Sent to Admin/Team)
  */
 export const getContactNotificationTemplate = ({ name, email, topic, message }) => {

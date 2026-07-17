@@ -27,10 +27,22 @@ const userSchema = new mongoose.Schema(
       match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please provide a valid email'],
     },
     password: {
+      // Not required for Google-only accounts (no googleId => must have a password).
       type: String,
-      required: true,
+      required: function () { return !this.googleId; },
       minlength: 8,
       select: false,
+    },
+    googleId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
+    authProvider: {
+      type: String,
+      enum: ['local', 'google'],
+      default: 'local',
     },
     phone: { type: String, trim: true },
     dateOfBirth: { type: Date },
@@ -53,8 +65,8 @@ const userSchema = new mongoose.Schema(
     // Rewards — walletBalance replaces tokensEarned
     walletBalance: { type: Number, default: 0 },
 
-    // Streaks
-    streakCount: { type: Number, default: 0 },
+    // Streaks — starts at 1 for the day the account is created
+    streakCount: { type: Number, default: 1 },
     lastStreakDate: { type: String }, // 'YYYY-MM-DD'
 
     // Locale / notification
@@ -90,6 +102,7 @@ const userSchema = new mongoose.Schema(
 // Hash password before saving
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
+  if (this.$locals.skipPasswordHash) return next();
 
   try {
     this.password = await hashPassword(this.password);

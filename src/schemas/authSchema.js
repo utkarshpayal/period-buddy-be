@@ -74,6 +74,42 @@ export const validateSignup = [
     .withMessage('Invalid gender'),
 ];
 
+export const validateVerifyOtp = [
+  body('email')
+    .trim()
+    .notEmpty()
+    .withMessage('Email is required')
+    .isEmail()
+    .withMessage(ERROR_MESSAGES.INVALID_EMAIL)
+    .normalizeEmail({ gmail_remove_dots: false }),
+
+  body('otp')
+    .trim()
+    .notEmpty()
+    .withMessage('Verification code is required')
+    .isLength({ min: 6, max: 6 })
+    .withMessage('Verification code must be 6 digits')
+    .isNumeric()
+    .withMessage('Verification code must be numeric'),
+];
+
+export const validateResendOtp = [
+  body('email')
+    .trim()
+    .notEmpty()
+    .withMessage('Email is required')
+    .isEmail()
+    .withMessage(ERROR_MESSAGES.INVALID_EMAIL)
+    .normalizeEmail({ gmail_remove_dots: false }),
+];
+
+export const validateGoogleAuth = [
+  body('idToken')
+    .trim()
+    .notEmpty()
+    .withMessage(ERROR_MESSAGES.GOOGLE_TOKEN_MISSING),
+];
+
 export const validateLogin = [
   body('email')
     .trim()
