@@ -98,9 +98,9 @@ export const initWebSocket = (server) => {
           }));
         } else if (type === 'message') {
           if (!room || !text?.trim()) return;
-          
+
           logger.info('ws_message_received', { userId, room, text: text.substring(0, 50) });
-          
+
           // Broadcast to the room
           broadcastToRoom(room, {
             sender: 'user',
@@ -108,6 +108,26 @@ export const initWebSocket = (server) => {
             sentAt: new Date().toISOString(),
             userId
           });
+        } else if (room && room.startsWith('buddy_') && type) {
+          // Period Buddy video-call signaling (call_request/accept/decline/
+          // end, webrtc_offer/answer/ice_candidate). Each side's own
+          // buddy_<id> room is keyed by the OTHER person's userId (see
+          // BuddyMatch.matchKey in buddyController.js), so — unlike a normal
+          // shared room — the counterpart is always listening on
+          // buddy_<senderUserId>, not on the room name the sender itself
+          // joined. Rewrite `room` to what the counterpart expects before
+          // relaying, and never echo back to the sender.
+          if (!userId) return;
+
+          const counterpartRoom = `buddy_${userId}`;
+          logger.info('ws_signal_relay', { userId, fromRoom: room, toRoom: counterpartRoom, signalType: type });
+
+          if (rooms.has(counterpartRoom)) {
+            const forwarded = JSON.stringify({ ...parsedMessage, room: counterpartRoom });
+            for (const client of rooms.get(counterpartRoom)) {
+              if (client.readyState === 1) client.send(forwarded);
+            }
+          }
         }
       } catch (err) {
         logger.error('ws_message_error', { error: err.message });

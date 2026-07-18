@@ -72,6 +72,11 @@ export const validateSignup = [
     .optional()
     .isIn(['male', 'female', 'other', 'prefer_not_to_say'])
     .withMessage('Invalid gender'),
+
+  body('role')
+    .optional()
+    .isIn(['user', 'partner'])
+    .withMessage('Invalid role'),
 ];
 
 export const validateVerifyOtp = [

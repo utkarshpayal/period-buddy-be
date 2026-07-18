@@ -1,4 +1,6 @@
 import mongoose from 'mongoose';
+import User from './User.js';
+import { sendPushNotification } from '../utils/fcm.js';
 
 /** Notification — in-app notification records. */
 const notificationSchema = new mongoose.Schema(
@@ -30,5 +32,24 @@ const notificationSchema = new mongoose.Schema(
 );
 
 notificationSchema.index({ userId: 1, isRead: 1, createdAt: -1 });
+
+notificationSchema.post('save', async function (doc) {
+  try {
+    const user = await User.findById(doc.userId).select('notificationToken');
+    if (user && user.notificationToken) {
+      await sendPushNotification(user.notificationToken, {
+        title: doc.title,
+        body: doc.body,
+        data: {
+          notificationId: String(doc._id),
+          type: doc.type,
+          ...(doc.data || {}),
+        },
+      });
+    }
+  } catch (error) {
+    console.error('Failed to send push notification on notification save:', error);
+  }
+});
 
 export default mongoose.model('Notification', notificationSchema);

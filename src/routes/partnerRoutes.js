@@ -60,4 +60,18 @@ router.post('/message', authenticate, partnerController.sendMessage);
  */
 router.delete('/disconnect', authenticate, partnerController.disconnectPartner);
 
+/**
+ * @route   GET /api/partner/notifications
+ * @desc    Get partner notifications
+ * @access  Private
+ */
+router.get('/notifications', authenticate, partnerController.getNotifications);
+
+/**
+ * @route   POST /api/partner/notifications/:id/read
+ * @desc    Mark partner notification as read
+ * @access  Private
+ */
+router.post('/notifications/:id/read', authenticate, partnerController.markNotificationAsRead);
+
 export default router;

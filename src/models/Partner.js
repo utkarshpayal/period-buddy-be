@@ -16,11 +16,14 @@ const partnerSchema = new mongoose.Schema(
     inviteCode: { type: String, unique: true, sparse: true },
     inviteCodeExpiry: { type: Date },
     isConnected: { type: Boolean, default: false },
+    // 'owner' = this account's data is what gets shared (they generated the invite code).
+    // 'viewer' = this account connected using someone else's code and only sees shared data.
+    role: { type: String, enum: ['owner', 'viewer', null], default: null },
     connectedAt: { type: Date },
     permissions: {
       shareCyclePhase: { type: Boolean, default: true },
       shareSymptoms: { type: Boolean, default: false },
-      shareIntimacyLog: { type: Boolean, default: true },
+      shareIntimacyLog: { type: Boolean, default: false },
       shareAlerts: { type: Boolean, default: true },
     },
 

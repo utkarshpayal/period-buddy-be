@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "916000783427",
+    "project_id": "the-nura-2b4a2",
+    "storage_bucket": "the-nura-2b4a2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:916000783427:android:0eee319b0b30a9015ce8f6",
+        "android_client_info": {
+          "package_name": "com.uvin124.thenura"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDwuwQkQjeLDsi8dG6y7tv4utQu122yAIQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -4,6 +4,7 @@ import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
+import { createPartnerNotification } from './partnerController.js';
 import {
   dateFromDateKey,
   isValidObjectId,
@@ -105,6 +106,15 @@ export const saveCycleLog = async (req, res, next) => {
     userUpdates.$set = { streakCount: currentStreak };
 
     await User.findByIdAndUpdate(req.userId, userUpdates);
+
+    const updatedUser = await User.findById(req.userId).select('firstName lastName');
+    const name = updatedUser ? `${updatedUser.firstName}` : 'Your partner';
+    await createPartnerNotification(
+      req.userId,
+      'partner_message',
+      'Cycle Log Updated 📝',
+      `${name} updated their cycle log for ${dateKey}.`
+    );
 
     logger.info('cycle_log_saved', {
       action: 'cycle_log_saved',
@@ -230,6 +240,15 @@ export const saveCycleSettings = async (req, res, next) => {
       { userId: req.userId },
       updates,
       { new: true, upsert: true, runValidators: true }
+    );
+
+    const updatedUser = await User.findById(req.userId).select('firstName lastName');
+    const name = updatedUser ? `${updatedUser.firstName}` : 'Your partner';
+    await createPartnerNotification(
+      req.userId,
+      'system',
+      'Cycle Settings Updated ⚙️',
+      `${name} updated their cycle parameters.`
     );
 
     logger.info('cycle_settings_saved', { action: 'cycle_settings_saved', userId: req.userId, cycleLength, periodLength });

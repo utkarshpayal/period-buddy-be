@@ -23,6 +23,7 @@ import {
 import { sendMail } from '../utils/mailer.js';
 import { getOtpEmailTemplate } from '../templates/emailTemplates.js';
 import { verifyGoogleIdToken } from '../utils/googleAuth.js';
+import logger from '../utils/logger.js';
 
 const sendOtpEmail = async ({ email, firstName, otp }) => {
   await sendMail({
@@ -41,7 +42,7 @@ const sendOtpEmail = async ({ email, firstName, otp }) => {
  */
 export const signup = async (req, res, next) => {
   try {
-    const { firstName, lastName, email, password, phone, dateOfBirth, gender } = req.body;
+    const { firstName, lastName, email, password, phone, dateOfBirth, gender, role } = req.body;
     const normalizedEmail = String(email).trim().toLowerCase();
 
     // Check if a verified user already exists
@@ -64,6 +65,7 @@ export const signup = async (req, res, next) => {
         phone,
         dateOfBirth,
         gender,
+        role: role || 'user',
         otpHash,
         otpExpiresAt: getOtpExpiry(),
         otpAttempts: 0,
@@ -126,7 +128,7 @@ export const verifyOtp = async (req, res, next) => {
       phone: pending.phone,
       dateOfBirth: pending.dateOfBirth,
       gender: pending.gender,
-      role: userRoleEnum.USER,
+      role: pending.role || userRoleEnum.USER,
       isEmailVerified: true,
     });
     // Password is already hashed (it came from PendingSignup) — skip the
@@ -257,7 +259,7 @@ export const login = async (req, res, next) => {
  */
 export const googleAuth = async (req, res, next) => {
   try {
-    const { idToken } = req.body;
+    const { idToken, role } = req.body;
 
     const payload = await verifyGoogleIdToken(idToken);
     const { sub: googleId, email, given_name: givenName, family_name: familyName, picture, email_verified: emailVerified } = payload;
@@ -304,7 +306,7 @@ export const googleAuth = async (req, res, next) => {
         authProvider: 'google',
         profilePicture: picture,
         isEmailVerified: Boolean(emailVerified),
-        role: userRoleEnum.USER,
+        role: role && ['user', 'partner'].includes(role) ? role : userRoleEnum.USER,
         lastLogin: new Date(),
       });
       await user.save();
@@ -555,6 +557,33 @@ export const getDashboardSummary = async (req, res, next) => {
       activeHabits: habits.length,
       predictions,
       recentLogs: logs.slice(0, 7),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateFcmToken = async (req, res, next) => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Token is required');
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.userId,
+      { notificationToken: token },
+      { new: true }
+    );
+
+    if (!user) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, ERROR_MESSAGES.USER_NOT_FOUND);
+    }
+
+    logger.info('fcm_token_updated', { userId: req.userId, token });
+
+    return sendResponse(res, HTTP_STATUS.OK, 'FCM token updated successfully', {
+      notificationToken: user.notificationToken,
     });
   } catch (error) {
     next(error);

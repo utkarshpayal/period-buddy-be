@@ -102,4 +102,11 @@ router.delete('/delete-account', authenticate, validateDeleteAccount, handleVali
  */
 router.get('/dashboard', authenticate, authController.getDashboardSummary);
 
+/**
+ * @route   POST /api/auth/fcm-token
+ * @desc    Update FCM/Push Notification token for the authenticated user
+ * @access  Private
+ */
+router.post('/fcm-token', authenticate, authController.updateFcmToken);
+
 export default router;

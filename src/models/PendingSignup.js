@@ -18,6 +18,7 @@ const pendingSignupSchema = new mongoose.Schema(
     phone: { type: String, trim: true },
     dateOfBirth: { type: Date },
     gender: { type: String },
+    role: { type: String, enum: ['user', 'partner'], default: 'user' },
 
     otpHash: { type: String, required: true },
     otpExpiresAt: { type: Date, required: true },
