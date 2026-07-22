@@ -233,15 +233,29 @@ export const createQuestionAnswer = async (req, res, next) => {
 
     const slug = await createUniqueSlug(question);
     const qa = await QuestionAnswer.create({
-      ...req.body,
       question: question.trim(),
       answer: answer.trim(),
+      shortAnswer: req.body.shortAnswer,
       category,
-      tags: normalizeStringArray(req.body.tags),
-      symptoms: normalizeStringArray(req.body.symptoms),
+      subCategory: req.body.subCategory,
       bodyPart: normalizeStringArray(req.body.bodyPart),
       gender: normalizeStringArray(req.body.gender),
       ageGroups: normalizeStringArray(req.body.ageGroups),
+      tags: normalizeStringArray(req.body.tags),
+      symptoms: normalizeStringArray(req.body.symptoms),
+      relatedProducts: normalizeStringArray(req.body.relatedProducts),
+      keywords: normalizeStringArray(req.body.keywords),
+      difficultyLevel: req.body.difficultyLevel,
+      contentType: req.body.contentType,
+      language: req.body.language,
+      isSensitive: req.body.isSensitive,
+      isPublished: req.body.isPublished,
+      isFeatured: req.body.isFeatured,
+      sourceLinks: normalizeStringArray(req.body.sourceLinks),
+      reviewedBy: req.body.reviewedBy,
+      medicallyReviewed: req.body.medicallyReviewed,
+      seoTitle: req.body.seoTitle,
+      seoDescription: req.body.seoDescription,
       slug,
     });
 

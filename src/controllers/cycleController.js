@@ -35,6 +35,7 @@ export const saveCycleLog = async (req, res, next) => {
       energy,
       symptoms,
       note,
+      isIntimate,
       sleepHours,
       waterIntake,
       weight,
@@ -73,6 +74,7 @@ export const saveCycleLog = async (req, res, next) => {
         energy,
         symptoms: normalizeStringArray(symptoms),
         note: note?.trim(),
+        isIntimate: typeof isIntimate === 'boolean' ? isIntimate : undefined,
         cycleDay: normalizedCycleDay,
         phase,
         rewardPoints: tokensEarned,
@@ -84,7 +86,7 @@ export const saveCycleLog = async (req, res, next) => {
         medication: medication !== undefined ? normalizeStringArray(medication) : undefined,
       },
       [
-        'date', 'flow', 'mood', 'energy', 'symptoms', 'note', 'cycleDay', 'phase',
+        'date', 'flow', 'mood', 'energy', 'symptoms', 'note', 'isIntimate', 'cycleDay', 'phase',
         'rewardPoints', 'sleepHours', 'waterIntake', 'weight',
         'temperature', 'stressLevel', 'medication'
       ]

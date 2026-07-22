@@ -79,7 +79,7 @@ export const connectPartner = async (req, res, next) => {
     }
 
     const ownerUser = await User.findById(partnerProfile.userId);
-    if (!ownerUser || ownerUser.role !== 'user') {
+    if (!ownerUser || ownerUser.role === 'partner') {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'You can only connect to a regular User account');
     }
 
@@ -257,7 +257,10 @@ export const getPartnerSharedData = async (req, res, next) => {
     }
 
     if (perms.shareIntimacyLog) {
-      const intimacyLogs = await CycleLog.find({ userId: myProfile.partnerId, note: { $ne: '' } })
+      // Only days explicitly tagged `isIntimate` — a day's `note` is a
+      // free-text diary field (symptoms, mood, anything) and was previously
+      // used as the intimacy signal, which leaked unrelated private notes.
+      const intimacyLogs = await CycleLog.find({ userId: myProfile.partnerId, isIntimate: true })
         .sort({ dateKey: -1 })
         .limit(7)
         .select('dateKey note');

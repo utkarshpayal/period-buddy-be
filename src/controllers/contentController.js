@@ -143,11 +143,6 @@ const addVisibilityFilter = (filter, status, statusField) => {
   return true;
 };
 
-const getSortTime = (item) => {
-  const date = item.updatedAt || item.publishedAt || item.createdAt;
-  return date ? new Date(date).getTime() : 0;
-};
-
 const toPlain = (document) => (document?.toObject ? document.toObject() : document);
 
 const serializeBlog = (document, options = {}) => {
@@ -410,26 +405,25 @@ export const listContent = async (req, res, next) => {
 
       return sendResponse(res, HTTP_STATUS.OK, 'Content fetched', {
         type: requestedType,
-        items: documents.map((document) => config.serialize(document)),
+        items: documents.map((document) => config.serialize(document, { includeBody: true })),
         pagination: buildPagination({ page, limit, total }),
       });
     }
 
-    const perTypeLimit = skip + limit;
+    // Content types are unrelated resources (different schemas, different
+    // admin tabs) and must never be mixed into one interleaved list — each
+    // type is fetched in full and kept in its own bucket, so adding to one
+    // type can never push another type out of view.
     const queryResults = await Promise.all(CONTENT_TYPES.map(async (type) => {
       const config = CONTENT_CONFIG[type];
       const filter = config.buildFilter(req.query);
       if (!filter) return { invalid: true };
 
-      const [documents, total] = await Promise.all([
-        config.Model.find(filter).sort(config.sort).limit(perTypeLimit),
-        config.Model.countDocuments(filter),
-      ]);
+      const documents = await config.Model.find(filter).sort(config.sort);
 
       return {
         type,
-        total,
-        items: documents.map((document) => config.serialize(document)),
+        items: documents.map((document) => config.serialize(document, { includeBody: true })),
       };
     }));
 
@@ -437,16 +431,15 @@ export const listContent = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid status');
     }
 
-    const items = queryResults
-      .flatMap((result) => result.items)
-      .sort((a, b) => getSortTime(b) - getSortTime(a));
-    const total = queryResults.reduce((sum, result) => sum + result.total, 0);
+    const content = Object.fromEntries(queryResults.map((result) => [result.type, result.items]));
+    const totalsByType = Object.fromEntries(queryResults.map((result) => [result.type, result.items.length]));
+    const total = queryResults.reduce((sum, result) => sum + result.items.length, 0);
 
     return sendResponse(res, HTTP_STATUS.OK, 'Content fetched', {
       type: 'all',
-      items: items.slice(skip, skip + limit),
-      pagination: buildPagination({ page, limit, total }),
-      totalsByType: Object.fromEntries(queryResults.map((result) => [result.type, result.total])),
+      content,
+      total,
+      totalsByType,
     });
   } catch (error) {
     next(error);
@@ -544,17 +537,28 @@ const createQuestionAnswer = async (body) => {
 
   const slug = await createUniqueSlug(QuestionAnswer, question);
   const qa = await QuestionAnswer.create({
-    ...body,
     question,
     answer,
+    shortAnswer: trimOrUndefined(body.shortAnswer),
     category: normalizeQuestionCategory(body.category),
+    subCategory: trimOrUndefined(body.subCategory),
     bodyPart: normalizeStringArray(body.bodyPart),
     gender: normalizeStringArray(body.gender),
     ageGroups: normalizeStringArray(body.ageGroups),
     tags: normalizeStringArray(body.tags),
     symptoms: normalizeStringArray(body.symptoms),
     relatedProducts: normalizeStringArray(body.relatedProducts),
+    keywords: normalizeStringArray(body.keywords),
+    difficultyLevel: trimOrUndefined(body.difficultyLevel),
+    contentType: trimOrUndefined(body.contentType),
+    language: trimOrUndefined(body.language),
+    isSensitive: normalizeBoolean(body.isSensitive),
+    isFeatured: normalizeBoolean(body.isFeatured),
     sourceLinks: normalizeStringArray(body.sourceLinks),
+    reviewedBy: trimOrUndefined(body.reviewedBy),
+    medicallyReviewed: normalizeBoolean(body.medicallyReviewed),
+    seoTitle: trimOrUndefined(body.seoTitle),
+    seoDescription: trimOrUndefined(body.seoDescription),
     isPublished: visibility.value,
     slug,
   });

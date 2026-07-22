@@ -109,23 +109,19 @@ export const initWebSocket = (server) => {
             userId
           });
         } else if (room && room.startsWith('buddy_') && type) {
-          // Period Buddy video-call signaling (call_request/accept/decline/
-          // end, webrtc_offer/answer/ice_candidate). Each side's own
-          // buddy_<id> room is keyed by the OTHER person's userId (see
-          // BuddyMatch.matchKey in buddyController.js), so — unlike a normal
-          // shared room — the counterpart is always listening on
-          // buddy_<senderUserId>, not on the room name the sender itself
-          // joined. Rewrite `room` to what the counterpart expects before
-          // relaying, and never echo back to the sender.
+          // Period Buddy presence/video-call signaling (presence_ping/pong/leave,
+          // call_request/accept/decline/end, webrtc_offer/answer/ice_candidate).
+          // Both sides of a pairing join the same buddy_<roomKey> room (roomKey is
+          // unique per pairing — see BuddyMatch.roomKey), so this is a plain shared-room
+          // broadcast; we just skip the sender itself to avoid it reacting to its own signal.
           if (!userId) return;
 
-          const counterpartRoom = `buddy_${userId}`;
-          logger.info('ws_signal_relay', { userId, fromRoom: room, toRoom: counterpartRoom, signalType: type });
+          logger.info('ws_signal_relay', { userId, room, signalType: type });
 
-          if (rooms.has(counterpartRoom)) {
-            const forwarded = JSON.stringify({ ...parsedMessage, room: counterpartRoom });
-            for (const client of rooms.get(counterpartRoom)) {
-              if (client.readyState === 1) client.send(forwarded);
+          if (rooms.has(room)) {
+            const forwarded = JSON.stringify(parsedMessage);
+            for (const client of rooms.get(room)) {
+              if (client !== ws && client.readyState === 1) client.send(forwarded);
             }
           }
         }

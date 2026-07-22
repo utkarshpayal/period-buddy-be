@@ -57,11 +57,14 @@ export const getBlogBySlug = async (req, res, next) => {
 /** GET /api/blogs/feed?type=all|blog|reel — Combined insight feed */
 export const getContentFeed = async (req, res, next) => {
   try {
-    const { type = 'all', search } = req.query;
+    const { type = 'all', search, category, tag } = req.query;
     const { page, limit } = getPagination(req.query, { limit: 10, maxLimit: 50 });
 
     const blogFilter = { isPublished: true };
     const reelFilter = { isActive: true };
+
+    if (category) blogFilter.category = category;
+    if (tag) blogFilter.tags = tag;
 
     if (search) {
       blogFilter.$or = [
@@ -91,6 +94,11 @@ export const getContentFeed = async (req, res, next) => {
         verified: true,
         summary: blog.excerpt,
         slug: blog.slug,
+        category: blog.category,
+        tags: blog.tags,
+        readTimeMinutes: blog.readTimeMinutes,
+        viewCount: blog.viewCount,
+        likeCount: blog.likeCount,
         publishedAt: blog.publishedAt || blog.createdAt,
       })),
       ...reels.map((reel) => ({

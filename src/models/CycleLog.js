@@ -22,6 +22,9 @@ const cycleLogSchema = new mongoose.Schema(
     energy: { type: String, enum: ['low', 'medium', 'steady', 'high'] },
     symptoms: [{ type: String, trim: true }],
     note: { type: String, trim: true, maxlength: 1000, default: '' },
+    // Explicitly user-tagged, separate from `note` — a day's note can be about
+    // anything (cramps, mood, medication), so it can't be used to infer this.
+    isIntimate: { type: Boolean, default: false },
     cycleDay: { type: Number },
     phase: { type: String, enum: ['period', 'follicular', 'ovulation', 'luteal'] },
 

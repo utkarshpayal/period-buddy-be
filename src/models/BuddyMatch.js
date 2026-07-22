@@ -10,6 +10,11 @@ const buddyMatchSchema = new mongoose.Schema(
     },
     buddyUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     matchKey: { type: String, required: true, trim: true },
+    // Unique per pairing (both sides of a real-user match share the same value) so a
+    // WebSocket room can never be reused by a later, unrelated pairing — unlike matchKey,
+    // which is just the counterpart's userId and gets reused if that person is later
+    // matched with someone else, letting a stale ex-buddy's socket bleed into a new pairing.
+    roomKey: { type: String, required: true, trim: true, index: true },
     alias: { type: String, required: true, trim: true },
     avatarSeed: { type: String, required: true, trim: true },
     cyclePhase: { type: String, trim: true },
