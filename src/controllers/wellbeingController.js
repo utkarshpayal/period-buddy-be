@@ -5,6 +5,24 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
 import { HEX_COLOR_REGEX, isValidObjectId, normalizeStringArray, pickDefined } from '../utils/apiHelpers.js';
 
+// A session shorter than this is treated as a bounce (accidental open, back
+// button, etc.) rather than a genuine read — it doesn't count toward the
+// real read-time average.
+const MIN_VIEW_SECONDS = 5;
+// Sanity cap — protects the average from a client that reports a bogus
+// duration (e.g. a tab left open overnight).
+const MAX_VIEW_SECONDS = 60 * 60;
+
+/** Effective read time: once enough real reader sessions have been tracked,
+ * that data replaces the admin's static estimate. */
+const withEffectiveReadTime = (resource) => {
+  const obj = resource.toObject ? resource.toObject() : resource;
+  if (obj.readSessionCount > 0) {
+    obj.estimatedReadTime = Math.max(1, Math.round(obj.totalReadSeconds / obj.readSessionCount / 60));
+  }
+  return obj;
+};
+
 const wellbeingDecks = {
   spark: [
     'What is one small, non-physical gesture that makes you feel loved or secure?',
@@ -42,7 +60,7 @@ export const getResources = async (req, res, next) => {
 
     logger.info('wellbeing_resources_fetched', { action: 'wellbeing_resources_fetched', type, count: resources.length });
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Resources fetched', resources);
+    return sendResponse(res, HTTP_STATUS.OK, 'Resources fetched', resources.map(withEffectiveReadTime));
   } catch (error) {
     next(error);
   }
@@ -57,7 +75,44 @@ export const getResourceById = async (req, res, next) => {
 
     const resource = await WellbeingResource.findOne({ _id: req.params.id, isActive: true });
     if (!resource) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Resource not found');
-    return sendResponse(res, HTTP_STATUS.OK, 'Resource', resource);
+    return sendResponse(res, HTTP_STATUS.OK, 'Resource', withEffectiveReadTime(resource));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/wellbeing/:id/track-view — Reports how long the reader actually
+ * had the resource open. Only sessions clearing MIN_VIEW_SECONDS count
+ * toward the real read-time average, so a bounce (opened by mistake, closed
+ * in under a second) doesn't skew it. */
+export const trackResourceView = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid resource id');
+    }
+
+    const durationSeconds = Number(req.body.durationSeconds);
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'A valid durationSeconds is required');
+    }
+
+    if (durationSeconds < MIN_VIEW_SECONDS) {
+      return sendResponse(res, HTTP_STATUS.OK, 'Session too short to count', { counted: false });
+    }
+
+    const clampedSeconds = Math.min(durationSeconds, MAX_VIEW_SECONDS);
+
+    const resource = await WellbeingResource.findByIdAndUpdate(
+      req.params.id,
+      { $inc: { totalReadSeconds: clampedSeconds, readSessionCount: 1 } },
+      { new: true }
+    );
+    if (!resource) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Resource not found');
+
+    return sendResponse(res, HTTP_STATUS.OK, 'View recorded', {
+      counted: true,
+      estimatedReadTime: withEffectiveReadTime(resource).estimatedReadTime,
+    });
   } catch (error) {
     next(error);
   }
@@ -66,7 +121,7 @@ export const getResourceById = async (req, res, next) => {
 /** POST /api/wellbeing — Admin: Create resource */
 export const createResource = async (req, res, next) => {
   try {
-    const { type, title, icon, color, summary, extendedGuide, items, order, estimatedReadTime, videoUrl, audioUrl } = req.body;
+    const { type, title, icon, color, summary, extendedGuide, items, order, videoUrl, audioUrl } = req.body;
 
     if (!type || !title || !summary) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'type, title, and summary are required');
@@ -84,7 +139,6 @@ export const createResource = async (req, res, next) => {
       extendedGuide: normalizeStringArray(extendedGuide),
       items,
       order,
-      estimatedReadTime: estimatedReadTime !== undefined ? Number(estimatedReadTime) : undefined,
       videoUrl: videoUrl?.trim(),
       audioUrl: audioUrl?.trim(),
     });
@@ -109,7 +163,7 @@ export const updateResource = async (req, res, next) => {
 
     const updates = pickDefined(req.body, [
       'type', 'title', 'icon', 'color', 'summary', 'extendedGuide', 'items', 'order', 'isActive',
-      'estimatedReadTime', 'videoUrl', 'audioUrl'
+      'videoUrl', 'audioUrl'
     ]);
     if (updates.extendedGuide !== undefined) updates.extendedGuide = normalizeStringArray(updates.extendedGuide);
 

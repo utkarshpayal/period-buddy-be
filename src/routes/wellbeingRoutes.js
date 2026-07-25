@@ -33,6 +33,13 @@ router.post('/games/:deck/draw', authenticate, wellbeingController.drawGameCard)
 router.get('/:id', authenticate, wellbeingController.getResourceById);
 
 /**
+ * @route   POST /api/wellbeing/:id/track-view
+ * @desc    Report real reading dwell time for a wellbeing resource
+ * @access  Private
+ */
+router.post('/:id/track-view', authenticate, wellbeingController.trackResourceView);
+
+/**
  * @route   POST /api/wellbeing
  * @desc    Admin: Create a wellbeing resource
  * @access  Admin

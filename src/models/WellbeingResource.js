@@ -14,8 +14,16 @@ const wellbeingResourceSchema = new mongoose.Schema(
     extendedGuide: [{ type: String }],
     items: { type: Number, default: 0 },
 
-    // New production fields
+    // Admin's initial estimate, shown until real reader sessions accumulate
+    // (see totalReadSeconds/readSessionCount below).
     estimatedReadTime: { type: Number, default: 0 }, // minutes
+
+    // Real dwell-time analytics, reported by the client when a reader closes
+    // the resource (see trackResourceView) — replaces the static
+    // estimatedReadTime once there's enough real data.
+    totalReadSeconds: { type: Number, default: 0 },
+    readSessionCount: { type: Number, default: 0 },
+
     videoUrl: { type: String, trim: true },
     audioUrl: { type: String, trim: true },
 
