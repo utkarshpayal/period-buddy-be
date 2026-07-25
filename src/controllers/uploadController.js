@@ -28,3 +28,33 @@ export const uploadFile = async (req, res, next) => {
     next(error);
   }
 };
+
+const CONTENT_MEDIA_FOLDERS = ['reels', 'audio', 'thumbnails'];
+
+/**
+ * Content-admin upload (reel video, guide audio, thumbnail/cover image).
+ * Namespaces every object under `content/<userId>/<folder>` so uploads from
+ * different admins land in their own S3 prefix and can be traced back to
+ * whoever uploaded them.
+ */
+export const uploadContentMedia = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.NO_FILE_UPLOADED);
+    }
+
+    const requestedFolder = (req.body.folder || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    const folder = CONTENT_MEDIA_FOLDERS.includes(requestedFolder) ? requestedFolder : 'uploads';
+
+    const { url, key } = await uploadBufferToS3({
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+      originalName: req.file.originalname,
+      folder: `content/${req.userId}/${folder}`,
+    });
+
+    return sendResponse(res, HTTP_STATUS.CREATED, SUCCESS_MESSAGES.FILE_UPLOADED, { url, key });
+  } catch (error) {
+    next(error);
+  }
+};

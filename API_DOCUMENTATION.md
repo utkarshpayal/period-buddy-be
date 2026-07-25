@@ -349,6 +349,31 @@ Wellbeing payload:
 }
 ```
 
+### POST `/api/content/media/upload`
+
+Uploads a reel video, guide audio, or thumbnail/cover image file to the `thenura` S3 bucket and returns its public URL. Used by the content admin app to let editors upload a file directly instead of pasting a URL — the returned `url` is then saved as `directMp4Url` (reel video), `audioUrl` (guide audio), or `imageUrl` (thumbnail/cover image) on the content record.
+
+Objects are namespaced under `content/<userId>/<folder>` in the bucket, so uploads from different admins land in their own prefix.
+
+Request: `multipart/form-data` with:
+
+- `file` — the video (`video/*`), audio (`audio/*`), or image (`image/*`) file, up to 300MB.
+- `folder` — `reels` for reel video, `audio` for guide audio companion, `thumbnails` for a thumbnail/cover image. Any other value falls back to `uploads`.
+
+Response:
+
+```json
+{
+  "success": true,
+  "statusCode": 201,
+  "message": "File uploaded successfully",
+  "data": {
+    "url": "https://thenura.s3.us-east-1.amazonaws.com/content/<userId>/reels/<uuid>.mp4",
+    "key": "content/<userId>/reels/<uuid>.mp4"
+  }
+}
+```
+
 ### GET `/api/content/:type/:idOrSlug`
 
 Returns one content item. Blogs and Q&A can be fetched by slug as well as id.
