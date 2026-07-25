@@ -25,6 +25,21 @@ const partnerSchema = new mongoose.Schema(
       shareSymptoms: { type: Boolean, default: false },
       shareIntimacyLog: { type: Boolean, default: false },
       shareAlerts: { type: Boolean, default: true },
+      // Separate opt-in from shareSymptoms — uploaded lab reports/prescriptions
+      // are more sensitive than daily mood/flow logs.
+      shareReports: { type: Boolean, default: false },
+    },
+
+    // Cache for the AI-generated partner care suggestions (see
+    // careSuggestionsAi.js) — regenerated only when new data has actually
+    // been logged, so the partner-view screen doesn't trigger a Sarvam call
+    // on every load.
+    careSuggestionsCache: {
+      generatedAt: { type: Date },
+      latestLogDateKey: { type: String },
+      suggestions: { type: Array, default: undefined },
+      dos: { type: [String], default: undefined },
+      donts: { type: [String], default: undefined },
     },
 
     // New production fields

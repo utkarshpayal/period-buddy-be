@@ -2,6 +2,7 @@ import Partner from '../models/Partner.js';
 import PartnerMessage from '../models/PartnerMessage.js';
 import User from '../models/User.js';
 import Notification from '../models/Notification.js';
+import Document from '../models/Document.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import CycleSettings from '../models/CycleSettings.js';
@@ -10,7 +11,9 @@ import logger from '../utils/logger.js';
 import crypto from 'crypto';
 import { computeCyclePredictions } from '../utils/cycle.js';
 import { broadcastToRoom } from '../config/websocket.js';
-import { generateCareSuggestions } from '../utils/caringEngine.js';
+import { generateCareSuggestions } from '../utils/careSuggestionsAi.js';
+
+const CARE_SUGGESTIONS_CACHE_MS = 24 * 60 * 60 * 1000;
 
 
 function generateCode() {
@@ -284,8 +287,49 @@ export const getPartnerSharedData = async (req, res, next) => {
         : [];
     }
 
-    // Generate care advice suggestions based on permissions and cycle/logs
-    data.careSuggestions = generateCareSuggestions(perms, data.cycle, data.recentSymptoms || []);
+    // Generate care advice suggestions based on permissions and cycle/logs —
+    // via Sarvam when configured (see careSuggestionsAi.js), falling back to
+    // the rule-based caringEngine otherwise. Cached on the owner's Partner
+    // doc and only regenerated when new data has actually been logged (or
+    // the cache is a day old), so this screen doesn't trigger an AI call on
+    // every load.
+    const latestLogDateKey = data.recentSymptoms?.[0]?.dateKey || null;
+    const cache = partnerProfile?.careSuggestionsCache;
+    const cacheIsFresh =
+      cache?.generatedAt &&
+      (latestLogDateKey
+        ? cache.latestLogDateKey === latestLogDateKey
+        : Date.now() - new Date(cache.generatedAt).getTime() < CARE_SUGGESTIONS_CACHE_MS);
+
+    if (cacheIsFresh) {
+      data.careSuggestions = { suggestions: cache.suggestions || [], dos: cache.dos || [], donts: cache.donts || [] };
+    } else {
+      let documents = [];
+      if (perms.shareReports) {
+        documents = await Document.find({ userId: myProfile.partnerId })
+          .sort({ documentDate: -1 })
+          .limit(5)
+          .select('title docType documentDate extractedText');
+      }
+
+      data.careSuggestions = await generateCareSuggestions({
+        permissions: perms,
+        cycle: data.cycle,
+        recentLogs: data.recentSymptoms || [],
+        documents,
+      });
+
+      if (partnerProfile) {
+        partnerProfile.careSuggestionsCache = {
+          generatedAt: new Date(),
+          latestLogDateKey,
+          suggestions: data.careSuggestions.suggestions,
+          dos: data.careSuggestions.dos,
+          donts: data.careSuggestions.donts,
+        };
+        await partnerProfile.save();
+      }
+    }
 
     return sendResponse(res, HTTP_STATUS.OK, 'Partner shared data', data);
   } catch (error) {

@@ -7,6 +7,10 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
 import { escapeRegex, isValidObjectId } from '../utils/apiHelpers.js';
 import { broadcastToRoom } from '../config/websocket.js';
+import { createOrder, verifySignature, isPaymentConfigured } from '../utils/razorpayClient.js';
+
+const doctorGreeting = (doctor) =>
+  `Hello! I am ${doctor.name}. Your confidential dashboard log has been successfully shared. How can I guide your wellness milestones today?`;
 
 /** GET /api/consultation/doctors?search= — List all available doctors */
 export const getDoctors = async (req, res, next) => {
@@ -31,9 +35,15 @@ export const getDoctors = async (req, res, next) => {
   }
 };
 
-/** POST /api/consultation/book — Book a consultation (create + process payment) */
-export const bookConsultation = async (req, res, next) => {
+/** POST /api/consultation/order — Create a Razorpay order + a pending
+ * Consultation for it. No session access is granted until /verify confirms
+ * the payment actually went through. */
+export const createConsultationOrder = async (req, res, next) => {
   try {
+    if (!isPaymentConfigured()) {
+      return sendError(res, HTTP_STATUS.SERVICE_UNAVAILABLE, 'Payments are not configured on the server');
+    }
+
     const { doctorId } = req.body;
     if (!isValidObjectId(doctorId)) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Valid doctorId is required');
@@ -49,7 +59,7 @@ export const bookConsultation = async (req, res, next) => {
       status: { $in: ['paid', 'active'] },
     }).populate('doctorId');
     if (existing) {
-      return sendResponse(res, HTTP_STATUS.OK, 'Consultation already booked', existing);
+      return sendResponse(res, HTTP_STATUS.OK, 'Consultation already booked', { consultation: existing });
     }
 
     const consultation = await Consultation.create({
@@ -57,41 +67,122 @@ export const bookConsultation = async (req, res, next) => {
       doctorId,
       amountPaid: doctor.pricePerSession,
       currency: doctor.currency,
-      status: 'paid',
-      paymentStatus: 'paid',
-      startedAt: new Date(),
-      messages: [
-        {
-          sender: 'doctor',
-          text: `Hello! I am ${doctor.name}. Your confidential dashboard log has been successfully shared. How can I guide your wellness milestones today?`,
-        },
-      ],
+      status: 'pending',
+      paymentStatus: 'unpaid',
     });
+
+    const order = await createOrder({
+      // Doctor.pricePerSession is a whole-unit amount (e.g. rupees); Razorpay
+      // expects the currency's smallest unit (paise for INR).
+      amountMinorUnits: Math.round(doctor.pricePerSession * 100),
+      currency: doctor.currency,
+      receipt: String(consultation._id),
+      notes: { userId: String(req.userId), doctorId: String(doctorId), consultationId: String(consultation._id) },
+    });
+
+    consultation.razorpayOrderId = order.id;
+    await consultation.save();
+
+    logger.info('consultation_order_created', {
+      action: 'consultation_order_created',
+      userId: req.userId,
+      doctorId,
+      consultationId: consultation._id,
+      orderId: order.id,
+      amount: doctor.pricePerSession,
+    });
+
+    return sendResponse(res, HTTP_STATUS.CREATED, 'Payment order created', {
+      consultationId: consultation._id,
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      keyId: process.env.RAZORPAY_KEY_ID,
+    });
+  } catch (error) {
+    logger.error('consultation_order_error', { userId: req.userId, error: error.message });
+    next(error);
+  }
+};
+
+/** POST /api/consultation/verify — Verify a completed Razorpay checkout and,
+ * only on a valid signature, activate the Consultation session. */
+export const verifyConsultationPayment = async (req, res, next) => {
+  try {
+    const { consultationId, razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+    if (
+      !isValidObjectId(consultationId) ||
+      !razorpay_order_id ||
+      !razorpay_payment_id ||
+      !razorpay_signature
+    ) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Missing payment verification fields');
+    }
+
+    const consultation = await Consultation.findOne({
+      _id: consultationId,
+      userId: req.userId,
+      razorpayOrderId: razorpay_order_id,
+    });
+    if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation order not found');
+
+    if (consultation.status === 'paid' || consultation.status === 'active') {
+      await consultation.populate('doctorId');
+      return sendResponse(res, HTTP_STATUS.OK, 'Consultation already booked', consultation);
+    }
+
+    const isValid = verifySignature({
+      orderId: razorpay_order_id,
+      paymentId: razorpay_payment_id,
+      signature: razorpay_signature,
+    });
+
+    if (!isValid) {
+      consultation.paymentStatus = 'failed';
+      await consultation.save();
+      logger.error('consultation_payment_verify_failed', {
+        action: 'consultation_payment_verify_failed',
+        userId: req.userId,
+        consultationId,
+      });
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Payment verification failed');
+    }
+
+    const doctor = await Doctor.findById(consultation.doctorId);
+
+    consultation.status = 'paid';
+    consultation.paymentStatus = 'paid';
+    consultation.razorpayPaymentId = razorpay_payment_id;
+    consultation.startedAt = new Date();
+    consultation.messages = [{ sender: 'doctor', text: doctorGreeting(doctor) }];
+    await consultation.save();
 
     await ConsultationMessage.create({
       consultationId: consultation._id,
       sender: 'doctor',
-      text: `Hello! I am ${doctor.name}. Your confidential dashboard log has been successfully shared. How can I guide your wellness milestones today?`,
+      text: doctorGreeting(doctor),
     });
 
     // Award tokens for booking
     await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: 10 } });
     // Increment doctor consultation count
-    await Doctor.findByIdAndUpdate(doctorId, { $inc: { totalConsultations: 1 } });
+    await Doctor.findByIdAndUpdate(consultation.doctorId, { $inc: { totalConsultations: 1 } });
 
     logger.info('consultation_booked', {
       action: 'consultation_booked',
       userId: req.userId,
-      doctorId,
+      doctorId: consultation.doctorId,
       doctorName: doctor.name,
-      amount: doctor.pricePerSession,
+      amount: consultation.amountPaid,
+      paymentId: razorpay_payment_id,
     });
 
     await consultation.populate('doctorId');
 
     return sendResponse(res, HTTP_STATUS.CREATED, 'Consultation booked successfully', consultation);
   } catch (error) {
-    logger.error('consultation_book_error', { userId: req.userId, error: error.message });
+    logger.error('consultation_verify_error', { userId: req.userId, error: error.message });
     next(error);
   }
 };

@@ -95,6 +95,13 @@ const userSchema = new mongoose.Schema(
         reportedAt: { type: Date, default: Date.now },
       },
     ],
+
+    // Bookmarked blog posts (used by blogController)
+    savedBlogs: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Blog' }],
+
+    // Preferences (Profile > Preferences & Settings)
+    notificationsEnabled: { type: Boolean, default: true },
+    anonymousCommunityMode: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

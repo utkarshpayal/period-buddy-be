@@ -19,11 +19,25 @@ router.get('/', authenticate, blogController.getBlogs);
 router.get('/feed', authenticate, blogController.getContentFeed);
 
 /**
+ * @route   GET /api/blogs/bookmarks
+ * @desc    Get all of the current user's bookmarked blogs
+ * @access  Private
+ */
+router.get('/bookmarks', authenticate, blogController.getBookmarkedBlogs);
+
+/**
  * @route   GET /api/blogs/:slug
- * @desc    Get a single blog post by slug + increment view count
+ * @desc    Get a single blog post by slug
  * @access  Private
  */
 router.get('/:slug', authenticate, blogController.getBlogBySlug);
+
+/**
+ * @route   POST /api/blogs/:slug/translate
+ * @desc    Translate a blog's title + content into another language
+ * @access  Private
+ */
+router.post('/:slug/translate', authenticate, blogController.translateBlog);
 
 /**
  * @route   POST /api/blogs
@@ -52,5 +66,19 @@ router.delete('/:id', authenticate, authorize('admin'), blogController.deleteBlo
  * @access  Private
  */
 router.patch('/:id/like', authenticate, blogController.likeBlog);
+
+/**
+ * @route   POST /api/blogs/:id/bookmark
+ * @desc    Toggle bookmark on a blog post
+ * @access  Private
+ */
+router.post('/:id/bookmark', authenticate, blogController.toggleBookmark);
+
+/**
+ * @route   POST /api/blogs/:id/track-view
+ * @desc    Report real reading dwell time for a blog post
+ * @access  Private
+ */
+router.post('/:id/track-view', authenticate, blogController.trackBlogView);
 
 export default router;

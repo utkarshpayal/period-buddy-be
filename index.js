@@ -33,6 +33,9 @@ import buddyRoutes from './src/routes/buddyRoutes.js';
 import newsletterRoutes from './src/routes/newsletterRoutes.js';
 import contactRoutes from './src/routes/contactRoutes.js';
 import uploadRoutes from './src/routes/uploadRoutes.js';
+import documentRoutes from './src/routes/documentRoutes.js';
+import reportRoutes from './src/routes/reportRoutes.js';
+import speechRoutes from './src/routes/speechRoutes.js';
 
 const app = express();
 
@@ -108,6 +111,9 @@ app.use('/api/buddies', buddyRoutes);
 app.use('/api/newsletter', newsletterRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/documents', documentRoutes);
+app.use('/api/reports', reportRoutes);
+app.use('/api/speech', speechRoutes);
 
 /* ──────────────────────────────────────────────────────────
    Error Handling

@@ -417,6 +417,8 @@ export const updateProfile = async (req, res, next) => {
       'dateOfBirth',
       'gender',
       'profilePicture',
+      'notificationsEnabled',
+      'anonymousCommunityMode',
     ]);
 
     const user = await User.findByIdAndUpdate(

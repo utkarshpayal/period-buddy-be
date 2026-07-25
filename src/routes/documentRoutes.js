@@ -1,0 +1,32 @@
+import express from 'express';
+import multer from 'multer';
+import { authenticate } from '../middleware/authMiddleware.js';
+import * as documentController from '../controllers/documentController.js';
+
+const router = express.Router();
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB — scanned multi-page PDFs run larger than photos
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.startsWith('image/') && file.mimetype !== 'application/pdf') {
+      return cb(new Error('Only image or PDF uploads are supported'));
+    }
+    cb(null, true);
+  },
+});
+
+router.use(authenticate);
+
+// Registered ahead of the /:id route so "chat"/"summarize" are never
+// swallowed as a document id.
+router.get('/chat', documentController.getChatHistory);
+router.post('/chat', documentController.sendChatMessage);
+router.post('/summarize', documentController.summarizeDocuments);
+
+router.post('/', upload.single('file'), documentController.uploadDocument);
+router.get('/', documentController.listDocuments);
+router.get('/:id', documentController.getDocument);
+router.delete('/:id', documentController.deleteDocument);
+
+export default router;

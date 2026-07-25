@@ -183,6 +183,16 @@ export const validateProfileUpdate = [
 
   body('profilePicture')
     .customSanitizer(normalizeProfilePicture),
+
+  body('notificationsEnabled')
+    .optional()
+    .isBoolean()
+    .withMessage('notificationsEnabled must be a boolean'),
+
+  body('anonymousCommunityMode')
+    .optional()
+    .isBoolean()
+    .withMessage('anonymousCommunityMode must be a boolean'),
 ];
 
 export const validateChangePassword = [

@@ -1,5 +1,7 @@
 import QuestionAnswer from '../models/QuestionAnswer.js';
 import User from '../models/User.js';
+import CycleSettings from '../models/CycleSettings.js';
+import CycleLog from '../models/CycleLog.js';
 import slugify from 'slugify';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
@@ -11,6 +13,9 @@ import {
   normalizeStringArray,
   pickDefined,
 } from '../utils/apiHelpers.js';
+import { computeCyclePredictions } from '../utils/cycle.js';
+import { createChatCompletion, getLanguageLabel, isAiConfigured } from '../utils/sarvamClient.js';
+import logger from '../utils/logger.js';
 
 const DEFAULT_COMPANION_REPLY = 'That is a valid thing to wonder about. I do not have a precise match yet, but you can ask in everyday words about brown blood, period cramps, hygiene, discharge, PMS, contraception, cycle tracking, or intimacy.';
 const COMPANION_DISCLAIMER = 'Nura Companion shares general education and is not a diagnosis or emergency service.';
@@ -99,6 +104,54 @@ const QUESTION_CATEGORY_ALIASES = {
   symptoms: 'symptoms',
   tracking: 'tracking',
   wellness: 'health',
+};
+
+const COMPANION_SYSTEM_PROMPT =
+  "You are Nura Companion, a warm, non-judgmental sexual and reproductive health educator inside an anonymous period-tracking app's Q&A feature. Answer the user's question clearly and factually in a few short plain-language paragraphs — periods, the female and male body, sexual health, mental health, pregnancy, contraception, puberty, hygiene, and relationships are all fair territory, and none of it should be treated as shameful or off-limits. Never diagnose; point toward a clinician for anything that sounds concerning or urgent. Do not repeat a medical disclaimer — the app shows one separately. Do not ask the user follow-up questions or ask them to repeat identifying details; just answer what they asked.";
+
+const languageInstruction = (languageCode) =>
+  languageCode && languageCode !== 'en-IN' ? ` Respond in ${getLanguageLabel(languageCode)}, not English.` : '';
+
+const RECENT_LOG_COUNT = 5;
+
+/** Builds a short, judgment-free context block from the asker's own cycle
+ * data (when they're logged in) so the AI answer can be tailored to them —
+ * e.g. a cramps question lands differently for someone currently on day 2 of
+ * their period vs. mid-cycle. Anonymous/unauthenticated questions (no
+ * req.userId) get none of this and just get a solid general answer. */
+const buildPersonalizationContext = async (userId) => {
+  if (!userId) return null;
+
+  const [user, settings, recentLogs] = await Promise.all([
+    User.findById(userId).select('dateOfBirth gender'),
+    CycleSettings.findOne({ userId }),
+    CycleLog.find({ userId }).sort({ dateKey: -1 }).limit(RECENT_LOG_COUNT),
+  ]);
+
+  const lines = [];
+
+  if (user?.dateOfBirth) {
+    const age = Math.floor((Date.now() - new Date(user.dateOfBirth).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+    if (age > 0 && age < 100) lines.push(`Age: ${age}.`);
+  }
+  if (user?.gender) lines.push(`Gender: ${user.gender}.`);
+
+  if (settings?.lastPeriodStartDate) {
+    const predictions = computeCyclePredictions(settings);
+    lines.push(
+      `Currently on cycle day ${predictions.currentCycleDay} of a ~${predictions.cycleLength}-day cycle, in the ${predictions.currentPhase} phase. Next period expected in ${predictions.nextPeriodDaysAway} day(s).`
+    );
+    if (settings.trackingGoal) lines.push(`Tracking goal: ${settings.trackingGoal.replace(/_/g, ' ')}.`);
+  }
+
+  if (recentLogs.length) {
+    const recentSymptoms = [...new Set(recentLogs.flatMap((log) => log.symptoms || []))].slice(0, 8);
+    if (recentSymptoms.length) lines.push(`Recently logged symptoms: ${recentSymptoms.join(', ')}.`);
+    const recentMoods = [...new Set(recentLogs.map((log) => log.mood).filter(Boolean))];
+    if (recentMoods.length) lines.push(`Recent mood: ${recentMoods.join(', ')}.`);
+  }
+
+  return lines.length ? lines.join(' ') : null;
 };
 
 const fallbackKnowledge = [
@@ -321,6 +374,7 @@ export const getAllQuestionAnswers = async (req, res, next) => {
 export const askQuestion = async (req, res, next) => {
   try {
     const query = (req.body.question || req.query.question || req.query.search || '').trim();
+    const language = req.body.language || req.query.language;
     if (!query) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'question is required');
     }
@@ -332,14 +386,46 @@ export const askQuestion = async (req, res, next) => {
     let qa = null;
     let answer = '';
     let source = 'fallback';
+    let personalized = false;
 
     if (hasUrgentPattern(query)) {
       answer = URGENT_COMPANION_REPLY;
       source = 'urgent_safety';
     } else {
       qa = await findBestQuestionAnswer(query);
-      answer = qa?.answer || findFallbackAnswer(query) || DEFAULT_COMPANION_REPLY;
-      source = qa ? 'knowledge_base' : 'fallback';
+
+      if (qa) {
+        answer = qa.answer;
+        source = 'knowledge_base';
+      } else if (isAiConfigured()) {
+        try {
+          const personalization = await buildPersonalizationContext(req.userId);
+          answer = await createChatCompletion({
+            messages: [
+              {
+                role: 'system',
+                content:
+                  COMPANION_SYSTEM_PROMPT +
+                  languageInstruction(language) +
+                  (personalization
+                    ? `\n\nWhat we privately know about this person from their own cycle tracking (use it to tailor the answer where relevant, but never restate it back to them or mention that you were given it):\n${personalization}`
+                    : ''),
+              },
+              { role: 'user', content: query },
+            ],
+            maxTokens: 700,
+          });
+          personalized = Boolean(personalization);
+          source = personalized ? 'ai_personalized' : 'ai';
+        } catch (error) {
+          logger.error('companion_ai_error', { action: 'companion_ai_error', error: error.message, userId: req.userId });
+          answer = findFallbackAnswer(query) || DEFAULT_COMPANION_REPLY;
+          source = 'fallback';
+        }
+      } else {
+        answer = findFallbackAnswer(query) || DEFAULT_COMPANION_REPLY;
+        source = 'fallback';
+      }
     }
 
     if (qa) {
@@ -357,6 +443,7 @@ export const askQuestion = async (req, res, next) => {
       question: query,
       answer,
       source,
+      personalized,
       matchedQuestion: qa || null,
       suggestedQuestions: SUGGESTED_QUESTIONS,
       disclaimer: COMPANION_DISCLAIMER,

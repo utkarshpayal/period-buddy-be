@@ -12,11 +12,18 @@ const router = express.Router();
 router.get('/doctors', authenticate, consultationController.getDoctors);
 
 /**
- * @route   POST /api/consultation/book
- * @desc    Book & pay for a consultation session
+ * @route   POST /api/consultation/order
+ * @desc    Create a Razorpay order for a consultation session
  * @access  Private
  */
-router.post('/book', authenticate, consultationController.bookConsultation);
+router.post('/order', authenticate, consultationController.createConsultationOrder);
+
+/**
+ * @route   POST /api/consultation/verify
+ * @desc    Verify a completed Razorpay checkout and activate the session
+ * @access  Private
+ */
+router.post('/verify', authenticate, consultationController.verifyConsultationPayment);
 
 /**
  * @route   GET /api/consultation/my

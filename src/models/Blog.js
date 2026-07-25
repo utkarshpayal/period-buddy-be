@@ -20,7 +20,16 @@ const blogSchema = new mongoose.Schema(
     authorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     author: { type: String, trim: true, default: 'Period Buddy Team' },
 
+    // Admin's initial estimate, shown until real reader sessions accumulate
+    // (see totalReadSeconds/readSessionCount below).
     readTimeMinutes: { type: Number, default: 0 },
+
+    // Real dwell-time analytics, reported by the client when a reader closes
+    // the article (see trackBlogView) — replaces the static readTimeMinutes
+    // estimate once there's enough real data, and gates viewCount so a
+    // reader who bounced in under a second doesn't count as a "view".
+    totalReadSeconds: { type: Number, default: 0 },
+    readSessionCount: { type: Number, default: 0 },
 
     // SEO fields
     seoTitle: { type: String, trim: true },

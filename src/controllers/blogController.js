@@ -1,11 +1,63 @@
 import Blog from '../models/Blog.js';
 import Reel from '../models/Reel.js';
+import User from '../models/User.js';
 import slugify from 'slugify';
 import { blogStatusEnum } from '../enums/enums.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
 import { buildPagination, escapeRegex, getPagination, isValidObjectId, normalizeStringArray, pickDefined } from '../utils/apiHelpers.js';
+import { SUPPORTED_LANGUAGES, translateText, TRANSLATE_MAX_CHARS } from '../utils/sarvamClient.js';
+
+// A session shorter than this is treated as a bounce (accidental open, back
+// button, etc.) rather than a genuine read — it doesn't count toward
+// viewCount or the real read-time average.
+const MIN_VIEW_SECONDS = 5;
+// Sanity cap — protects the average from a client that reports a bogus
+// duration (e.g. a tab left open overnight).
+const MAX_VIEW_SECONDS = 60 * 60;
+
+/** Effective read time: once enough real reader sessions have been tracked,
+ * that data replaces the admin's static estimate. */
+const withEffectiveReadTime = (blog) => {
+  const obj = blog.toObject ? blog.toObject() : blog;
+  if (obj.readSessionCount > 0) {
+    obj.readTimeMinutes = Math.max(1, Math.round(obj.totalReadSeconds / obj.readSessionCount / 60));
+  }
+  return obj;
+};
+
+const chunkTextForTranslation = (text, maxChars) => {
+  const paragraphs = text.split(/\n{2,}/);
+  const chunks = [];
+  let current = '';
+
+  const pushCurrent = () => {
+    if (current) chunks.push(current);
+    current = '';
+  };
+
+  for (const paragraph of paragraphs) {
+    if (paragraph.length > maxChars) {
+      pushCurrent();
+      for (let i = 0; i < paragraph.length; i += maxChars) {
+        chunks.push(paragraph.slice(i, i + maxChars));
+      }
+      continue;
+    }
+
+    const candidate = current ? `${current}\n\n${paragraph}` : paragraph;
+    if (candidate.length > maxChars) {
+      pushCurrent();
+      current = paragraph;
+    } else {
+      current = candidate;
+    }
+  }
+  pushCurrent();
+
+  return chunks;
+};
 
 /** GET /api/blogs?category=&tag=&page=1 — Paginated published blogs */
 export const getBlogs = async (req, res, next) => {
@@ -29,7 +81,7 @@ export const getBlogs = async (req, res, next) => {
     logger.info('blogs_fetched', { action: 'blogs_fetched', count: blogs.length, page, category, tag });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Blogs fetched', {
-      blogs,
+      blogs: blogs.map(withEffectiveReadTime),
       pagination: buildPagination({ page, limit, total }),
     });
   } catch (error) {
@@ -37,18 +89,143 @@ export const getBlogs = async (req, res, next) => {
   }
 };
 
-/** GET /api/blogs/:slug — Get single blog post + increment viewsCount */
+/** GET /api/blogs/:slug — Get single blog post. viewCount/read-time now come
+ * from real reader sessions (see trackBlogView) instead of incrementing on
+ * every fetch, which counted accidental opens and bot/crawler hits the same
+ * as a genuine read. */
 export const getBlogBySlug = async (req, res, next) => {
   try {
-    const blog = await Blog.findOneAndUpdate(
-      { slug: req.params.slug, status: blogStatusEnum.PUBLISHED },
-      { $inc: { viewCount: 1 } },
-      { new: true }
-    );
+    const blog = await Blog.findOne({ slug: req.params.slug, status: blogStatusEnum.PUBLISHED });
 
     if (!blog) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Blog not found');
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Blog post', blog);
+    return sendResponse(res, HTTP_STATUS.OK, 'Blog post', withEffectiveReadTime(blog));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/blogs/:id/track-view — Reports how long the reader actually
+ * had the article open. Only sessions clearing MIN_VIEW_SECONDS count
+ * toward viewCount and the real read-time average, so a bounce (opened by
+ * mistake, closed in under a second) doesn't inflate either. */
+export const trackBlogView = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid blog id');
+    }
+
+    const durationSeconds = Number(req.body.durationSeconds);
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'A valid durationSeconds is required');
+    }
+
+    if (durationSeconds < MIN_VIEW_SECONDS) {
+      return sendResponse(res, HTTP_STATUS.OK, 'Session too short to count', { counted: false });
+    }
+
+    const clampedSeconds = Math.min(durationSeconds, MAX_VIEW_SECONDS);
+
+    const blog = await Blog.findByIdAndUpdate(
+      req.params.id,
+      { $inc: { viewCount: 1, totalReadSeconds: clampedSeconds, readSessionCount: 1 } },
+      { new: true }
+    );
+    if (!blog) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Blog not found');
+
+    return sendResponse(res, HTTP_STATUS.OK, 'View recorded', {
+      counted: true,
+      viewCount: blog.viewCount,
+      readTimeMinutes: withEffectiveReadTime(blog).readTimeMinutes,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/blogs/:slug/translate — Translate a blog's title + content into
+ * another language via Sarvam. Content is chunked to stay under the
+ * translation model's per-request character limit. */
+export const translateBlog = async (req, res, next) => {
+  try {
+    const { language } = req.body;
+    const supported = SUPPORTED_LANGUAGES.some((l) => l.code === language);
+    if (!supported) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'A supported language is required');
+    }
+
+    const blog = await Blog.findOne({ slug: req.params.slug, status: blogStatusEnum.PUBLISHED });
+    if (!blog) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Blog not found');
+
+    if (language === 'en-IN') {
+      return sendResponse(res, HTTP_STATUS.OK, 'Blog translated', {
+        title: blog.title,
+        content: blog.content,
+        language,
+      });
+    }
+
+    const contentChunks = chunkTextForTranslation(blog.content, TRANSLATE_MAX_CHARS);
+    const [translatedTitle, ...translatedChunks] = await Promise.all([
+      translateText({ input: blog.title, targetLanguageCode: language }),
+      ...contentChunks.map((chunk) => translateText({ input: chunk, targetLanguageCode: language })),
+    ]);
+
+    logger.info('blog_translated', { action: 'blog_translated', blogId: blog._id, language, chunks: contentChunks.length });
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Blog translated', {
+      title: translatedTitle.translatedText,
+      content: translatedChunks.map((chunk) => chunk.translatedText).join('\n\n'),
+      language,
+    });
+  } catch (error) {
+    logger.error('blog_translate_error', { action: 'blog_translate_error', error: error.message });
+    next(error);
+  }
+};
+
+/** POST /api/blogs/:id/bookmark — Toggle bookmark on a blog post */
+export const toggleBookmark = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid blog id');
+    }
+
+    const blog = await Blog.findOne({ _id: req.params.id, status: blogStatusEnum.PUBLISHED });
+    if (!blog) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Blog not found');
+
+    const user = await User.findById(req.userId).select('savedBlogs');
+    const alreadySaved = user.savedBlogs.some((id) => String(id) === String(blog._id));
+
+    if (alreadySaved) {
+      user.savedBlogs = user.savedBlogs.filter((id) => String(id) !== String(blog._id));
+    } else {
+      user.savedBlogs.push(blog._id);
+    }
+    await user.save();
+
+    return sendResponse(res, HTTP_STATUS.OK, alreadySaved ? 'Blog unbookmarked' : 'Blog bookmarked', {
+      bookmarked: !alreadySaved,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** GET /api/blogs/bookmarks — All of the current user's bookmarked blogs */
+export const getBookmarkedBlogs = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.userId).select('savedBlogs');
+    const blogs = await Blog.find({
+      _id: { $in: user.savedBlogs },
+      status: blogStatusEnum.PUBLISHED,
+    })
+      .select('-content')
+      .sort({ publishedAt: -1 });
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Bookmarked blogs fetched', {
+      blogs: blogs.map(withEffectiveReadTime),
+    });
   } catch (error) {
     next(error);
   }
@@ -83,7 +260,7 @@ export const getContentFeed = async (req, res, next) => {
     ]);
 
     const items = [
-      ...blogs.map((blog) => ({
+      ...blogs.map(withEffectiveReadTime).map((blog) => ({
         id: String(blog._id),
         sourceId: String(blog._id),
         title: blog.title,

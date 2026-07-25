@@ -1,0 +1,288 @@
+import Document, { DOCUMENT_TYPES } from '../models/Document.js';
+import DocumentChatMessage from '../models/DocumentChatMessage.js';
+import { sendResponse, sendError } from '../utils/sendResponse.js';
+import { HTTP_STATUS } from '../constants/httpStatus.js';
+import { buildPagination, getPagination, isValidObjectId } from '../utils/apiHelpers.js';
+import { uploadBufferToS3, deleteFromS3 } from '../utils/s3.js';
+import { createChatCompletion, extractDocumentText, getLanguageLabel } from '../utils/sarvamClient.js';
+import logger from '../utils/logger.js';
+
+const MAX_CONTEXT_DOCS = 20;
+const MAX_TEXT_PER_DOC = 4000;
+
+const DOC_TYPE_LABELS = {
+  prescription: 'Prescription',
+  lab_report: 'Lab Report',
+  bill: 'Medical Bill',
+  scan: 'Scan / Imaging',
+  other: 'Other',
+};
+
+const languageInstruction = (languageCode) =>
+  languageCode && languageCode !== 'en-IN' ? ` Respond in ${getLanguageLabel(languageCode)}, not English.` : '';
+
+const buildDocumentContext = (documents) =>
+  documents
+    .map((doc) => {
+      const dateLabel = doc.documentDate.toISOString().slice(0, 10);
+      const label = DOC_TYPE_LABELS[doc.docType] || 'Other';
+      const body = doc.extractedText?.trim()
+        ? doc.extractedText.slice(0, MAX_TEXT_PER_DOC)
+        : '[No readable text could be extracted from this file]';
+      return `"${doc.title}" (${label}, dated ${dateLabel}):\n${body}`;
+    })
+    .join('\n\n---\n\n');
+
+export const uploadDocument = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'No file was uploaded');
+    }
+
+    const { title, documentDate } = req.body;
+    let { docType } = req.body;
+
+    if (!title || !title.trim()) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'A document title is required');
+    }
+    const parsedDate = new Date(documentDate);
+    if (!documentDate || Number.isNaN(parsedDate.getTime())) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'A valid document date is required');
+    }
+    if (!DOCUMENT_TYPES.includes(docType)) {
+      docType = 'other';
+    }
+
+    const { url, key } = await uploadBufferToS3({
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+      originalName: req.file.originalname,
+      folder: `medical-documents/${req.userId}`,
+    });
+
+    const { text, status } = await extractDocumentText({
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+    });
+
+    const document = await Document.create({
+      userId: req.userId,
+      title: title.trim(),
+      docType,
+      documentDate: parsedDate,
+      fileUrl: url,
+      fileKey: key,
+      mimeType: req.file.mimetype,
+      originalFileName: req.file.originalname,
+      fileSize: req.file.size,
+      extractedText: text,
+      extractionStatus: status,
+    });
+
+    logger.info('document_uploaded', {
+      action: 'document_uploaded',
+      userId: req.userId,
+      documentId: document._id,
+      docType,
+      extractionStatus: status,
+    });
+
+    return sendResponse(res, HTTP_STATUS.CREATED, 'Document uploaded', { document });
+  } catch (error) {
+    logger.error('document_upload_error', { userId: req.userId, error: error.message });
+    next(error);
+  }
+};
+
+export const listDocuments = async (req, res, next) => {
+  try {
+    const { docType, sort } = req.query;
+    const { page, limit, skip } = getPagination(req.query, { limit: 20, maxLimit: 100 });
+
+    const filter = { userId: req.userId };
+    if (docType && DOCUMENT_TYPES.includes(docType)) {
+      filter.docType = docType;
+    }
+
+    const sortOrder = sort === 'asc' ? 1 : -1;
+
+    const [documents, total] = await Promise.all([
+      Document.find(filter).select('-extractedText').sort({ documentDate: sortOrder }).skip(skip).limit(limit),
+      Document.countDocuments(filter),
+    ]);
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Documents fetched', {
+      documents,
+      pagination: buildPagination({ page, limit, total }),
+    });
+  } catch (error) {
+    logger.error('document_list_error', { userId: req.userId, error: error.message });
+    next(error);
+  }
+};
+
+export const getDocument = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid document id');
+    }
+
+    const document = await Document.findOne({ _id: id, userId: req.userId });
+    if (!document) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'Document not found');
+    }
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Document fetched', { document });
+  } catch (error) {
+    logger.error('document_get_error', { userId: req.userId, error: error.message });
+    next(error);
+  }
+};
+
+export const deleteDocument = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid document id');
+    }
+
+    const document = await Document.findOneAndDelete({ _id: id, userId: req.userId });
+    if (!document) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'Document not found');
+    }
+
+    await deleteFromS3(document.fileKey);
+
+    logger.info('document_deleted', { action: 'document_deleted', userId: req.userId, documentId: id });
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Document deleted', { id });
+  } catch (error) {
+    logger.error('document_delete_error', { userId: req.userId, error: error.message });
+    next(error);
+  }
+};
+
+export const summarizeDocuments = async (req, res, next) => {
+  try {
+    const { startDate, endDate, language } = req.body;
+
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+    if (!start || Number.isNaN(start.getTime()) || !end || Number.isNaN(end.getTime())) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'A valid startDate and endDate are required');
+    }
+    end.setHours(23, 59, 59, 999);
+
+    const documents = await Document.find({
+      userId: req.userId,
+      documentDate: { $gte: start, $lte: end },
+    })
+      .sort({ documentDate: 1 })
+      .limit(MAX_CONTEXT_DOCS);
+
+    if (!documents.length) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'No documents found in that date range');
+    }
+
+    const summary = await createChatCompletion({
+      messages: [
+        {
+          role: 'system',
+          content:
+            "You are a careful medical-records assistant summarizing a patient's own uploaded reports, prescriptions, and bills for their personal reference. Summarize clearly in plain language, grouped by date. Call out abnormal lab values, medication changes, and any follow-up actions mentioned. Never invent facts that are not present in the documents. End with a short note that this is not medical advice." +
+            languageInstruction(language),
+        },
+        {
+          role: 'user',
+          content: `Summarize the following ${documents.length} medical document(s) dated between ${start
+            .toISOString()
+            .slice(0, 10)} and ${end.toISOString().slice(0, 10)}:\n\n${buildDocumentContext(documents)}`,
+        },
+      ],
+      maxTokens: 3000,
+    });
+
+    logger.info('document_summary_generated', {
+      action: 'document_summary_generated',
+      userId: req.userId,
+      count: documents.length,
+    });
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Summary generated', {
+      summary,
+      documentCount: documents.length,
+      documents: documents.map((d) => ({
+        id: d._id,
+        title: d.title,
+        docType: d.docType,
+        documentDate: d.documentDate,
+      })),
+    });
+  } catch (error) {
+    logger.error('document_summary_error', { userId: req.userId, error: error.message });
+    next(error);
+  }
+};
+
+export const getChatHistory = async (req, res, next) => {
+  try {
+    const messages = await DocumentChatMessage.find({ userId: req.userId }).sort({ createdAt: 1 }).limit(200);
+    return sendResponse(res, HTTP_STATUS.OK, 'Chat history fetched', { messages });
+  } catch (error) {
+    logger.error('document_chat_history_error', { userId: req.userId, error: error.message });
+    next(error);
+  }
+};
+
+export const sendChatMessage = async (req, res, next) => {
+  try {
+    const { message, language } = req.body;
+    if (!message || !message.trim()) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'A message is required');
+    }
+
+    const [documents, recentHistory] = await Promise.all([
+      Document.find({ userId: req.userId }).sort({ documentDate: -1 }).limit(MAX_CONTEXT_DOCS),
+      DocumentChatMessage.find({ userId: req.userId }).sort({ createdAt: -1 }).limit(20),
+    ]);
+
+    const userMessage = await DocumentChatMessage.create({
+      userId: req.userId,
+      role: 'user',
+      text: message.trim(),
+    });
+
+    if (!documents.length) {
+      const reply =
+        "I don't see any uploaded documents yet. Add a report, prescription, or bill from the Documents screen and I can help you understand it.";
+      const assistantMessage = await DocumentChatMessage.create({ userId: req.userId, role: 'assistant', text: reply });
+      return sendResponse(res, HTTP_STATUS.OK, 'Reply generated', { userMessage, assistantMessage });
+    }
+
+    const conversation = recentHistory.reverse().map((m) => ({ role: m.role, content: m.text }));
+
+    const reply = await createChatCompletion({
+      messages: [
+        {
+          role: 'system',
+          content: `You are a precise medical-records assistant answering a patient's questions about their own uploaded documents below. Answer exactly what was asked, using only these documents and directly relevant general health knowledge — do not pad the answer with unrelated details, background, or repeated caveats. Be concise and correct. Only mention that you are not a doctor, or flag something as urgent, when it is directly relevant to the question (e.g. the user is asking for a diagnosis or treatment decision, or a value looks dangerous) — do not add it as a default disclaimer on every reply. If the answer isn't in the documents, say so plainly and stop there. You may use markdown (lists, bold) when it makes the answer clearer.${languageInstruction(
+            language
+          )}\n\nThe patient's documents:\n\n${buildDocumentContext(documents)}`,
+        },
+        ...conversation,
+        { role: 'user', content: message.trim() },
+      ],
+      maxTokens: 2000,
+    });
+
+    const assistantMessage = await DocumentChatMessage.create({ userId: req.userId, role: 'assistant', text: reply });
+
+    logger.info('document_chat_reply', { action: 'document_chat_reply', userId: req.userId });
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Reply generated', { userMessage, assistantMessage });
+  } catch (error) {
+    logger.error('document_chat_error', { userId: req.userId, error: error.message });
+    next(error);
+  }
+};
