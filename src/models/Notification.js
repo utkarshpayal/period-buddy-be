@@ -14,9 +14,16 @@ const notificationSchema = new mongoose.Schema(
     type: {
       type: String,
       enum: [
-        'period_reminder', 'ovulation_reminder', 'habit_reminder', 'buddy_message',
-        'partner_message', 'consultation_update', 'reward_earned', 'streak_bonus',
-        'system', 'community_reply',
+        'period_reminder',
+        'ovulation_reminder',
+        'habit_reminder',
+        'buddy_message',
+        'partner_message',
+        'consultation_update',
+        'reward_earned',
+        'streak_bonus',
+        'system',
+        'community_reply',
       ],
       required: true,
     },
@@ -28,7 +35,7 @@ const notificationSchema = new mongoose.Schema(
     scheduledFor: { type: Date, default: null },
     sentAt: { type: Date, default: null },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 notificationSchema.index({ userId: 1, isRead: 1, createdAt: -1 });

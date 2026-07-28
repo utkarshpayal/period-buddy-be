@@ -15,14 +15,10 @@ const devFormat = combine(
   printf(({ level, message, timestamp, stack, ...meta }) => {
     const metaStr = Object.keys(meta).length ? ` | ${JSON.stringify(meta)}` : '';
     return `[${timestamp}] ${level}: ${stack || message}${metaStr}`;
-  })
+  }),
 );
 
-const prodFormat = combine(
-  timestamp(),
-  errors({ stack: true }),
-  json()
-);
+const prodFormat = combine(timestamp(), errors({ stack: true }), json());
 
 /* ─── Transports ─────────────────────────────────────────── */
 const transports = [
@@ -34,7 +30,7 @@ const transports = [
 if (process.env.NODE_ENV === 'production') {
   transports.push(
     new winston.transports.File({ filename: path.join(LOG_DIR, 'error.log'), level: 'error' }),
-    new winston.transports.File({ filename: path.join(LOG_DIR, 'combined.log') })
+    new winston.transports.File({ filename: path.join(LOG_DIR, 'combined.log') }),
   );
 }
 

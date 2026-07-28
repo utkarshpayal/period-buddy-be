@@ -55,28 +55,16 @@ export const validateSignup = [
       return true;
     }),
 
+  body('phone').optional().trim().isMobilePhone().withMessage(ERROR_MESSAGES.INVALID_PHONE),
 
-
-  body('phone')
-    .optional()
-    .trim()
-    .isMobilePhone()
-    .withMessage(ERROR_MESSAGES.INVALID_PHONE),
-
-  body('dateOfBirth')
-    .optional()
-    .isISO8601()
-    .withMessage('Invalid date format'),
+  body('dateOfBirth').optional().isISO8601().withMessage('Invalid date format'),
 
   body('gender')
     .optional()
     .isIn(['male', 'female', 'other', 'prefer_not_to_say'])
     .withMessage('Invalid gender'),
 
-  body('role')
-    .optional()
-    .isIn(['user', 'partner'])
-    .withMessage('Invalid role'),
+  body('role').optional().isIn(['user', 'partner']).withMessage('Invalid role'),
 ];
 
 export const validateVerifyOtp = [
@@ -109,10 +97,7 @@ export const validateResendOtp = [
 ];
 
 export const validateGoogleAuth = [
-  body('idToken')
-    .trim()
-    .notEmpty()
-    .withMessage(ERROR_MESSAGES.GOOGLE_TOKEN_MISSING),
+  body('idToken').trim().notEmpty().withMessage(ERROR_MESSAGES.GOOGLE_TOKEN_MISSING),
 ];
 
 export const validateLogin = [
@@ -124,9 +109,7 @@ export const validateLogin = [
     .withMessage(ERROR_MESSAGES.INVALID_EMAIL)
     .normalizeEmail({ gmail_remove_dots: false }),
 
-  body('password')
-    .notEmpty()
-    .withMessage('Password is required'),
+  body('password').notEmpty().withMessage('Password is required'),
 ];
 
 export const validateOnboarding = [
@@ -148,8 +131,7 @@ export const validateOnboarding = [
     .isMobilePhone()
     .withMessage(ERROR_MESSAGES.INVALID_PHONE),
 
-  body('profilePicture')
-    .customSanitizer(normalizeProfilePicture),
+  body('profilePicture').customSanitizer(normalizeProfilePicture),
 ];
 
 export const validateProfileUpdate = [
@@ -181,8 +163,7 @@ export const validateProfileUpdate = [
     .isIn(['male', 'female', 'other', 'prefer_not_to_say'])
     .withMessage('Invalid gender'),
 
-  body('profilePicture')
-    .customSanitizer(normalizeProfilePicture),
+  body('profilePicture').customSanitizer(normalizeProfilePicture),
 
   body('notificationsEnabled')
     .optional()
@@ -196,9 +177,7 @@ export const validateProfileUpdate = [
 ];
 
 export const validateChangePassword = [
-  body('currentPassword')
-    .notEmpty()
-    .withMessage('Current password is required'),
+  body('currentPassword').notEmpty().withMessage('Current password is required'),
 
   body('newPassword')
     .notEmpty()
@@ -214,9 +193,7 @@ export const validateChangePassword = [
 ];
 
 export const validateDeleteAccount = [
-  body('password')
-    .notEmpty()
-    .withMessage('Password is required'),
+  body('password').notEmpty().withMessage('Password is required'),
 ];
 
 export const handleValidationErrors = (req, res, next) => {

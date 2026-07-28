@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '(.tool_input.file_path // .tool_response.filePath) // empty' | { read -r f; case \"$f\" in */CLAUDE.md|*/node_modules/*) exit 0;; *.js) echo \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PostToolUse\\\",\\\"additionalContext\\\":\\\"Source file changed: '$f'. If this altered architecture, routes, commands, or project structure, update CLAUDE.md to keep it in sync.\\\"}}\" ;; esac; } 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

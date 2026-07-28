@@ -5,7 +5,7 @@ export const hashPassword = async (password) => {
     const salt = await bcrypt.genSalt(parseInt(process.env.BCRYPT_ROUNDS) || 10);
     return await bcrypt.hash(password, salt);
   } catch (error) {
-    throw new Error('Error hashing password');
+    throw new Error('Error hashing password', { cause: error });
   }
 };
 
@@ -13,7 +13,7 @@ export const comparePassword = async (password, hashedPassword) => {
   try {
     return await bcrypt.compare(password, hashedPassword);
   } catch (error) {
-    throw new Error('Error comparing passwords');
+    throw new Error('Error comparing passwords', { cause: error });
   }
 };
 

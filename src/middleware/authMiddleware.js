@@ -33,7 +33,11 @@ export const authenticate = async (req, res, next) => {
 export const authorize = (...roles) => {
   return (req, res, next) => {
     if (!roles.includes(req.user.role)) {
-      return sendError(res, HTTP_STATUS.FORBIDDEN, 'You do not have permission to perform this action');
+      return sendError(
+        res,
+        HTTP_STATUS.FORBIDDEN,
+        'You do not have permission to perform this action',
+      );
     }
     next();
   };
@@ -52,7 +56,7 @@ export const optionalAuth = async (req, res, next) => {
       }
     }
     next();
-  } catch (error) {
+  } catch {
     // Continue without authentication if token is invalid
     next();
   }

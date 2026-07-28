@@ -20,7 +20,7 @@ const userSessionSchema = new mongoose.Schema(
     expiresAt: { type: Date, required: true },
     isRevoked: { type: Boolean, default: false },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 userSessionSchema.index({ userId: 1, isRevoked: 1 });

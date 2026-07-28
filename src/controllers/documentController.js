@@ -4,7 +4,11 @@ import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { buildPagination, getPagination, isValidObjectId } from '../utils/apiHelpers.js';
 import { uploadBufferToS3, deleteFromS3 } from '../utils/s3.js';
-import { createChatCompletion, extractDocumentText, getLanguageLabel } from '../utils/sarvamClient.js';
+import {
+  createChatCompletion,
+  extractDocumentText,
+  getLanguageLabel,
+} from '../utils/sarvamClient.js';
 import logger from '../utils/logger.js';
 
 const MAX_CONTEXT_DOCS = 20;
@@ -19,7 +23,9 @@ const DOC_TYPE_LABELS = {
 };
 
 const languageInstruction = (languageCode) =>
-  languageCode && languageCode !== 'en-IN' ? ` Respond in ${getLanguageLabel(languageCode)}, not English.` : '';
+  languageCode && languageCode !== 'en-IN'
+    ? ` Respond in ${getLanguageLabel(languageCode)}, not English.`
+    : '';
 
 const buildDocumentContext = (documents) =>
   documents
@@ -107,7 +113,11 @@ export const listDocuments = async (req, res, next) => {
     const sortOrder = sort === 'asc' ? 1 : -1;
 
     const [documents, total] = await Promise.all([
-      Document.find(filter).select('-extractedText').sort({ documentDate: sortOrder }).skip(skip).limit(limit),
+      Document.find(filter)
+        .select('-extractedText')
+        .sort({ documentDate: sortOrder })
+        .skip(skip)
+        .limit(limit),
       Document.countDocuments(filter),
     ]);
 
@@ -154,7 +164,11 @@ export const deleteDocument = async (req, res, next) => {
 
     await deleteFromS3(document.fileKey);
 
-    logger.info('document_deleted', { action: 'document_deleted', userId: req.userId, documentId: id });
+    logger.info('document_deleted', {
+      action: 'document_deleted',
+      userId: req.userId,
+      documentId: id,
+    });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Document deleted', { id });
   } catch (error) {
@@ -197,7 +211,10 @@ export const summarizeDocuments = async (req, res, next) => {
           role: 'user',
           content: `Summarize the following ${documents.length} medical document(s) dated between ${start
             .toISOString()
-            .slice(0, 10)} and ${end.toISOString().slice(0, 10)}:\n\n${buildDocumentContext(documents)}`,
+            .slice(
+              0,
+              10,
+            )} and ${end.toISOString().slice(0, 10)}:\n\n${buildDocumentContext(documents)}`,
         },
       ],
       maxTokens: 3000,
@@ -227,7 +244,9 @@ export const summarizeDocuments = async (req, res, next) => {
 
 export const getChatHistory = async (req, res, next) => {
   try {
-    const messages = await DocumentChatMessage.find({ userId: req.userId }).sort({ createdAt: 1 }).limit(200);
+    const messages = await DocumentChatMessage.find({ userId: req.userId })
+      .sort({ createdAt: 1 })
+      .limit(200);
     return sendResponse(res, HTTP_STATUS.OK, 'Chat history fetched', { messages });
   } catch (error) {
     logger.error('document_chat_history_error', { userId: req.userId, error: error.message });
@@ -256,8 +275,15 @@ export const sendChatMessage = async (req, res, next) => {
     if (!documents.length) {
       const reply =
         "I don't see any uploaded documents yet. Add a report, prescription, or bill from the Documents screen and I can help you understand it.";
-      const assistantMessage = await DocumentChatMessage.create({ userId: req.userId, role: 'assistant', text: reply });
-      return sendResponse(res, HTTP_STATUS.OK, 'Reply generated', { userMessage, assistantMessage });
+      const assistantMessage = await DocumentChatMessage.create({
+        userId: req.userId,
+        role: 'assistant',
+        text: reply,
+      });
+      return sendResponse(res, HTTP_STATUS.OK, 'Reply generated', {
+        userMessage,
+        assistantMessage,
+      });
     }
 
     const conversation = recentHistory.reverse().map((m) => ({ role: m.role, content: m.text }));
@@ -267,7 +293,7 @@ export const sendChatMessage = async (req, res, next) => {
         {
           role: 'system',
           content: `You are a precise medical-records assistant answering a patient's questions about their own uploaded documents below. Answer exactly what was asked, using only these documents and directly relevant general health knowledge — do not pad the answer with unrelated details, background, or repeated caveats. Be concise and correct. Only mention that you are not a doctor, or flag something as urgent, when it is directly relevant to the question (e.g. the user is asking for a diagnosis or treatment decision, or a value looks dangerous) — do not add it as a default disclaimer on every reply. If the answer isn't in the documents, say so plainly and stop there. You may use markdown (lists, bold) when it makes the answer clearer.${languageInstruction(
-            language
+            language,
           )}\n\nThe patient's documents:\n\n${buildDocumentContext(documents)}`,
         },
         ...conversation,
@@ -276,7 +302,11 @@ export const sendChatMessage = async (req, res, next) => {
       maxTokens: 2000,
     });
 
-    const assistantMessage = await DocumentChatMessage.create({ userId: req.userId, role: 'assistant', text: reply });
+    const assistantMessage = await DocumentChatMessage.create({
+      userId: req.userId,
+      role: 'assistant',
+      text: reply,
+    });
 
     logger.info('document_chat_reply', { action: 'document_chat_reply', userId: req.userId });
 

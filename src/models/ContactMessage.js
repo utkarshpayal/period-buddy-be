@@ -20,7 +20,7 @@ const contactMessageSchema = new mongoose.Schema(
     status: { type: String, enum: ['new', 'read', 'resolved'], default: 'new' },
     emailDelivered: { type: Boolean, default: false },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 contactMessageSchema.index({ status: 1, createdAt: -1 });

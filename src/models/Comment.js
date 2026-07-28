@@ -33,7 +33,7 @@ const commentSchema = new mongoose.Schema(
     isActive: { type: Boolean, default: true },
     isOwn: { type: Boolean, default: false }, // virtual set at query time
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 commentSchema.index({ targetType: 1, targetId: 1, createdAt: -1 });

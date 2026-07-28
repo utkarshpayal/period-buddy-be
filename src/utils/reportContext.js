@@ -30,16 +30,25 @@ export function buildCycleContext(cycle) {
   if (cycle.daysLogged === 0) return null;
   const lines = [`${cycle.daysLogged} day(s) logged, ${cycle.periodDays} of them period days.`];
   if (cycle.symptomCounts.length) {
-    lines.push(`Top symptoms: ${cycle.symptomCounts.map((s) => `${s.label} (${s.value}x)`).join(', ')}.`);
+    lines.push(
+      `Top symptoms: ${cycle.symptomCounts.map((s) => `${s.label} (${s.value}x)`).join(', ')}.`,
+    );
   }
   if (cycle.moodCounts.length) {
-    lines.push(`Mood breakdown: ${cycle.moodCounts.map((m) => `${m.label} (${m.value}x)`).join(', ')}.`);
+    lines.push(
+      `Mood breakdown: ${cycle.moodCounts.map((m) => `${m.label} (${m.value}x)`).join(', ')}.`,
+    );
   }
   if (cycle.flowCounts.length) {
-    lines.push(`Flow breakdown: ${cycle.flowCounts.map((f) => `${f.label} (${f.value}x)`).join(', ')}.`);
+    lines.push(
+      `Flow breakdown: ${cycle.flowCounts.map((f) => `${f.label} (${f.value}x)`).join(', ')}.`,
+    );
   }
-  if (cycle.averages.sleepHours != null) lines.push(`Average sleep: ${cycle.averages.sleepHours} hrs/night.`);
-  if (cycle.averages.waterIntake != null) lines.push(`Average water intake: ${cycle.averages.waterIntake} ml/day.`);
-  if (cycle.averages.stressLevel != null) lines.push(`Average stress level: ${cycle.averages.stressLevel}/10.`);
+  if (cycle.averages.sleepHours != null)
+    lines.push(`Average sleep: ${cycle.averages.sleepHours} hrs/night.`);
+  if (cycle.averages.waterIntake != null)
+    lines.push(`Average water intake: ${cycle.averages.waterIntake} ml/day.`);
+  if (cycle.averages.stressLevel != null)
+    lines.push(`Average stress level: ${cycle.averages.stressLevel}/10.`);
   return lines.join('\n');
 }

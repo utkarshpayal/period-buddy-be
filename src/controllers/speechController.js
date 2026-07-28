@@ -3,7 +3,8 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { SUPPORTED_LANGUAGES, speechToText, textToSpeech } from '../utils/sarvamClient.js';
 import logger from '../utils/logger.js';
 
-export const getLanguages = async (req, res) => sendResponse(res, HTTP_STATUS.OK, 'Languages fetched', { languages: SUPPORTED_LANGUAGES });
+export const getLanguages = async (req, res) =>
+  sendResponse(res, HTTP_STATUS.OK, 'Languages fetched', { languages: SUPPORTED_LANGUAGES });
 
 export const transcribeAudio = async (req, res, next) => {
   try {

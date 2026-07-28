@@ -23,7 +23,8 @@ const ANONYMOUS_USER = { firstName: 'Anonymous', lastName: '', profilePicture: n
  */
 const resolveAuthor = (authorObj, authorId, requestingUserId) => {
   const isOwn = String(authorId) === String(requestingUserId);
-  if (isOwn) return { ...((authorObj?.toObject ? authorObj.toObject() : authorObj) || {}), isOwn: true };
+  if (isOwn)
+    return { ...((authorObj?.toObject ? authorObj.toObject() : authorObj) || {}), isOwn: true };
   return ANONYMOUS_USER;
 };
 
@@ -54,7 +55,10 @@ const serializePost = (post, user, requestingUserId) => {
     if (comment.isAnonymous) {
       // Anonymous comment: mask for others, reveal (with isOwn) for the author
       resolvedCommentUser = isCommentOwn
-        ? { ...((comment.userId?.toObject ? comment.userId.toObject() : comment.userId) || {}), isOwn: true }
+        ? {
+            ...((comment.userId?.toObject ? comment.userId.toObject() : comment.userId) || {}),
+            isOwn: true,
+          }
         : ANONYMOUS_USER;
     } else {
       // Non-anonymous comment: show real user, but still attach isOwn for the author
@@ -85,10 +89,11 @@ export const getPosts = async (req, res, next) => {
 
     const filter = { isActive: true };
     if (category && category !== 'all') filter.category = category;
-    if (search) filter.$or = [
-      { title: { $regex: escapeRegex(search), $options: 'i' } },
-      { content: { $regex: escapeRegex(search), $options: 'i' } },
-    ];
+    if (search)
+      filter.$or = [
+        { title: { $regex: escapeRegex(search), $options: 'i' } },
+        { content: { $regex: escapeRegex(search), $options: 'i' } },
+      ];
 
     const [posts, total, user] = await Promise.all([
       CommunityPost.find(filter)
@@ -163,7 +168,6 @@ export const createPost = async (req, res, next) => {
   }
 };
 
-
 /** GET /api/community/:id — Get single post */
 export const getPostById = async (req, res, next) => {
   try {
@@ -233,7 +237,8 @@ export const toggleLike = async (req, res, next) => {
 export const addComment = async (req, res, next) => {
   try {
     const { content, isAnonymous } = req.body;
-    if (!content?.trim()) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Comment content required');
+    if (!content?.trim())
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Comment content required');
     if (!isValidObjectId(req.params.id)) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid post id');
     }
@@ -255,13 +260,16 @@ export const addComment = async (req, res, next) => {
     await post.save();
 
     const rawComment = post.comments[post.comments.length - 1];
-    const comment = rawComment && typeof rawComment.toObject === 'function' ? rawComment.toObject() : rawComment;
+    const comment =
+      rawComment && typeof rawComment.toObject === 'function' ? rawComment.toObject() : rawComment;
 
     // Always return the real author info to the commenter (isOwn: true),
     // even when the comment is anonymous — other users will see "Anonymous".
     const resolvedUser = anonymous
       ? { ...(author?.toObject ? author.toObject() : author), isOwn: true }
-      : (author?.toObject ? author.toObject() : author);
+      : author?.toObject
+        ? author.toObject()
+        : author;
 
     logger.info('community_comment_added', {
       action: 'community_comment_added',
@@ -318,7 +326,7 @@ export const deletePost = async (req, res, next) => {
     const post = await CommunityPost.findOneAndUpdate(
       { _id: req.params.id, userId: req.userId },
       { isActive: false },
-      { new: true }
+      { new: true },
     );
     if (!post) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Post not found or not yours');
     return sendResponse(res, HTTP_STATUS.OK, 'Post deleted');
@@ -341,7 +349,9 @@ export const toggleSave = async (req, res, next) => {
     const alreadySaved = user.savedCommunityPosts.some((id) => String(id) === String(post._id));
 
     if (alreadySaved) {
-      user.savedCommunityPosts = user.savedCommunityPosts.filter((id) => String(id) !== String(post._id));
+      user.savedCommunityPosts = user.savedCommunityPosts.filter(
+        (id) => String(id) !== String(post._id),
+      );
     } else {
       user.savedCommunityPosts.push(post._id);
       user.walletBalance = (user.walletBalance || 0) + 3;
@@ -368,7 +378,9 @@ export const reportPost = async (req, res, next) => {
     if (!post) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Post not found');
 
     const user = await User.findById(req.userId).select('reportedCommunityPosts');
-    const alreadyReported = user.reportedCommunityPosts.some((report) => String(report.postId) === String(post._id));
+    const alreadyReported = user.reportedCommunityPosts.some(
+      (report) => String(report.postId) === String(post._id),
+    );
 
     if (!alreadyReported) {
       user.reportedCommunityPosts.push({
@@ -437,4 +449,3 @@ export const deleteComment = async (req, res, next) => {
     next(error);
   }
 };
-

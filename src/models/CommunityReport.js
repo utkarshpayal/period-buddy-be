@@ -33,7 +33,7 @@ const communityReportSchema = new mongoose.Schema(
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     reviewedAt: { type: Date },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 communityReportSchema.index({ targetType: 1, targetId: 1, reportedBy: 1 }, { unique: true });

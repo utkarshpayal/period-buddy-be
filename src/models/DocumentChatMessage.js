@@ -6,7 +6,7 @@ const documentChatMessageSchema = new mongoose.Schema(
     role: { type: String, enum: ['user', 'assistant'], required: true },
     text: { type: String, required: true, trim: true, maxlength: 4000 },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 documentChatMessageSchema.index({ userId: 1, createdAt: 1 });

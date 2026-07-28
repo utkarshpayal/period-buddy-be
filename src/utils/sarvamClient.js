@@ -45,7 +45,8 @@ async function readJsonOrThrow(response, action) {
     // to the generic message below using the raw text instead.
   }
   if (!response.ok) {
-    const message = body?.error?.message || body?.message || raw || `Sarvam request failed (${response.status})`;
+    const message =
+      body?.error?.message || body?.message || raw || `Sarvam request failed (${response.status})`;
     logger.error(action, { action, status: response.status, error: message });
     throw new Error(message);
   }
@@ -119,7 +120,13 @@ export const textToSpeech = async ({
 /** Transcribes spoken audio to text, optionally translating it to English
  * (mode: 'translate') instead of transcribing in the spoken language
  * (mode: 'transcribe', the default). */
-export const speechToText = async ({ buffer, mimeType, filename = 'audio.m4a', languageCode, mode = 'transcribe' }) => {
+export const speechToText = async ({
+  buffer,
+  mimeType,
+  filename = 'audio.m4a',
+  languageCode,
+  mode = 'transcribe',
+}) => {
   const form = new FormData();
   form.append('file', new Blob([buffer], { type: mimeType }), filename);
   form.append('model', STT_MODEL);
@@ -145,7 +152,11 @@ export const speechToText = async ({ buffer, mimeType, filename = 'audio.m4a', l
 const TRANSLATE_MODEL = process.env.SARVAM_TRANSLATE_MODEL || 'sarvam-translate:v1';
 export const TRANSLATE_MAX_CHARS = 2000;
 
-export const translateText = async ({ input, sourceLanguageCode = 'en-IN', targetLanguageCode }) => {
+export const translateText = async ({
+  input,
+  sourceLanguageCode = 'en-IN',
+  targetLanguageCode,
+}) => {
   const response = await fetch(`${SARVAM_API_BASE}/translate`, {
     method: 'POST',
     headers: { ...authHeaders(), 'Content-Type': 'application/json' },
@@ -251,7 +262,10 @@ export const extractDocumentText = async ({ buffer, mimeType, languageCode = 'en
       throw new Error('Sarvam failed to process the document');
     }
 
-    const downloadInfo = await sarvamJsonRequest(`/doc-digitization/job/v1/${jobId}/download-files`, { method: 'POST' });
+    const downloadInfo = await sarvamJsonRequest(
+      `/doc-digitization/job/v1/${jobId}/download-files`,
+      { method: 'POST' },
+    );
     const downloadUrls = Object.values(downloadInfo?.download_urls || {});
     if (!downloadUrls.length) {
       throw new Error('Sarvam returned no output files for the document');
@@ -266,16 +280,24 @@ export const extractDocumentText = async ({ buffer, mimeType, languageCode = 'en
         if (!fileResponse.ok) return '';
         const buffer = Buffer.from(await fileResponse.arrayBuffer());
         const outputZip = await JSZip.loadAsync(buffer);
-        const mdFiles = Object.keys(outputZip.files).filter((name) => !outputZip.files[name].dir && name.endsWith('.md'));
-        const contents = await Promise.all(mdFiles.map((name) => outputZip.files[name].async('string')));
+        const mdFiles = Object.keys(outputZip.files).filter(
+          (name) => !outputZip.files[name].dir && name.endsWith('.md'),
+        );
+        const contents = await Promise.all(
+          mdFiles.map((name) => outputZip.files[name].async('string')),
+        );
         return contents.join('\n\n');
-      })
+      }),
     );
     const text = outputTexts.join('\n\n').trim();
 
     return { text, status: text.length >= MIN_MEANINGFUL_CHARS ? 'done' : 'limited' };
   } catch (error) {
-    logger.error('document_extraction_failed', { action: 'document_extraction_failed', error: error.message, mimeType });
+    logger.error('document_extraction_failed', {
+      action: 'document_extraction_failed',
+      error: error.message,
+      mimeType,
+    });
     return { text: '', status: 'failed' };
   }
 };

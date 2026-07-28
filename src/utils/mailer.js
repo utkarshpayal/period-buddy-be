@@ -58,11 +58,11 @@ export const sendMail = async ({ to, subject, html, text, replyTo }) => {
       return { delivered: false, reason: 'send_failed' };
     }
 
-    logger.info('mail_sent', { 
-      action: 'mail_sent', 
-      to, 
-      subject, 
-      id: response.data?.id 
+    logger.info('mail_sent', {
+      action: 'mail_sent',
+      to,
+      subject,
+      id: response.data?.id,
     });
     return { delivered: true };
   } catch (error) {

@@ -184,7 +184,7 @@ const emailLayout = (title, contentHtml) => {
 /**
  * Template for Newsletter Subscription Welcome Email
  */
-export const getNewsletterWelcomeTemplate = (email) => {
+export const getNewsletterWelcomeTemplate = () => {
   const content = `
     <span class="badge">Newsletter</span>
     <h2 style="margin-top: 0; color: #2E3A33; font-size: 24px; font-weight: 600;">You're on the list!</h2>
@@ -196,7 +196,7 @@ export const getNewsletterWelcomeTemplate = (email) => {
     <p style="margin-bottom: 0;">Warmly,</p>
     <p style="font-weight: 600; margin-top: 4px; color: #8FA89B;">The Nura Team</p>
   `;
-  return emailLayout("Welcome to Nura", content);
+  return emailLayout('Welcome to Nura', content);
 };
 
 /**
@@ -219,7 +219,7 @@ export const getOtpEmailTemplate = ({ firstName, otp, expiryMinutes }) => {
     <p style="margin-bottom: 0;">Warmly,</p>
     <p style="font-weight: 600; margin-top: 4px; color: #8FA89B;">The Nura Team</p>
   `;
-  return emailLayout("Your Nura verification code", content);
+  return emailLayout('Your Nura verification code', content);
 };
 
 /**
@@ -255,5 +255,5 @@ export const getContactNotificationTemplate = ({ name, email, topic, message }) 
       <a href="mailto:${email}?subject=Re: [Nura Contact] ${topic || 'General Inquiry'}" class="button">Reply directly to Sender</a>
     </div>
   `;
-  return emailLayout("New Contact Message", content);
+  return emailLayout('New Contact Message', content);
 };

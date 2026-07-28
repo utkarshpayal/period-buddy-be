@@ -46,6 +46,6 @@ export const verifyGoogleIdToken = async (idToken) => {
       action: 'google_id_token_verify_failed',
       error: error.message,
     });
-    throw new Error('Invalid or expired Google sign-in token.');
+    throw new Error('Invalid or expired Google sign-in token.', { cause: error });
   }
 };

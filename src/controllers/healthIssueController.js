@@ -2,7 +2,12 @@ import HealthIssue from '../models/HealthIssue.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
-import { HEX_COLOR_REGEX, isValidObjectId, pickDefined, normalizeStringArray } from '../utils/apiHelpers.js';
+import {
+  HEX_COLOR_REGEX,
+  isValidObjectId,
+  pickDefined,
+  normalizeStringArray,
+} from '../utils/apiHelpers.js';
 
 /** GET /api/health-issues — List all health issues */
 export const getHealthIssues = async (req, res, next) => {
@@ -37,12 +42,27 @@ export const getHealthIssueById = async (req, res, next) => {
 export const createHealthIssue = async (req, res, next) => {
   try {
     const {
-      title, category, icon, color, summary, guide, imageUrl, order,
-      symptoms, causes, treatment, prevention, whenToSeeDoctor
+      title,
+      category,
+      icon,
+      color,
+      summary,
+      guide,
+      imageUrl,
+      order,
+      symptoms,
+      causes,
+      treatment,
+      prevention,
+      whenToSeeDoctor,
     } = req.body;
 
     if (!title || !category || !summary || !guide) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'title, category, summary, and guide are required');
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        'title, category, summary, and guide are required',
+      );
     }
     if (color && !HEX_COLOR_REGEX.test(color)) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'color must be a valid hex color');
@@ -83,17 +103,37 @@ export const updateHealthIssue = async (req, res, next) => {
     }
 
     const updates = pickDefined(req.body, [
-      'title', 'category', 'icon', 'color', 'summary', 'guide', 'imageUrl', 'order', 'isActive',
-      'symptoms', 'causes', 'treatment', 'prevention', 'whenToSeeDoctor'
+      'title',
+      'category',
+      'icon',
+      'color',
+      'summary',
+      'guide',
+      'imageUrl',
+      'order',
+      'isActive',
+      'symptoms',
+      'causes',
+      'treatment',
+      'prevention',
+      'whenToSeeDoctor',
     ]);
 
     if (updates.symptoms !== undefined) updates.symptoms = normalizeStringArray(updates.symptoms);
     if (updates.causes !== undefined) updates.causes = normalizeStringArray(updates.causes);
-    if (updates.treatment !== undefined) updates.treatment = updates.treatment ? String(updates.treatment).trim() : undefined;
-    if (updates.prevention !== undefined) updates.prevention = updates.prevention ? String(updates.prevention).trim() : undefined;
-    if (updates.whenToSeeDoctor !== undefined) updates.whenToSeeDoctor = updates.whenToSeeDoctor ? String(updates.whenToSeeDoctor).trim() : undefined;
+    if (updates.treatment !== undefined)
+      updates.treatment = updates.treatment ? String(updates.treatment).trim() : undefined;
+    if (updates.prevention !== undefined)
+      updates.prevention = updates.prevention ? String(updates.prevention).trim() : undefined;
+    if (updates.whenToSeeDoctor !== undefined)
+      updates.whenToSeeDoctor = updates.whenToSeeDoctor
+        ? String(updates.whenToSeeDoctor).trim()
+        : undefined;
 
-    const issue = await HealthIssue.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
+    const issue = await HealthIssue.findByIdAndUpdate(req.params.id, updates, {
+      new: true,
+      runValidators: true,
+    });
     if (!issue) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Health issue not found');
     return sendResponse(res, HTTP_STATUS.OK, 'Health issue updated', issue);
   } catch (error) {
@@ -108,7 +148,11 @@ export const deleteHealthIssue = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid health issue id');
     }
 
-    const issue = await HealthIssue.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
+    const issue = await HealthIssue.findByIdAndUpdate(
+      req.params.id,
+      { isActive: false },
+      { new: true },
+    );
     if (!issue) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Health issue not found');
     return sendResponse(res, HTTP_STATUS.OK, 'Health issue deleted');
   } catch (error) {

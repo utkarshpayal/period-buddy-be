@@ -98,7 +98,7 @@ export const respondToNomination = async (req, res, next) => {
     const nomination = await Nomination.findOneAndUpdate(
       { _id: req.params.id, nomineeId: req.userId },
       updates,
-      { new: true }
+      { new: true },
     );
 
     if (!nomination) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Nomination not found');

@@ -1,6 +1,6 @@
 // routes/questionAnswer.routes.js
 
-import express from "express";
+import express from 'express';
 
 import {
   askQuestion,
@@ -9,21 +9,21 @@ import {
   getSingleQuestionAnswer,
   updateQuestionAnswer,
   deleteQuestionAnswer,
-} from "../controllers/questionAnswerController.js";
-import { authenticate, authorize, optionalAuth } from "../middleware/authMiddleware.js";
+} from '../controllers/questionAnswerController.js';
+import { authenticate, authorize, optionalAuth } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
-router.post("/", authenticate, authorize('admin'), createQuestionAnswer);
+router.post('/', authenticate, authorize('admin'), createQuestionAnswer);
 
-router.get("/", optionalAuth, getAllQuestionAnswers);
+router.get('/', optionalAuth, getAllQuestionAnswers);
 
-router.post("/ask", optionalAuth, askQuestion);
+router.post('/ask', optionalAuth, askQuestion);
 
-router.get("/:id", optionalAuth, getSingleQuestionAnswer);
+router.get('/:id', optionalAuth, getSingleQuestionAnswer);
 
-router.put("/:id", authenticate, authorize('admin'), updateQuestionAnswer);
+router.put('/:id', authenticate, authorize('admin'), updateQuestionAnswer);
 
-router.delete("/:id", authenticate, authorize('admin'), deleteQuestionAnswer);
+router.delete('/:id', authenticate, authorize('admin'), deleteQuestionAnswer);
 
 export default router;

@@ -54,7 +54,7 @@ const partnerSchema = new mongoose.Schema(
     /** @deprecated use PartnerMessage collection */
     messages: { type: Array, default: [] },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 partnerSchema.index({ inviteCode: 1 });

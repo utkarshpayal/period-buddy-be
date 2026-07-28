@@ -14,12 +14,13 @@ import logger from './logger.js';
 let s3Client = null;
 const verifiedBuckets = new Set();
 
-const isConfigured = () => Boolean(
-  process.env.AWS_REGION &&
-  process.env.AWS_S3_BUCKET &&
-  process.env.AWS_ACCESS_KEY_ID &&
-  process.env.AWS_SECRET_ACCESS_KEY
-);
+const isConfigured = () =>
+  Boolean(
+    process.env.AWS_REGION &&
+    process.env.AWS_S3_BUCKET &&
+    process.env.AWS_ACCESS_KEY_ID &&
+    process.env.AWS_SECRET_ACCESS_KEY,
+  );
 
 const getClient = () => {
   if (!isConfigured()) return null;
@@ -51,7 +52,7 @@ const ensurePublicReadAccess = async (client, bucketName) => {
           BlockPublicPolicy: false,
           RestrictPublicBuckets: false,
         },
-      })
+      }),
     );
 
     const policy = {
@@ -68,10 +69,13 @@ const ensurePublicReadAccess = async (client, bucketName) => {
     };
 
     await client.send(
-      new PutBucketPolicyCommand({ Bucket: bucketName, Policy: JSON.stringify(policy) })
+      new PutBucketPolicyCommand({ Bucket: bucketName, Policy: JSON.stringify(policy) }),
     );
 
-    logger.info('s3_bucket_public_read_enabled', { action: 's3_bucket_public_read_enabled', bucketName });
+    logger.info('s3_bucket_public_read_enabled', {
+      action: 's3_bucket_public_read_enabled',
+      bucketName,
+    });
   } catch (error) {
     // Non-fatal — some buckets are managed outside this app (e.g. a shared
     // corporate bucket) and the IAM user here may not be allowed to touch
@@ -95,7 +99,10 @@ const ensureBucketExists = async (client, bucketName) => {
     verifiedBuckets.add(bucketName);
   } catch (error) {
     if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
-      logger.info('s3_bucket_not_found_creating', { action: 's3_bucket_not_found_creating', bucketName });
+      logger.info('s3_bucket_not_found_creating', {
+        action: 's3_bucket_not_found_creating',
+        bucketName,
+      });
       const createParams = { Bucket: bucketName };
       if (region && region !== 'us-east-1') {
         createParams.CreateBucketConfiguration = {
@@ -107,7 +114,11 @@ const ensureBucketExists = async (client, bucketName) => {
       verifiedBuckets.add(bucketName);
       logger.info('s3_bucket_created', { action: 's3_bucket_created', bucketName });
     } else {
-      logger.error('s3_bucket_check_failed', { action: 's3_bucket_check_failed', bucketName, error: error.message });
+      logger.error('s3_bucket_check_failed', {
+        action: 's3_bucket_check_failed',
+        bucketName,
+        error: error.message,
+      });
       throw error;
     }
   }
@@ -120,7 +131,9 @@ const ensureBucketExists = async (client, bucketName) => {
 export const uploadBufferToS3 = async ({ buffer, mimeType, originalName, folder = 'uploads' }) => {
   const client = getClient();
   if (!client) {
-    throw new Error('S3 is not configured. Set AWS_REGION, AWS_S3_BUCKET, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.');
+    throw new Error(
+      'S3 is not configured. Set AWS_REGION, AWS_S3_BUCKET, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.',
+    );
   }
 
   const bucket = process.env.AWS_S3_BUCKET;
@@ -135,11 +148,12 @@ export const uploadBufferToS3 = async ({ buffer, mimeType, originalName, folder 
       Key: key,
       Body: buffer,
       ContentType: mimeType,
-    })
+    }),
   );
 
   const region = process.env.AWS_REGION;
-  const publicUrlBase = process.env.AWS_S3_PUBLIC_URL_BASE || `https://${bucket}.s3.${region}.amazonaws.com`;
+  const publicUrlBase =
+    process.env.AWS_S3_PUBLIC_URL_BASE || `https://${bucket}.s3.${region}.amazonaws.com`;
   const url = `${publicUrlBase.replace(/\/+$/, '')}/${key}`;
 
   logger.info('s3_upload_success', { action: 's3_upload_success', key });

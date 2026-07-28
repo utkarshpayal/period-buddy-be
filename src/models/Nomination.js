@@ -33,7 +33,7 @@ const nominationSchema = new mongoose.Schema(
     acceptedAt: { type: Date },
     rejectedAt: { type: Date },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 nominationSchema.index({ nominatorId: 1, nomineeEmail: 1 }, { unique: true });

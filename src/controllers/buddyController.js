@@ -9,8 +9,6 @@ import { computeCyclePredictions } from '../utils/cycle.js';
 import { escapeRegex, isValidObjectId } from '../utils/apiHelpers.js';
 import { broadcastToRoom } from '../config/websocket.js';
 
-const aliases = ['Mystic Peony', 'Cosmic Fern', 'Aura Amber', 'Lunar Sage', 'Velvet Iris', 'Bloom Nova'];
-
 const fallbackMatches = [
   {
     id: 'demo_mystic_peony',
@@ -44,16 +42,21 @@ const fallbackMatches = [
   },
 ];
 
-const hashToIndex = (value, max) => Number.parseInt(crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 8), 16) % max;
-
-const getAvatarSeed = (name) => name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
+const getAvatarSeed = (name) =>
+  name
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
 
 const buildMatchFromUser = async (candidate, currentSettings) => {
   const settings = await CycleSettings.findOne({ userId: candidate._id });
   const alias = `${candidate.firstName || ''} ${candidate.lastName || ''}`.trim() || 'Period Buddy';
   const candidatePredictions = settings ? computeCyclePredictions(settings) : null;
   const currentPredictions = currentSettings ? computeCyclePredictions(currentSettings) : null;
-  const cycleDelta = settings && currentSettings ? Math.abs(settings.cycleLength - currentSettings.cycleLength) : 4;
+  const cycleDelta =
+    settings && currentSettings ? Math.abs(settings.cycleLength - currentSettings.cycleLength) : 4;
   const samePhase = candidatePredictions?.currentPhase === currentPredictions?.currentPhase;
   const compatibility = Math.max(70, Math.min(98, 95 - cycleDelta * 2 + (samePhase ? 5 : 0)));
 
@@ -109,8 +112,11 @@ export const getBuddyMatches = async (req, res, next) => {
 
     if (search) {
       const regex = new RegExp(escapeRegex(search), 'i');
-      matches = matches.filter((match) =>
-        regex.test(match.alias) || regex.test(match.cyclePhase) || match.similarities.some((item) => regex.test(item))
+      matches = matches.filter(
+        (match) =>
+          regex.test(match.alias) ||
+          regex.test(match.cyclePhase) ||
+          match.similarities.some((item) => regex.test(item)),
       );
     }
 
@@ -127,7 +133,9 @@ export const getBuddyMatches = async (req, res, next) => {
 
 export const getActiveBuddy = async (req, res, next) => {
   try {
-    const match = await BuddyMatch.findOne({ userId: req.userId, status: 'active' }).sort({ createdAt: -1 });
+    const match = await BuddyMatch.findOne({ userId: req.userId, status: 'active' }).sort({
+      createdAt: -1,
+    });
 
     if (match && !match.roomKey) {
       // Backfill matches created before roomKey existed (rolled out below). Derived
@@ -165,7 +173,11 @@ export const nominateBuddy = async (req, res, next) => {
     const { matchId } = req.params;
     const active = await BuddyMatch.findOne({ userId: req.userId, status: 'active' });
     if (active) {
-      return sendError(res, HTTP_STATUS.CONFLICT, 'You already have an active Period Buddy for this cycle');
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        'You already have an active Period Buddy for this cycle',
+      );
     }
 
     const candidate = await getCandidateByMatchId(matchId, req.userId);
@@ -173,7 +185,8 @@ export const nominateBuddy = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Buddy match not found');
     }
 
-    const welcomeText = 'Hey period buddy. Our cycle windows look close this month. How are you feeling today?';
+    const welcomeText =
+      'Hey period buddy. Our cycle windows look close this month. How are you feeling today?';
     // Shared by both sides of a real-user match so their WebSocket room is
     // unique to this pairing and can never collide with a later pairing.
     const roomKey = crypto.randomUUID();
@@ -215,13 +228,13 @@ export const nominateBuddy = async (req, res, next) => {
       const supersededMatches = await BuddyMatch.find({ userId: candidate.id, status: 'active' });
       await BuddyMatch.updateMany(
         { userId: candidate.id, status: 'active' },
-        { status: 'ended', endedAt: new Date() }
+        { status: 'ended', endedAt: new Date() },
       );
       for (const superseded of supersededMatches) {
         if (!superseded.buddyUserId) continue;
         await BuddyMatch.updateMany(
           { userId: superseded.buddyUserId, buddyUserId: candidate.id, status: 'active' },
-          { status: 'ended', endedAt: new Date() }
+          { status: 'ended', endedAt: new Date() },
         );
         broadcastToRoom(`user_${superseded.buddyUserId}`, { type: 'buddy_ended' });
       }
@@ -232,7 +245,8 @@ export const nominateBuddy = async (req, res, next) => {
       const predictionsA = settingsA ? computeCyclePredictions(settingsA) : null;
       const predictionsB = settingsB ? computeCyclePredictions(settingsB) : null;
 
-      const cycleDelta = settingsA && settingsB ? Math.abs(settingsA.cycleLength - settingsB.cycleLength) : 4;
+      const cycleDelta =
+        settingsA && settingsB ? Math.abs(settingsA.cycleLength - settingsB.cycleLength) : 4;
       const samePhase = predictionsA?.currentPhase === predictionsB?.currentPhase;
       const compatibility = Math.max(70, Math.min(98, 95 - cycleDelta * 2 + (samePhase ? 5 : 0)));
       const cycleOverlapDays = Math.max(0, 28 - cycleDelta);
@@ -307,7 +321,8 @@ export const sendBuddyMessage = async (req, res, next) => {
   try {
     const { text } = req.body;
     if (!text?.trim()) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Message text is required');
-    if (text.trim().length > 1000) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Message must be 1000 characters or fewer');
+    if (text.trim().length > 1000)
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Message must be 1000 characters or fewer');
 
     const match = await BuddyMatch.findOne({ userId: req.userId, status: 'active' });
     if (!match) return sendError(res, HTTP_STATUS.NOT_FOUND, 'No active Period Buddy');
@@ -334,7 +349,11 @@ export const sendBuddyMessage = async (req, res, next) => {
     // Reciprocal Message Persistence & Real-time Update (Receiver)
     // ──────────────────────────────────────────────────────────
     if (match.buddyUserId) {
-      const buddyMatch = await BuddyMatch.findOne({ userId: match.buddyUserId, buddyUserId: req.userId, status: 'active' });
+      const buddyMatch = await BuddyMatch.findOne({
+        userId: match.buddyUserId,
+        buddyUserId: req.userId,
+        status: 'active',
+      });
       if (buddyMatch) {
         buddyMatch.messages.push({ sender: 'buddy', text: userText });
         buddyMatch.lastMessage = userText;
@@ -378,7 +397,7 @@ export const endActiveBuddy = async (req, res, next) => {
     const match = await BuddyMatch.findOneAndUpdate(
       { userId: req.userId, status: 'active' },
       { status: 'ended', endedAt: new Date() },
-      { new: true }
+      { new: true },
     );
     if (!match) return sendError(res, HTTP_STATUS.NOT_FOUND, 'No active Period Buddy');
 
@@ -386,7 +405,7 @@ export const endActiveBuddy = async (req, res, next) => {
       // Also end reciprocal match for User B
       await BuddyMatch.findOneAndUpdate(
         { userId: match.buddyUserId, buddyUserId: req.userId, status: 'active' },
-        { status: 'ended', endedAt: new Date() }
+        { status: 'ended', endedAt: new Date() },
       );
     }
 

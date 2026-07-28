@@ -30,7 +30,13 @@ export const validateContactMessage = [
   body('topic')
     .optional()
     .trim()
-    .isIn(['General question', 'Privacy & data', 'Bug report', 'Partnership / press', 'Billing (Nura Plus)'])
+    .isIn([
+      'General question',
+      'Privacy & data',
+      'Bug report',
+      'Partnership / press',
+      'Billing (Nura Plus)',
+    ])
     .withMessage('Invalid topic'),
 
   body('message')

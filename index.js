@@ -13,7 +13,6 @@ import { logout as logoutController } from './src/controllers/authController.js'
 import { createServer } from 'http';
 import { initWebSocket } from './src/config/websocket.js';
 
-
 // Route imports
 import authRoutes from './src/routes/authRoutes.js';
 import questionAnswerRoutes from './src/routes/questionAnswerRoutes.js';
@@ -60,6 +59,7 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
 // Rate limiting — 500 requests per 15 minutes per IP
+// eslint-disable-next-line no-unused-vars -- kept ready for production; see comment below
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 500,
@@ -140,23 +140,33 @@ server.listen(PORT, () => {
 /* ──────────────────────────────────────────────────────────
    Process Error Handlers
 ────────────────────────────────────────────────────────── */
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', (reason, _promise) => {
   logger.error('unhandled_rejection', { action: 'unhandled_rejection', reason: String(reason) });
   process.exit(1);
 });
 
 process.on('uncaughtException', (error) => {
-  logger.error('uncaught_exception', { action: 'uncaught_exception', error: error.message, stack: error.stack });
+  logger.error('uncaught_exception', {
+    action: 'uncaught_exception',
+    error: error.message,
+    stack: error.stack,
+  });
   process.exit(1);
 });
 
 process.on('SIGTERM', () => {
-  logger.info('process_sigterm', { action: 'process_sigterm', message: 'SIGTERM received, shutting down gracefully' });
+  logger.info('process_sigterm', {
+    action: 'process_sigterm',
+    message: 'SIGTERM received, shutting down gracefully',
+  });
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  logger.info('process_sigint', { action: 'process_sigint', message: 'SIGINT received, shutting down gracefully' });
+  logger.info('process_sigint', {
+    action: 'process_sigint',
+    message: 'SIGINT received, shutting down gracefully',
+  });
   process.exit(0);
 });
 

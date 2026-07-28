@@ -28,7 +28,10 @@ export const initWebSocket = (server) => {
         const decoded = verifyToken(token);
         userId = decoded.userId;
       } catch (err) {
-        logger.warn('ws_auth_failed', { message: 'Failed to verify token on upgrade', error: err.message });
+        logger.warn('ws_auth_failed', {
+          message: 'Failed to verify token on upgrade',
+          error: err.message,
+        });
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
@@ -42,7 +45,7 @@ export const initWebSocket = (server) => {
 
   wss.on('connection', (ws, request, userId) => {
     logger.info('ws_connected', { userId });
-    
+
     // Store metadata
     clientMetadata.set(ws, { userId, rooms: new Set() });
 
@@ -63,24 +66,26 @@ export const initWebSocket = (server) => {
 
         if (type === 'join') {
           if (!room) return;
-          
+
           // Join room
           if (!rooms.has(room)) {
             rooms.set(room, new Set());
           }
           rooms.get(room).add(ws);
           clientMetadata.get(ws).rooms.add(room);
-          
+
           logger.info('ws_room_joined', { userId, room });
-          
-          ws.send(JSON.stringify({
-            type: 'joined',
-            room,
-            message: `Successfully joined room: ${room}`
-          }));
+
+          ws.send(
+            JSON.stringify({
+              type: 'joined',
+              room,
+              message: `Successfully joined room: ${room}`,
+            }),
+          );
         } else if (type === 'leave') {
           if (!room) return;
-          
+
           if (rooms.has(room)) {
             rooms.get(room).delete(ws);
             if (rooms.get(room).size === 0) {
@@ -88,14 +93,16 @@ export const initWebSocket = (server) => {
             }
           }
           clientMetadata.get(ws).rooms.delete(room);
-          
+
           logger.info('ws_room_left', { userId, room });
-          
-          ws.send(JSON.stringify({
-            type: 'left',
-            room,
-            message: `Successfully left room: ${room}`
-          }));
+
+          ws.send(
+            JSON.stringify({
+              type: 'left',
+              room,
+              message: `Successfully left room: ${room}`,
+            }),
+          );
         } else if (type === 'message') {
           if (!room || !text?.trim()) return;
 
@@ -106,7 +113,7 @@ export const initWebSocket = (server) => {
             sender: 'user',
             text: text.trim(),
             sentAt: new Date().toISOString(),
-            userId
+            userId,
           });
         } else if (room && room.startsWith('buddy_') && type) {
           // Period Buddy presence/video-call signaling (presence_ping/pong/leave,
@@ -147,7 +154,9 @@ export const initWebSocket = (server) => {
     });
   });
 
-  logger.info('ws_server_initialized', { message: 'WebSocket Server initialized and attached to HTTP Server' });
+  logger.info('ws_server_initialized', {
+    message: 'WebSocket Server initialized and attached to HTTP Server',
+  });
   return wss;
 };
 
@@ -165,11 +174,12 @@ export const broadcastToRoom = (room, payload) => {
   const data = JSON.stringify({
     type: 'message',
     room,
-    ...payload
+    ...payload,
   });
 
   for (const client of clients) {
-    if (client.readyState === 1) { // WebSocket.OPEN
+    if (client.readyState === 1) {
+      // WebSocket.OPEN
       client.send(data);
     }
   }

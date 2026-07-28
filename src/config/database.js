@@ -11,7 +11,10 @@ export const connectDB = async () => {
     logger.info('mongodb_connected', { action: 'mongodb_connected', host: conn.connection.host });
     return conn;
   } catch (error) {
-    logger.error('mongodb_connection_error', { action: 'mongodb_connection_error', error: error.message });
+    logger.error('mongodb_connection_error', {
+      action: 'mongodb_connection_error',
+      error: error.message,
+    });
     process.exit(1);
   }
 };
@@ -21,6 +24,9 @@ export const disconnectDB = async () => {
     await mongoose.disconnect();
     logger.info('mongodb_disconnected', { action: 'mongodb_disconnected' });
   } catch (error) {
-    logger.error('mongodb_disconnect_error', { action: 'mongodb_disconnect_error', error: error.message });
+    logger.error('mongodb_disconnect_error', {
+      action: 'mongodb_disconnect_error',
+      error: error.message,
+    });
   }
 };

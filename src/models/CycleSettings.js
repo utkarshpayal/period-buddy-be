@@ -22,11 +22,17 @@ const cycleSettingsSchema = new mongoose.Schema(
     pregnancyMode: { type: Boolean, default: false },
     trackingGoal: {
       type: String,
-      enum: ['track_period', 'avoid_pregnancy', 'achieve_pregnancy', 'manage_symptoms', 'general_health'],
+      enum: [
+        'track_period',
+        'avoid_pregnancy',
+        'achieve_pregnancy',
+        'manage_symptoms',
+        'general_health',
+      ],
       default: 'track_period',
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 export default mongoose.model('CycleSettings', cycleSettingsSchema);

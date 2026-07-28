@@ -19,7 +19,7 @@ const documentSchema = new mongoose.Schema(
     extractedText: { type: String, default: '' },
     extractionStatus: { type: String, enum: EXTRACTION_STATUSES, default: 'pending' },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 documentSchema.index({ userId: 1, documentDate: -1 });

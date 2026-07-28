@@ -8,7 +8,8 @@ export const HEX_COLOR_REGEX = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
 // string (it can build an ObjectId from 12 raw bytes), which wrongly treats
 // 12-char slugs (e.g. "what-is-pcos") as ids. Require the canonical 24-char
 // hex form so id-vs-slug routing behaves correctly.
-export const isValidObjectId = (id) => /^[0-9a-fA-F]{24}$/.test(String(id)) && mongoose.Types.ObjectId.isValid(id);
+export const isValidObjectId = (id) =>
+  /^[0-9a-fA-F]{24}$/.test(String(id)) && mongoose.Types.ObjectId.isValid(id);
 
 export const escapeRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -61,9 +62,7 @@ export const normalizeStringArray = (value) => {
 
   const values = Array.isArray(value) ? value : String(value).split(',');
 
-  return [...new Set(values
-    .map((item) => String(item).trim())
-    .filter(Boolean))];
+  return [...new Set(values.map((item) => String(item).trim()).filter(Boolean))];
 };
 
 export const normalizeBoolean = (value, fallback = false) => {

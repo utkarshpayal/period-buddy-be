@@ -7,9 +7,19 @@ import logger from '../utils/logger.js';
 import { HEX_COLOR_REGEX, isValidObjectId, todayDateKey } from '../utils/apiHelpers.js';
 
 const DEFAULT_HABITS = [
-  { title: 'Log Period Tracking Data', icon: 'calendar-outline', color: '#d946a6', rewardPoints: 50 },
+  {
+    title: 'Log Period Tracking Data',
+    icon: 'calendar-outline',
+    color: '#d946a6',
+    rewardPoints: 50,
+  },
   { title: 'Drink 8 Glasses of Water', icon: 'water-outline', color: '#06b6d4', rewardPoints: 30 },
-  { title: 'Exercise or Sync Movement', icon: 'fitness-outline', color: '#22c55e', rewardPoints: 60 },
+  {
+    title: 'Exercise or Sync Movement',
+    icon: 'fitness-outline',
+    color: '#22c55e',
+    rewardPoints: 60,
+  },
   { title: 'Mindfulness Meditation', icon: 'heart-outline', color: '#ec4899', rewardPoints: 40 },
 ];
 
@@ -33,13 +43,13 @@ export const getHabits = async (req, res, next) => {
 
     // Seed defaults if user has no habits
     if (habits.length === 0) {
-      const docs = DEFAULT_HABITS.map(h => ({ ...h, userId: req.userId, streak: 0 }));
+      const docs = DEFAULT_HABITS.map((h) => ({ ...h, userId: req.userId, streak: 0 }));
       habits = await Habit.insertMany(docs);
       logger.info('habits_seeded', { action: 'habits_seeded', userId: req.userId });
     }
 
     const todayKey = todayDateKey();
-    const result = habits.map(h => ({
+    const result = habits.map((h) => ({
       id: h._id,
       title: h.title,
       icon: h.icon,
@@ -65,9 +75,12 @@ export const getHabits = async (req, res, next) => {
 export const createHabit = async (req, res, next) => {
   try {
     const { title, icon, color, frequency, target, reminderTime } = req.body;
-    const rewardPoints = req.body.rewardPoints !== undefined
-      ? Number(req.body.rewardPoints)
-      : (req.body.tokens !== undefined ? Number(req.body.tokens) : 30);
+    const rewardPoints =
+      req.body.rewardPoints !== undefined
+        ? Number(req.body.rewardPoints)
+        : req.body.tokens !== undefined
+          ? Number(req.body.tokens)
+          : 30;
 
     if (!title?.trim()) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Habit title is required');
@@ -76,7 +89,11 @@ export const createHabit = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Habit title must be 100 characters or fewer');
     }
     if (!Number.isInteger(rewardPoints) || rewardPoints < 1 || rewardPoints > 200) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'rewardPoints must be an integer between 1 and 200');
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        'rewardPoints must be an integer between 1 and 200',
+      );
     }
     if (color && !HEX_COLOR_REGEX.test(color)) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'color must be a valid hex color');
@@ -93,7 +110,12 @@ export const createHabit = async (req, res, next) => {
       reminderTime: reminderTime?.trim(),
     });
 
-    logger.info('habit_created', { action: 'habit_created', userId: req.userId, habitId: habit._id, title });
+    logger.info('habit_created', {
+      action: 'habit_created',
+      userId: req.userId,
+      habitId: habit._id,
+      title,
+    });
 
     return sendResponse(res, HTTP_STATUS.CREATED, 'Habit created', {
       id: habit._id,
@@ -131,7 +153,7 @@ export const toggleHabit = async (req, res, next) => {
     let tokensAwarded = 0;
     if (alreadyDone) {
       // Uncomplete
-      habit.completedDates = habit.completedDates.filter(d => d !== todayKey);
+      habit.completedDates = habit.completedDates.filter((d) => d !== todayKey);
       habit.streak = calculateStreak(habit.completedDates);
       tokensAwarded = -(habit.rewardPoints || 30);
       const user = await User.findById(req.userId);
@@ -186,11 +208,15 @@ export const deleteHabit = async (req, res, next) => {
     const habit = await Habit.findOneAndUpdate(
       { _id: req.params.id, userId: req.userId },
       { isActive: false },
-      { new: true }
+      { new: true },
     );
     if (!habit) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Habit not found');
 
-    logger.info('habit_deleted', { action: 'habit_deleted', userId: req.userId, habitId: habit._id });
+    logger.info('habit_deleted', {
+      action: 'habit_deleted',
+      userId: req.userId,
+      habitId: habit._id,
+    });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Habit removed');
   } catch (error) {

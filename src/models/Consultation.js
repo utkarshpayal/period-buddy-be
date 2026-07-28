@@ -40,7 +40,7 @@ const consultationSchema = new mongoose.Schema(
     /** @deprecated use ConsultationMessage collection */
     messages: { type: Array, default: [] },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 consultationSchema.index({ userId: 1, doctorId: 1 });

@@ -15,7 +15,7 @@ const communityLikeSchema = new mongoose.Schema(
       required: true,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 communityLikeSchema.index({ postId: 1, userId: 1 }, { unique: true });

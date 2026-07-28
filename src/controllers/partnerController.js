@@ -15,7 +15,6 @@ import { generateCareSuggestions } from '../utils/careSuggestionsAi.js';
 
 const CARE_SUGGESTIONS_CACHE_MS = 24 * 60 * 60 * 1000;
 
-
 function generateCode() {
   return `NURA-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 }
@@ -23,7 +22,10 @@ function generateCode() {
 /** GET /api/partner — Get or create partner profile */
 export const getPartnerProfile = async (req, res, next) => {
   try {
-    let profile = await Partner.findOne({ userId: req.userId }).populate('partnerId', 'firstName lastName');
+    let profile = await Partner.findOne({ userId: req.userId }).populate(
+      'partnerId',
+      'firstName lastName',
+    );
     if (!profile) {
       profile = await Partner.create({ userId: req.userId });
     }
@@ -42,7 +44,7 @@ export const generateInviteCode = async (req, res, next) => {
     const profile = await Partner.findOneAndUpdate(
       { userId: req.userId },
       { inviteCode: code, inviteCodeExpiry: expiry },
-      { new: true, upsert: true }
+      { new: true, upsert: true },
     );
 
     logger.info('partner_invite_generated', {
@@ -83,7 +85,11 @@ export const connectPartner = async (req, res, next) => {
 
     const ownerUser = await User.findById(partnerProfile.userId);
     if (!ownerUser || ownerUser.role === 'partner') {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'You can only connect to a regular User account');
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        'You can only connect to a regular User account',
+      );
     }
 
     if (String(partnerProfile.userId) === String(req.userId)) {
@@ -108,13 +114,19 @@ export const connectPartner = async (req, res, next) => {
         connectedAt: new Date(),
         $unset: { inviteCode: '', inviteCodeExpiry: '' },
       },
-      { new: true }
+      { new: true },
     );
 
     await Partner.findOneAndUpdate(
       { userId: req.userId },
-      { partnerId: partnerProfile.userId, role: 'viewer', isConnected: true, connectionStatus: 'connected', connectedAt: new Date() },
-      { upsert: true, new: true }
+      {
+        partnerId: partnerProfile.userId,
+        role: 'viewer',
+        isConnected: true,
+        connectionStatus: 'connected',
+        connectedAt: new Date(),
+      },
+      { upsert: true, new: true },
     );
 
     // Create notifications for connection success
@@ -136,12 +148,15 @@ export const connectPartner = async (req, res, next) => {
 
     broadcastToRoom(`user_${partnerProfile.userId}`, {
       type: 'partner_notification',
-      notification: { title: 'Partner Connected 🎉', body: `${me.firstName} ${me.lastName} is now synced as your partner.` }
+      notification: {
+        title: 'Partner Connected 🎉',
+        body: `${me.firstName} ${me.lastName} is now synced as your partner.`,
+      },
     });
 
     broadcastToRoom(`user_${req.userId}`, {
       type: 'partner_notification',
-      notification: notifViewer
+      notification: notifViewer,
     });
 
     logger.info('partner_connected', {
@@ -165,13 +180,19 @@ export const updatePermissions = async (req, res, next) => {
       { userId: req.userId },
       {
         $set: {
-          ...(shareCyclePhase !== undefined && { 'permissions.shareCyclePhase': Boolean(shareCyclePhase) }),
-          ...(shareSymptoms !== undefined && { 'permissions.shareSymptoms': Boolean(shareSymptoms) }),
-          ...(shareIntimacyLog !== undefined && { 'permissions.shareIntimacyLog': Boolean(shareIntimacyLog) }),
+          ...(shareCyclePhase !== undefined && {
+            'permissions.shareCyclePhase': Boolean(shareCyclePhase),
+          }),
+          ...(shareSymptoms !== undefined && {
+            'permissions.shareSymptoms': Boolean(shareSymptoms),
+          }),
+          ...(shareIntimacyLog !== undefined && {
+            'permissions.shareIntimacyLog': Boolean(shareIntimacyLog),
+          }),
           ...(shareAlerts !== undefined && { 'permissions.shareAlerts': Boolean(shareAlerts) }),
         },
       },
-      { new: true, upsert: true }
+      { new: true, upsert: true },
     );
 
     logger.info('partner_permissions_updated', {
@@ -186,7 +207,7 @@ export const updatePermissions = async (req, res, next) => {
       req.userId,
       'system',
       'Permissions Updated 🔒',
-      `${name} updated their data sharing permissions.`
+      `${name} updated their data sharing permissions.`,
     );
 
     return sendResponse(res, HTTP_STATUS.OK, 'Permissions updated', profile.permissions);
@@ -207,7 +228,11 @@ export const getPartnerSharedData = async (req, res, next) => {
     // defaults to null) — treat those as viewers too so pre-existing
     // partner connections don't start 403ing once this ships.
     if (myProfile.role === 'owner') {
-      return sendError(res, HTTP_STATUS.FORBIDDEN, 'Only the connected partner can view shared data');
+      return sendError(
+        res,
+        HTTP_STATUS.FORBIDDEN,
+        'Only the connected partner can view shared data',
+      );
     }
 
     const partnerProfile = await Partner.findOne({ userId: myProfile.partnerId });
@@ -243,7 +268,9 @@ export const getPartnerSharedData = async (req, res, next) => {
       const logs = await CycleLog.find({ userId: myProfile.partnerId })
         .sort({ dateKey: -1 })
         .limit(7)
-        .select('dateKey symptoms mood energy flow sleepHours waterIntake weight temperature stressLevel');
+        .select(
+          'dateKey symptoms mood energy flow sleepHours waterIntake weight temperature stressLevel',
+        );
 
       data.recentSymptoms = logs.map((log) => ({
         dateKey: log.dateKey,
@@ -282,9 +309,10 @@ export const getPartnerSharedData = async (req, res, next) => {
       data.streak = { count: ownerUser.streakCount ?? 0 };
     }
     if (perms.shareAlerts) {
-      data.alerts = predictions && predictions.nextPeriodDaysAway <= 3
-        ? ['Next period is expected soon. Offer gentle reminders and support.']
-        : [];
+      data.alerts =
+        predictions && predictions.nextPeriodDaysAway <= 3
+          ? ['Next period is expected soon. Offer gentle reminders and support.']
+          : [];
     }
 
     // Generate care advice suggestions based on permissions and cycle/logs —
@@ -302,7 +330,11 @@ export const getPartnerSharedData = async (req, res, next) => {
         : Date.now() - new Date(cache.generatedAt).getTime() < CARE_SUGGESTIONS_CACHE_MS);
 
     if (cacheIsFresh) {
-      data.careSuggestions = { suggestions: cache.suggestions || [], dos: cache.dos || [], donts: cache.donts || [] };
+      data.careSuggestions = {
+        suggestions: cache.suggestions || [],
+        dos: cache.dos || [],
+        donts: cache.donts || [],
+      };
     } else {
       let documents = [];
       if (perms.shareReports) {
@@ -360,7 +392,8 @@ export const sendMessage = async (req, res, next) => {
   try {
     const { text } = req.body;
     if (!text?.trim()) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Message text required');
-    if (text.trim().length > 1000) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Message must be 1000 characters or fewer');
+    if (text.trim().length > 1000)
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Message must be 1000 characters or fewer');
 
     const myProfile = await Partner.findOne({ userId: req.userId });
     if (!myProfile?.isConnected) {
@@ -415,10 +448,20 @@ export const disconnectPartner = async (req, res, next) => {
     const partnerId = profile.partnerId;
     await Partner.updateMany(
       { userId: { $in: [req.userId, partnerId] } },
-      { partnerId: null, role: null, isConnected: false, connectionStatus: 'disconnected', connectedAt: null }
+      {
+        partnerId: null,
+        role: null,
+        isConnected: false,
+        connectionStatus: 'disconnected',
+        connectedAt: null,
+      },
     );
 
-    logger.info('partner_disconnected', { action: 'partner_disconnected', userId: req.userId, partnerId });
+    logger.info('partner_disconnected', {
+      action: 'partner_disconnected',
+      userId: req.userId,
+      partnerId,
+    });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Partner disconnected');
   } catch (error) {
@@ -445,7 +488,7 @@ export const markNotificationAsRead = async (req, res, next) => {
     const notification = await Notification.findOneAndUpdate(
       { _id: id, userId: req.userId },
       { isRead: true, readAt: new Date() },
-      { new: true }
+      { new: true },
     );
     if (!notification) {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Notification not found');
@@ -468,12 +511,12 @@ export const createPartnerNotification = async (ownerId, type, title, body) => {
         type,
         title,
         body,
-        sentAt: new Date()
+        sentAt: new Date(),
       });
 
       broadcastToRoom(`user_${partnerId}`, {
         type: 'partner_notification',
-        notification
+        notification,
       });
 
       logger.info('partner_notification_created', { partnerId, type });

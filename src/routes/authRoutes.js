@@ -57,8 +57,13 @@ router.post('/google', validateGoogleAuth, handleValidationErrors, authControlle
  * @desc    Complete onboarding process
  * @access  Private
  */
-router.post('/onboarding', authenticate, validateOnboarding, handleValidationErrors, authController.onboarding);
-
+router.post(
+  '/onboarding',
+  authenticate,
+  validateOnboarding,
+  handleValidationErrors,
+  authController.onboarding,
+);
 
 /**
  * @route   GET /api/auth/profile
@@ -72,14 +77,26 @@ router.get('/profile', authenticate, authController.getProfile);
  * @desc    Update user profile
  * @access  Private
  */
-router.put('/profile', authenticate, validateProfileUpdate, handleValidationErrors, authController.updateProfile);
+router.put(
+  '/profile',
+  authenticate,
+  validateProfileUpdate,
+  handleValidationErrors,
+  authController.updateProfile,
+);
 
 /**
  * @route   POST /api/auth/change-password
  * @desc    Change user password
  * @access  Private
  */
-router.post('/change-password', authenticate, validateChangePassword, handleValidationErrors, authController.changePassword);
+router.post(
+  '/change-password',
+  authenticate,
+  validateChangePassword,
+  handleValidationErrors,
+  authController.changePassword,
+);
 
 /**
  * @route   POST /api/auth/logout
@@ -93,7 +110,13 @@ router.post('/logout', authenticate, authController.logout);
  * @desc    Delete user account
  * @access  Private
  */
-router.delete('/delete-account', authenticate, validateDeleteAccount, handleValidationErrors, authController.deleteAccount);
+router.delete(
+  '/delete-account',
+  authenticate,
+  validateDeleteAccount,
+  handleValidationErrors,
+  authController.deleteAccount,
+);
 
 /**
  * @route   GET /api/auth/dashboard

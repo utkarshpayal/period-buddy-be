@@ -27,7 +27,12 @@ export const getDoctors = async (req, res, next) => {
 
     const doctors = await Doctor.find(filter).sort({ rating: -1 });
 
-    logger.info('doctors_listed', { action: 'doctors_listed', userId: req.userId, search, count: doctors.length });
+    logger.info('doctors_listed', {
+      action: 'doctors_listed',
+      userId: req.userId,
+      search,
+      count: doctors.length,
+    });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Doctors fetched', doctors);
   } catch (error) {
@@ -41,7 +46,11 @@ export const getDoctors = async (req, res, next) => {
 export const createConsultationOrder = async (req, res, next) => {
   try {
     if (!isPaymentConfigured()) {
-      return sendError(res, HTTP_STATUS.SERVICE_UNAVAILABLE, 'Payments are not configured on the server');
+      return sendError(
+        res,
+        HTTP_STATUS.SERVICE_UNAVAILABLE,
+        'Payments are not configured on the server',
+      );
     }
 
     const { doctorId } = req.body;
@@ -59,7 +68,9 @@ export const createConsultationOrder = async (req, res, next) => {
       status: { $in: ['paid', 'active'] },
     }).populate('doctorId');
     if (existing) {
-      return sendResponse(res, HTTP_STATUS.OK, 'Consultation already booked', { consultation: existing });
+      return sendResponse(res, HTTP_STATUS.OK, 'Consultation already booked', {
+        consultation: existing,
+      });
     }
 
     const consultation = await Consultation.create({
@@ -77,7 +88,11 @@ export const createConsultationOrder = async (req, res, next) => {
       amountMinorUnits: Math.round(doctor.pricePerSession * 100),
       currency: doctor.currency,
       receipt: String(consultation._id),
-      notes: { userId: String(req.userId), doctorId: String(doctorId), consultationId: String(consultation._id) },
+      notes: {
+        userId: String(req.userId),
+        doctorId: String(doctorId),
+        consultationId: String(consultation._id),
+      },
     });
 
     consultation.razorpayOrderId = order.id;
@@ -210,7 +225,9 @@ export const getMessages = async (req, res, next) => {
     const consultation = await Consultation.findOne({ _id: req.params.id, userId: req.userId });
     if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation not found');
 
-    const messages = await ConsultationMessage.find({ consultationId: consultation._id }).sort({ sentAt: 1 });
+    const messages = await ConsultationMessage.find({ consultationId: consultation._id }).sort({
+      sentAt: 1,
+    });
 
     if (messages.length === 0 && consultation.messages && consultation.messages.length > 0) {
       return sendResponse(res, HTTP_STATUS.OK, 'Messages fetched', consultation.messages);
@@ -228,7 +245,8 @@ export const sendMessage = async (req, res, next) => {
     const { text } = req.body;
 
     if (!text?.trim()) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Message text is required');
-    if (text.trim().length > 2000) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Message must be 2000 characters or fewer');
+    if (text.trim().length > 2000)
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Message must be 2000 characters or fewer');
     if (!isValidObjectId(req.params.id)) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid consultation id');
     }
@@ -246,7 +264,8 @@ export const sendMessage = async (req, res, next) => {
     consultation.messages.push({ sender: 'user', text: userText });
 
     // Simulate doctor's auto-reply
-    const doctorReply = 'Understood. Our logging engine is checking your cycle history trend structures to fine-tune diagnostic assessments. Please provide any related physical updates.';
+    const doctorReply =
+      'Understood. Our logging engine is checking your cycle history trend structures to fine-tune diagnostic assessments. Please provide any related physical updates.';
     consultation.messages.push({ sender: 'doctor', text: doctorReply });
 
     await consultation.save();
@@ -292,10 +311,11 @@ export const completeConsultation = async (req, res, next) => {
     const consultation = await Consultation.findOneAndUpdate(
       { _id: req.params.id, userId: req.userId, status: { $in: ['paid', 'active'] } },
       { status: 'completed', completedAt: new Date() },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
 
-    if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Active consultation not found');
+    if (!consultation)
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'Active consultation not found');
 
     return sendResponse(res, HTTP_STATUS.OK, 'Consultation completed', consultation);
   } catch (error) {
@@ -313,10 +333,11 @@ export const cancelConsultation = async (req, res, next) => {
     const consultation = await Consultation.findOneAndUpdate(
       { _id: req.params.id, userId: req.userId, status: { $in: ['pending', 'paid'] } },
       { status: 'cancelled', completedAt: new Date() },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
 
-    if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Cancellable consultation not found');
+    if (!consultation)
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'Cancellable consultation not found');
 
     return sendResponse(res, HTTP_STATUS.OK, 'Consultation cancelled', consultation);
   } catch (error) {

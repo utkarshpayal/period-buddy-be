@@ -12,15 +12,17 @@ let isFcmInitialized = false;
 try {
   // Check if firebase-service-account.json exists
   const serviceAccountPath = path.join(__dirname, 'firebase-service-account.json');
-  
+
   if (fs.existsSync(serviceAccountPath)) {
     const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
     const requiredFields = ['project_id', 'client_email', 'private_key'];
     const missingFields = requiredFields.filter((field) => !serviceAccount[field]);
 
     if (missingFields.length > 0) {
-      logger.warn('fcm_init_warning | firebase-service-account.json is missing required field(s): ' +
-        `${missingFields.join(', ')}. Push notifications will be logged only.`);
+      logger.warn(
+        'fcm_init_warning | firebase-service-account.json is missing required field(s): ' +
+          `${missingFields.join(', ')}. Push notifications will be logged only.`,
+      );
     } else {
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
@@ -29,10 +31,14 @@ try {
       logger.info('fcm_initialized | Firebase Admin SDK initialized successfully');
     }
   } else {
-    logger.warn('fcm_init_warning | Firebase Admin SDK not initialized: src/utils/firebase-service-account.json not found. Push notifications will be logged only.');
+    logger.warn(
+      'fcm_init_warning | Firebase Admin SDK not initialized: src/utils/firebase-service-account.json not found. Push notifications will be logged only.',
+    );
   }
 } catch (error) {
-  logger.error('fcm_init_error | Failed to initialize Firebase Admin SDK', { error: error.message });
+  logger.error('fcm_init_error | Failed to initialize Firebase Admin SDK', {
+    error: error.message,
+  });
 }
 
 /**
@@ -77,10 +83,12 @@ export const sendPushNotification = async (token, { title, body, data }) => {
           },
         },
       },
-      data: data ? Object.entries(data).reduce((acc, [key, val]) => {
-        acc[key] = String(val); // FCM data fields must be strings
-        return acc;
-      }, {}) : {},
+      data: data
+        ? Object.entries(data).reduce((acc, [key, val]) => {
+            acc[key] = String(val); // FCM data fields must be strings
+            return acc;
+          }, {})
+        : {},
     };
 
     const response = await admin.messaging().send(message);

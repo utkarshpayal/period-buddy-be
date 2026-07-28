@@ -39,7 +39,7 @@ const buddyMatchSchema = new mongoose.Schema(
     /** @deprecated use BuddyMessage collection */
     messages: { type: Array, default: [] },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 buddyMatchSchema.index({ userId: 1, status: 1 });

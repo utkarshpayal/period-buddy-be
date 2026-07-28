@@ -7,7 +7,7 @@ export const generateToken = (payload) => {
     });
     return token;
   } catch (error) {
-    throw new Error('Error generating token');
+    throw new Error('Error generating token', { cause: error });
   }
 };
 
@@ -17,9 +17,9 @@ export const verifyToken = (token) => {
     return decoded;
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
-      throw new Error('Token expired');
+      throw new Error('Token expired', { cause: error });
     }
-    throw new Error(`Invalid token: ${error.message}`);
+    throw new Error(`Invalid token: ${error.message}`, { cause: error });
   }
 };
 
@@ -27,6 +27,6 @@ export const decodeToken = (token) => {
   try {
     return jwt.decode(token);
   } catch (error) {
-    throw new Error('Error decoding token');
+    throw new Error('Error decoding token', { cause: error });
   }
 };

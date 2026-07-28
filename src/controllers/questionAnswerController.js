@@ -17,8 +17,10 @@ import { computeCyclePredictions } from '../utils/cycle.js';
 import { createChatCompletion, getLanguageLabel, isAiConfigured } from '../utils/sarvamClient.js';
 import logger from '../utils/logger.js';
 
-const DEFAULT_COMPANION_REPLY = 'That is a valid thing to wonder about. I do not have a precise match yet, but you can ask in everyday words about brown blood, period cramps, hygiene, discharge, PMS, contraception, cycle tracking, or intimacy.';
-const COMPANION_DISCLAIMER = 'Nura Companion shares general education and is not a diagnosis or emergency service.';
+const DEFAULT_COMPANION_REPLY =
+  'That is a valid thing to wonder about. I do not have a precise match yet, but you can ask in everyday words about brown blood, period cramps, hygiene, discharge, PMS, contraception, cycle tracking, or intimacy.';
+const COMPANION_DISCLAIMER =
+  'Nura Companion shares general education and is not a diagnosis or emergency service.';
 const MAX_QUESTION_LENGTH = 500;
 const SUGGESTED_QUESTIONS = [
   'Is brown period blood normal?',
@@ -81,7 +83,8 @@ const URGENT_PATTERNS = [
   /\b(fever|high temperature)\b.*\b(pelvic|period|cramp|pain)\b/i,
   /\b(severe|unbearable|worst)\b.*\b(pain|cramp|cramps)\b/i,
 ];
-const URGENT_COMPANION_REPLY = 'This could need urgent help. If you are soaking pads quickly, feeling faint, have fever with pelvic pain, severe one-sided or unbearable pain, bleeding during pregnancy, or thoughts of self-harm, contact emergency care or a trusted local clinician now.';
+const URGENT_COMPANION_REPLY =
+  'This could need urgent help. If you are soaking pads quickly, feeling faint, have fever with pelvic pain, severe one-sided or unbearable pain, bleeding during pregnancy, or thoughts of self-harm, contact emergency care or a trusted local clinician now.';
 const QUESTION_CATEGORY_ALIASES = {
   body: 'female_body',
   cycle: 'tracking',
@@ -110,7 +113,9 @@ const COMPANION_SYSTEM_PROMPT =
   "You are Nura Companion, a warm, non-judgmental sexual and reproductive health educator inside an anonymous period-tracking app's Q&A feature. Answer the user's question clearly and factually in a few short plain-language paragraphs — periods, the female and male body, sexual health, mental health, pregnancy, contraception, puberty, hygiene, and relationships are all fair territory, and none of it should be treated as shameful or off-limits. Never diagnose; point toward a clinician for anything that sounds concerning or urgent. Do not repeat a medical disclaimer — the app shows one separately. Do not ask the user follow-up questions or ask them to repeat identifying details; just answer what they asked.";
 
 const languageInstruction = (languageCode) =>
-  languageCode && languageCode !== 'en-IN' ? ` Respond in ${getLanguageLabel(languageCode)}, not English.` : '';
+  languageCode && languageCode !== 'en-IN'
+    ? ` Respond in ${getLanguageLabel(languageCode)}, not English.`
+    : '';
 
 const RECENT_LOG_COUNT = 5;
 
@@ -131,7 +136,9 @@ const buildPersonalizationContext = async (userId) => {
   const lines = [];
 
   if (user?.dateOfBirth) {
-    const age = Math.floor((Date.now() - new Date(user.dateOfBirth).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+    const age = Math.floor(
+      (Date.now() - new Date(user.dateOfBirth).getTime()) / (365.25 * 24 * 60 * 60 * 1000),
+    );
     if (age > 0 && age < 100) lines.push(`Age: ${age}.`);
   }
   if (user?.gender) lines.push(`Gender: ${user.gender}.`);
@@ -139,14 +146,19 @@ const buildPersonalizationContext = async (userId) => {
   if (settings?.lastPeriodStartDate) {
     const predictions = computeCyclePredictions(settings);
     lines.push(
-      `Currently on cycle day ${predictions.currentCycleDay} of a ~${predictions.cycleLength}-day cycle, in the ${predictions.currentPhase} phase. Next period expected in ${predictions.nextPeriodDaysAway} day(s).`
+      `Currently on cycle day ${predictions.currentCycleDay} of a ~${predictions.cycleLength}-day cycle, in the ${predictions.currentPhase} phase. Next period expected in ${predictions.nextPeriodDaysAway} day(s).`,
     );
-    if (settings.trackingGoal) lines.push(`Tracking goal: ${settings.trackingGoal.replace(/_/g, ' ')}.`);
+    if (settings.trackingGoal)
+      lines.push(`Tracking goal: ${settings.trackingGoal.replace(/_/g, ' ')}.`);
   }
 
   if (recentLogs.length) {
-    const recentSymptoms = [...new Set(recentLogs.flatMap((log) => log.symptoms || []))].slice(0, 8);
-    if (recentSymptoms.length) lines.push(`Recently logged symptoms: ${recentSymptoms.join(', ')}.`);
+    const recentSymptoms = [...new Set(recentLogs.flatMap((log) => log.symptoms || []))].slice(
+      0,
+      8,
+    );
+    if (recentSymptoms.length)
+      lines.push(`Recently logged symptoms: ${recentSymptoms.join(', ')}.`);
     const recentMoods = [...new Set(recentLogs.map((log) => log.mood).filter(Boolean))];
     if (recentMoods.length) lines.push(`Recent mood: ${recentMoods.join(', ')}.`);
   }
@@ -157,23 +169,28 @@ const buildPersonalizationContext = async (userId) => {
 const fallbackKnowledge = [
   {
     keywords: ['brown', 'dark', 'black', 'blood', 'bleed'],
-    answer: 'Dark brown blood is often normal at the start or end of a period. It is usually older blood leaving the uterus more slowly. If it comes with severe pain, bad odor, fever, or unusual discharge, it is worth checking with a clinician.',
+    answer:
+      'Dark brown blood is often normal at the start or end of a period. It is usually older blood leaving the uterus more slowly. If it comes with severe pain, bad odor, fever, or unusual discharge, it is worth checking with a clinician.',
   },
   {
     keywords: ['cup', 'tampon', 'hymen', 'virgin'],
-    answer: 'A menstrual cup or tampon can stretch hymenal tissue, but virginity is not a medical measurement. Use the smallest comfortable size, go slowly, and stop if you feel pain.',
+    answer:
+      'A menstrual cup or tampon can stretch hymenal tissue, but virginity is not a medical measurement. Use the smallest comfortable size, go slowly, and stop if you feel pain.',
   },
   {
     keywords: ['poop', 'motions', 'stomach', 'loose', 'bowel'],
-    answer: 'Changes in bowel movements around periods are common. Prostaglandins help the uterus contract and can also affect the bowel, which may cause cramps, loose stools, or more frequent bathroom trips.',
+    answer:
+      'Changes in bowel movements around periods are common. Prostaglandins help the uterus contract and can also affect the bowel, which may cause cramps, loose stools, or more frequent bathroom trips.',
   },
   {
     keywords: ['sex', 'intimacy', 'intercourse', 'safe'],
-    answer: 'Sex during a period can be safe when everyone involved is comfortable and consenting. Use protection because pregnancy and infections are still possible, and pause if there is pain or discomfort.',
+    answer:
+      'Sex during a period can be safe when everyone involved is comfortable and consenting. Use protection because pregnancy and infections are still possible, and pause if there is pain or discomfort.',
   },
   {
     keywords: ['wash', 'soap', 'clean', 'vagina', 'smell', 'scent'],
-    answer: 'Avoid scented washes, douching, or internal cleaning. The vagina is self-cleaning, and harsh products can disrupt pH. Warm water on the external vulva is usually enough.',
+    answer:
+      'Avoid scented washes, douching, or internal cleaning. The vagina is self-cleaning, and harsh products can disrupt pH. Warm water on the external vulva is usually enough.',
   },
 ];
 
@@ -226,12 +243,7 @@ const findBestQuestionAnswer = async (query) => {
   const termFilters = regexTerms.flatMap((term) => {
     const regex = new RegExp(escapeRegex(term), 'i');
 
-    return [
-      { question: regex },
-      { answer: regex },
-      { shortAnswer: regex },
-      { tags: regex },
-    ];
+    return [{ question: regex }, { answer: regex }, { shortAnswer: regex }, { tags: regex }];
   });
 
   const candidates = await QuestionAnswer.find({
@@ -251,23 +263,32 @@ const findBestQuestionAnswer = async (query) => {
 
 const findFallbackAnswer = (query) => {
   const lowered = query.toLowerCase();
-  return fallbackKnowledge.find((entry) => entry.keywords.some((keyword) => lowered.includes(keyword)))?.answer || '';
+  return (
+    fallbackKnowledge.find((entry) => entry.keywords.some((keyword) => lowered.includes(keyword)))
+      ?.answer || ''
+  );
 };
 
 const normalizeQuestionCategory = (value) => {
-  const normalized = String(value || 'general').trim().toLowerCase().replace(/[_-]+/g, ' ');
+  const normalized = String(value || 'general')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ');
   return QUESTION_CATEGORY_ALIASES[normalized] || normalized.replace(/\s+/g, '_');
 };
 
 const createUniqueSlug = async (question, existingId = null) => {
-  const baseSlug = slugify(question, { lower: true, strict: true }).slice(0, 90) || `qa-${Date.now()}`;
+  const baseSlug =
+    slugify(question, { lower: true, strict: true }).slice(0, 90) || `qa-${Date.now()}`;
   let slug = baseSlug;
   let suffix = 1;
 
-  while (await QuestionAnswer.exists({
-    slug,
-    ...(existingId ? { _id: { $ne: existingId } } : {}),
-  })) {
+  while (
+    await QuestionAnswer.exists({
+      slug,
+      ...(existingId ? { _id: { $ne: existingId } } : {}),
+    })
+  ) {
     slug = `${baseSlug}-${suffix}`;
     suffix += 1;
   }
@@ -320,15 +341,7 @@ export const createQuestionAnswer = async (req, res, next) => {
 
 export const getAllQuestionAnswers = async (req, res, next) => {
   try {
-    const {
-      search,
-      category,
-      gender,
-      ageGroup,
-      bodyPart,
-      tags,
-      featured,
-    } = req.query;
+    const { search, category, gender, ageGroup, bodyPart, tags, featured } = req.query;
     const { page, limit, skip } = getPagination(req.query, { limit: 10, maxLimit: 50 });
 
     const filter = { isPublished: true };
@@ -337,7 +350,11 @@ export const getAllQuestionAnswers = async (req, res, next) => {
       filter.$or = [
         { question: { $regex: escapeRegex(search), $options: 'i' } },
         { answer: { $regex: escapeRegex(search), $options: 'i' } },
-        { tags: { $in: normalizeStringArray(search).map((tag) => new RegExp(escapeRegex(tag), 'i')) } },
+        {
+          tags: {
+            $in: normalizeStringArray(search).map((tag) => new RegExp(escapeRegex(tag), 'i')),
+          },
+        },
       ];
     }
     if (category) filter.category = category;
@@ -348,10 +365,7 @@ export const getAllQuestionAnswers = async (req, res, next) => {
     if (featured !== undefined) filter.isFeatured = featured === 'true';
 
     const [data, total] = await Promise.all([
-      QuestionAnswer.find(filter)
-        .sort({ isFeatured: -1, createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
+      QuestionAnswer.find(filter).sort({ isFeatured: -1, createdAt: -1 }).skip(skip).limit(limit),
       QuestionAnswer.countDocuments(filter),
     ]);
 
@@ -380,7 +394,11 @@ export const askQuestion = async (req, res, next) => {
     }
 
     if (query.length > MAX_QUESTION_LENGTH) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, `question must be ${MAX_QUESTION_LENGTH} characters or fewer`);
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        `question must be ${MAX_QUESTION_LENGTH} characters or fewer`,
+      );
     }
 
     let qa = null;
@@ -418,7 +436,11 @@ export const askQuestion = async (req, res, next) => {
           personalized = Boolean(personalization);
           source = personalized ? 'ai_personalized' : 'ai';
         } catch (error) {
-          logger.error('companion_ai_error', { action: 'companion_ai_error', error: error.message, userId: req.userId });
+          logger.error('companion_ai_error', {
+            action: 'companion_ai_error',
+            error: error.message,
+            userId: req.userId,
+          });
           answer = findFallbackAnswer(query) || DEFAULT_COMPANION_REPLY;
           source = 'fallback';
         }
@@ -507,8 +529,17 @@ export const updateQuestionAnswer = async (req, res, next) => {
     if (updates.question) {
       updates.slug = await createUniqueSlug(updates.question, req.params.id);
     }
-    if (updates.category !== undefined) updates.category = normalizeQuestionCategory(updates.category);
-    ['bodyPart', 'gender', 'ageGroups', 'tags', 'symptoms', 'relatedProducts', 'sourceLinks'].forEach((field) => {
+    if (updates.category !== undefined)
+      updates.category = normalizeQuestionCategory(updates.category);
+    [
+      'bodyPart',
+      'gender',
+      'ageGroups',
+      'tags',
+      'symptoms',
+      'relatedProducts',
+      'sourceLinks',
+    ].forEach((field) => {
       if (updates[field] !== undefined) updates[field] = normalizeStringArray(updates[field]);
     });
 
@@ -534,7 +565,7 @@ export const deleteQuestionAnswer = async (req, res, next) => {
     const qa = await QuestionAnswer.findByIdAndUpdate(
       req.params.id,
       { isPublished: false },
-      { new: true }
+      { new: true },
     );
 
     if (!qa) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Question not found');

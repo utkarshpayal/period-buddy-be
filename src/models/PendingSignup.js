@@ -25,7 +25,7 @@ const pendingSignupSchema = new mongoose.Schema(
     otpAttempts: { type: Number, default: 0 },
     lastSentAt: { type: Date, default: Date.now },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 pendingSignupSchema.index({ email: 1 });

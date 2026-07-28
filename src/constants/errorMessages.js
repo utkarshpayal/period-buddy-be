@@ -3,22 +3,24 @@ export const ERROR_MESSAGES = {
   USER_NOT_FOUND: 'User not found',
   INVALID_CREDENTIALS: 'Invalid email or password',
   EMAIL_ALREADY_EXISTS: 'Email already registered',
-  WEAK_PASSWORD: 'Password must be at least 8 characters with uppercase, lowercase, number and special character',
+  WEAK_PASSWORD:
+    'Password must be at least 8 characters with uppercase, lowercase, number and special character',
   INVALID_EMAIL: 'Please provide a valid email address',
   MISSING_FIELDS: 'Please provide all required fields',
-  
+
   // Token Errors
   NO_TOKEN: 'No authentication token provided',
   INVALID_TOKEN: 'Invalid or expired token',
   TOKEN_EXPIRED: 'Authentication token has expired',
-  
+
   // Server Errors
   INTERNAL_SERVER_ERROR: 'Internal server error',
   DATABASE_ERROR: 'Database connection error',
-  
+
   // Validation Errors
   INVALID_PHONE: 'Please provide a valid phone number',
-  INVALID_PASSWORD_FORMAT: 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character',
+  INVALID_PASSWORD_FORMAT:
+    'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character',
 
   // OTP Errors
   OTP_NOT_FOUND: 'No pending signup found for this email. Please sign up again.',
@@ -30,7 +32,8 @@ export const ERROR_MESSAGES = {
   // Google Sign-In Errors
   GOOGLE_TOKEN_MISSING: 'Google ID token is required',
   GOOGLE_EMAIL_MISSING: 'Your Google account has no email address to sign in with',
-  GOOGLE_ONLY_ACCOUNT: 'This account was created with Google. Please use "Continue with Google" to sign in.',
+  GOOGLE_ONLY_ACCOUNT:
+    'This account was created with Google. Please use "Continue with Google" to sign in.',
 
   // Upload Errors
   NO_FILE_UPLOADED: 'No file was uploaded',

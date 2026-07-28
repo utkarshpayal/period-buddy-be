@@ -14,7 +14,7 @@ const partnerMessageSchema = new mongoose.Schema(
     sentAt: { type: Date, default: Date.now },
     readAt: { type: Date, default: null },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 partnerMessageSchema.index({ partnerId: 1, sentAt: -1 });

@@ -71,7 +71,7 @@ export const signup = async (req, res, next) => {
         otpAttempts: 0,
         lastSentAt: new Date(),
       },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      { upsert: true, new: true, setDefaultsOnInsert: true },
     );
 
     await sendOtpEmail({ email: normalizedEmail, firstName, otp });
@@ -149,7 +149,7 @@ export const verifyOtp = async (req, res, next) => {
       HTTP_STATUS.CREATED,
       SUCCESS_MESSAGES.OTP_VERIFIED,
       user.toJSON(),
-      token
+      token,
     );
   } catch (error) {
     next(error);
@@ -240,13 +240,7 @@ export const login = async (req, res, next) => {
     // Get user data without password
     const userData = user.toJSON();
 
-    return sendResponse(
-      res,
-      HTTP_STATUS.OK,
-      SUCCESS_MESSAGES.LOGIN_SUCCESS,
-      userData,
-      token
-    );
+    return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.LOGIN_SUCCESS, userData, token);
   } catch (error) {
     next(error);
   }
@@ -262,7 +256,14 @@ export const googleAuth = async (req, res, next) => {
     const { idToken, role } = req.body;
 
     const payload = await verifyGoogleIdToken(idToken);
-    const { sub: googleId, email, given_name: givenName, family_name: familyName, picture, email_verified: emailVerified } = payload;
+    const {
+      sub: googleId,
+      email,
+      given_name: givenName,
+      family_name: familyName,
+      picture,
+      email_verified: emailVerified,
+    } = payload;
 
     if (!email) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.GOOGLE_EMAIL_MISSING);
@@ -318,21 +319,17 @@ export const googleAuth = async (req, res, next) => {
       role: user.role,
     });
 
-    return sendResponse(
-      res,
-      HTTP_STATUS.OK,
-      SUCCESS_MESSAGES.LOGIN_SUCCESS,
-      user.toJSON(),
-      token
-    );
+    return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.LOGIN_SUCCESS, user.toJSON(), token);
   } catch (error) {
-    if (error.message?.includes('Invalid or expired Google') || error.message?.includes('not configured')) {
+    if (
+      error.message?.includes('Invalid or expired Google') ||
+      error.message?.includes('not configured')
+    ) {
       return sendError(res, HTTP_STATUS.UNAUTHORIZED, error.message);
     }
     next(error);
   }
 };
-
 
 // One-time wallet bonus for finishing onboarding — the only tokens a fresh
 // account should have until the user actually logs something.
@@ -351,34 +348,27 @@ export const onboarding = async (req, res, next) => {
 
     const updates = {
       isProfileComplete: true,
-      ...pickDefined(
-        { dateOfBirth, gender, phone, profilePicture },
-        ['dateOfBirth', 'gender', 'phone', 'profilePicture']
-      ),
+      ...pickDefined({ dateOfBirth, gender, phone, profilePicture }, [
+        'dateOfBirth',
+        'gender',
+        'phone',
+        'profilePicture',
+      ]),
       ...(isFirstCompletion && {
         walletBalance: (existingUser.walletBalance || 0) + PROFILE_COMPLETE_BONUS,
       }),
     };
 
-    const updatedUser = await User.findByIdAndUpdate(
-      req.userId,
-      updates,
-      {
-        new: true,
-        runValidators: true,
-      }
-    );
+    const updatedUser = await User.findByIdAndUpdate(req.userId, updates, {
+      new: true,
+      runValidators: true,
+    });
 
     if (!updatedUser) {
       return sendError(res, HTTP_STATUS.NOT_FOUND, ERROR_MESSAGES.USER_NOT_FOUND);
     }
 
-    return sendResponse(
-      res,
-      HTTP_STATUS.OK,
-      SUCCESS_MESSAGES.ONBOARDING_COMPLETE,
-      updatedUser
-    );
+    return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.ONBOARDING_COMPLETE, updatedUser);
   } catch (error) {
     next(error);
   }
@@ -421,11 +411,10 @@ export const updateProfile = async (req, res, next) => {
       'anonymousCommunityMode',
     ]);
 
-    const user = await User.findByIdAndUpdate(
-      req.userId,
-      updates,
-      { new: true, runValidators: true }
-    );
+    const user = await User.findByIdAndUpdate(req.userId, updates, {
+      new: true,
+      runValidators: true,
+    });
 
     if (!user) {
       return sendError(res, HTTP_STATUS.NOT_FOUND, ERROR_MESSAGES.USER_NOT_FOUND);
@@ -532,8 +521,9 @@ export const getDashboardSummary = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.NOT_FOUND, ERROR_MESSAGES.USER_NOT_FOUND);
     }
 
-    const trackedDays = logs.filter((log) =>
-      log.note?.trim() || (log.symptoms || []).length > 0 || (log.flow && log.flow !== 'none')
+    const trackedDays = logs.filter(
+      (log) =>
+        log.note?.trim() || (log.symptoms || []).length > 0 || (log.flow && log.flow !== 'none'),
     ).length;
 
     // A brand-new account has no logs yet — leave the default streakCount (1,
@@ -547,8 +537,13 @@ export const getDashboardSummary = async (req, res, next) => {
     }
 
     const today = todayDateKey();
-    const completedHabitsToday = habits.filter((habit) => habit.completedDates?.includes(today)).length;
-    const forestHealth = Math.min(100, Math.max(45, 55 + trackedDays * 4 + completedHabitsToday * 2));
+    const completedHabitsToday = habits.filter((habit) =>
+      habit.completedDates?.includes(today),
+    ).length;
+    const forestHealth = Math.min(
+      100,
+      Math.max(45, 55 + trackedDays * 4 + completedHabitsToday * 2),
+    );
     const predictions = settings ? computeCyclePredictions(settings) : null;
 
     return sendResponse(res, HTTP_STATUS.OK, 'Dashboard summary fetched', {
@@ -575,7 +570,7 @@ export const updateFcmToken = async (req, res, next) => {
     const user = await User.findByIdAndUpdate(
       req.userId,
       { notificationToken: token },
-      { new: true }
+      { new: true },
     );
 
     if (!user) {

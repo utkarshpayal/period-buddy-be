@@ -10,7 +10,12 @@ const router = express.Router();
  * @desc    Subscribe an email to the newsletter
  * @access  Public
  */
-router.post('/subscribe', validateNewsletterSubscribe, handleValidationErrors, marketingController.subscribeNewsletter);
+router.post(
+  '/subscribe',
+  validateNewsletterSubscribe,
+  handleValidationErrors,
+  marketingController.subscribeNewsletter,
+);
 
 /**
  * @route   POST /api/newsletter/unsubscribe

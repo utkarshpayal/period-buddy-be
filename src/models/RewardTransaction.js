@@ -16,18 +16,29 @@ const rewardTransactionSchema = new mongoose.Schema(
     type: {
       type: String,
       enum: [
-        'cycle_log', 'habit_complete', 'forest_care', 'qa_ask',
-        'community_post', 'community_like', 'content_read', 'reel_vote',
-        'buddy_message', 'referral', 'streak_bonus', 'purchase', 'redemption', 'adjustment',
+        'cycle_log',
+        'habit_complete',
+        'forest_care',
+        'qa_ask',
+        'community_post',
+        'community_like',
+        'content_read',
+        'reel_vote',
+        'buddy_message',
+        'referral',
+        'streak_bonus',
+        'purchase',
+        'redemption',
+        'adjustment',
       ],
       required: true,
     },
     description: { type: String, trim: true },
     referenceId: { type: mongoose.Schema.Types.ObjectId }, // linked document id
-    referenceModel: { type: String, trim: true },          // model name
+    referenceModel: { type: String, trim: true }, // model name
     balanceAfter: { type: Number, required: true },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 rewardTransactionSchema.index({ userId: 1, createdAt: -1 });

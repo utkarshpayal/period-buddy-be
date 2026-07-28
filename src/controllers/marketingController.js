@@ -1,7 +1,10 @@
 import Newsletter from '../models/Newsletter.js';
 import ContactMessage from '../models/ContactMessage.js';
 import { sendMail } from '../utils/mailer.js';
-import { getNewsletterWelcomeTemplate, getContactNotificationTemplate } from '../templates/emailTemplates.js';
+import {
+  getNewsletterWelcomeTemplate,
+  getContactNotificationTemplate,
+} from '../templates/emailTemplates.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
@@ -15,13 +18,17 @@ export const subscribeNewsletter = async (req, res, next) => {
     const existing = await Newsletter.findOne({ email });
     if (existing) {
       if (existing.isActive) {
-        return sendResponse(res, HTTP_STATUS.OK, "You're already subscribed!", { email: existing.email });
+        return sendResponse(res, HTTP_STATUS.OK, "You're already subscribed!", {
+          email: existing.email,
+        });
       }
       existing.isActive = true;
       existing.unsubscribedAt = null;
       await existing.save();
       logger.info('newsletter_resubscribed', { action: 'newsletter_resubscribed', email });
-      return sendResponse(res, HTTP_STATUS.OK, 'Welcome back! Subscribed successfully.', { email: existing.email });
+      return sendResponse(res, HTTP_STATUS.OK, 'Welcome back! Subscribed successfully.', {
+        email: existing.email,
+      });
     }
 
     const subscription = await Newsletter.create({ email, source: 'marketing_website' });
@@ -29,16 +36,25 @@ export const subscribeNewsletter = async (req, res, next) => {
     sendMail({
       to: email,
       subject: "You're on the list — welcome to Nura",
-      html: getNewsletterWelcomeTemplate(email),
+      html: getNewsletterWelcomeTemplate(),
       text: "Thanks for subscribing to Nura's newsletter. You'll get our science advisory board's research articles once a month.",
-    }).catch((error) => logger.error('newsletter_welcome_mail_failed', { action: 'newsletter_welcome_mail_failed', error: error.message }));
+    }).catch((error) =>
+      logger.error('newsletter_welcome_mail_failed', {
+        action: 'newsletter_welcome_mail_failed',
+        error: error.message,
+      }),
+    );
 
     logger.info('newsletter_subscribed', { action: 'newsletter_subscribed', email });
 
-    return sendResponse(res, HTTP_STATUS.CREATED, 'Subscribed! Check your inbox soon.', { email: subscription.email });
+    return sendResponse(res, HTTP_STATUS.CREATED, 'Subscribed! Check your inbox soon.', {
+      email: subscription.email,
+    });
   } catch (error) {
     if (error.code === 11000) {
-      return sendResponse(res, HTTP_STATUS.OK, "You're already subscribed!", { email: req.body.email });
+      return sendResponse(res, HTTP_STATUS.OK, "You're already subscribed!", {
+        email: req.body.email,
+      });
     }
     next(error);
   }
@@ -53,7 +69,7 @@ export const unsubscribeNewsletter = async (req, res, next) => {
     const subscription = await Newsletter.findOneAndUpdate(
       { email: String(email).trim().toLowerCase() },
       { isActive: false, unsubscribedAt: new Date() },
-      { new: true }
+      { new: true },
     );
 
     if (!subscription) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Subscription not found');
@@ -120,9 +136,14 @@ export const submitContactMessage = async (req, res, next) => {
       emailDelivered,
     });
 
-    return sendResponse(res, HTTP_STATUS.CREATED, 'Got it — thank you! Someone from the team will get back to you soon.', {
-      id: contactMessage._id,
-    });
+    return sendResponse(
+      res,
+      HTTP_STATUS.CREATED,
+      'Got it — thank you! Someone from the team will get back to you soon.',
+      {
+        id: contactMessage._id,
+      },
+    );
   } catch (error) {
     next(error);
   }
@@ -159,7 +180,11 @@ export const updateContactMessageStatus = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid status');
     }
 
-    const contactMessage = await ContactMessage.findByIdAndUpdate(req.params.id, { status }, { new: true });
+    const contactMessage = await ContactMessage.findByIdAndUpdate(
+      req.params.id,
+      { status },
+      { new: true },
+    );
     if (!contactMessage) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Contact message not found');
 
     return sendResponse(res, HTTP_STATUS.OK, 'Status updated', contactMessage);

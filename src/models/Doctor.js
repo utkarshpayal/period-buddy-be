@@ -23,7 +23,7 @@ const doctorSchema = new mongoose.Schema(
     /** @deprecated availability is now managed by DoctorAvailability collection */
     availability: { type: String, default: 'Available today' },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 doctorSchema.index({ isAvailable: 1, rating: -1 });

@@ -7,7 +7,6 @@ import {
   escapeRegex,
   getPagination,
   isValidObjectId,
-  normalizeStringArray,
   pickDefined,
 } from '../utils/apiHelpers.js';
 
@@ -63,7 +62,7 @@ export const getReelById = async (req, res, next) => {
     const reel = await Reel.findOneAndUpdate(
       { _id: req.params.id, isActive: true },
       { $inc: { viewCount: 1 } },
-      { new: true }
+      { new: true },
     );
     if (!reel) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Reel not found');
 
@@ -89,16 +88,28 @@ export const createReel = async (req, res, next) => {
       pollOptions,
     } = req.body;
 
-    if (!title?.trim() || !creatorId?.trim() || !creatorName?.trim() || !thumbnailUrl?.trim() || !directMp4Url?.trim()) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'title, creatorId, creatorName, thumbnailUrl, and directMp4Url are required');
+    if (
+      !title?.trim() ||
+      !creatorId?.trim() ||
+      !creatorName?.trim() ||
+      !thumbnailUrl?.trim() ||
+      !directMp4Url?.trim()
+    ) {
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        'title, creatorId, creatorName, thumbnailUrl, and directMp4Url are required',
+      );
     }
 
     const options = Array.isArray(pollOptions)
-      ? pollOptions.map((option, index) => ({
-        optionId: option.optionId || `option_${index + 1}`,
-        topic: option.topic,
-        votes: Number(option.votes || 0),
-      })).filter((option) => option.topic)
+      ? pollOptions
+          .map((option, index) => ({
+            optionId: option.optionId || `option_${index + 1}`,
+            topic: option.topic,
+            votes: Number(option.votes || 0),
+          }))
+          .filter((option) => option.topic)
       : [];
 
     const reel = await Reel.create({
@@ -144,7 +155,10 @@ export const updateReel = async (req, res, next) => {
       'publishedAt',
     ]);
 
-    const reel = await Reel.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
+    const reel = await Reel.findByIdAndUpdate(req.params.id, updates, {
+      new: true,
+      runValidators: true,
+    });
     if (!reel) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Reel not found');
 
     return sendResponse(res, HTTP_STATUS.OK, 'Reel updated', reel);
@@ -177,11 +191,14 @@ export const recordView = async (req, res, next) => {
     const reel = await Reel.findOneAndUpdate(
       { _id: req.params.id, isActive: true },
       { $inc: { viewCount: 1 } },
-      { new: true }
+      { new: true },
     );
     if (!reel) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Reel not found');
 
-    return sendResponse(res, HTTP_STATUS.OK, 'View recorded', { views: reel.viewCount, viewCount: reel.viewCount });
+    return sendResponse(res, HTTP_STATUS.OK, 'View recorded', {
+      views: reel.viewCount,
+      viewCount: reel.viewCount,
+    });
   } catch (error) {
     next(error);
   }
@@ -206,10 +223,15 @@ export const toggleFollowCreator = async (req, res, next) => {
 
     await reel.save();
 
-    return sendResponse(res, HTTP_STATUS.OK, alreadyFollowing ? 'Creator unfollowed' : 'Creator followed', {
-      followedByMe: !alreadyFollowing,
-      creatorId: reel.creatorId,
-    });
+    return sendResponse(
+      res,
+      HTTP_STATUS.OK,
+      alreadyFollowing ? 'Creator unfollowed' : 'Creator followed',
+      {
+        followedByMe: !alreadyFollowing,
+        creatorId: reel.creatorId,
+      },
+    );
   } catch (error) {
     next(error);
   }

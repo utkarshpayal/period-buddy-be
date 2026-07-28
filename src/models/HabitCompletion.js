@@ -19,7 +19,7 @@ const habitCompletionSchema = new mongoose.Schema(
     rewardPoints: { type: Number, default: 0 },
     note: { type: String, trim: true, maxlength: 300 },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 habitCompletionSchema.index({ habitId: 1, dateKey: 1 }, { unique: true });

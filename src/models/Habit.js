@@ -31,7 +31,7 @@ const habitSchema = new mongoose.Schema(
     /** @deprecated use HabitCompletion collection */
     completedDates: [{ type: String }], // 'YYYY-MM-DD' keys
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 habitSchema.index({ userId: 1, isActive: 1 });

@@ -10,7 +10,7 @@ const communityCommentSchema = new mongoose.Schema(
     content: { type: String, required: true, trim: true, maxlength: 2000 },
     isAnonymous: { type: Boolean, default: false },
   },
-  { timestamps: { createdAt: true, updatedAt: false } }
+  { timestamps: { createdAt: true, updatedAt: false } },
 );
 
 const communityPostSchema = new mongoose.Schema(
@@ -53,17 +53,20 @@ const communityPostSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 communityPostSchema.index({ isActive: 1, status: 1, createdAt: -1 });
 communityPostSchema.index({ category: 1, createdAt: -1 });
 communityPostSchema.index({ userId: 1, createdAt: -1 });
 
-communityPostSchema.virtual('likes').get(function () {
-  return this.likeCount;
-}).set(function (val) {
-  this.likeCount = val;
-});
+communityPostSchema
+  .virtual('likes')
+  .get(function () {
+    return this.likeCount;
+  })
+  .set(function (val) {
+    this.likeCount = val;
+  });
 
 export default mongoose.model('CommunityPost', communityPostSchema);

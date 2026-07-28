@@ -63,7 +63,7 @@ export async function generateCareSuggestions({ permissions, cycle, recentLogs, 
           role: 'system',
           content:
             "You are a caring assistant helping someone's romantic partner support them through their menstrual cycle and health. " +
-            "Given her recent cycle phase, daily logs, and (if present) health report excerpts, write empathetic, concrete suggestions " +
+            'Given her recent cycle phase, daily logs, and (if present) health report excerpts, write empathetic, concrete suggestions ' +
             'for how the partner can support her right now. Never invent facts not present in the data, and never restate raw medical ' +
             `document contents verbatim — summarize. ${RESPONSE_SCHEMA_HINT}`,
         },

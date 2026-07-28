@@ -53,7 +53,7 @@ const blogSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 blogSchema.index({ status: 1, publishedAt: -1 });

@@ -1,7 +1,4 @@
-import {
-  dateFromDateKey,
-  dateToDateKey,
-} from './apiHelpers.js';
+import { dateFromDateKey, dateToDateKey } from './apiHelpers.js';
 
 export const CYCLE_PHASES = ['period', 'follicular', 'ovulation', 'luteal'];
 
@@ -32,10 +29,11 @@ export const diffDays = (a, b) => {
   return Math.round((startA - startB) / (1000 * 60 * 60 * 24));
 };
 
-export const formatDisplayDate = (date, options = {}) => new Intl.DateTimeFormat('en-US', {
-  month: options.month ?? 'long',
-  day: 'numeric',
-}).format(new Date(date));
+export const formatDisplayDate = (date, options = {}) =>
+  new Intl.DateTimeFormat('en-US', {
+    month: options.month ?? 'long',
+    day: 'numeric',
+  }).format(new Date(date));
 
 export const computeCyclePredictions = (settings, options = {}) => {
   const cycleLength = settings.cycleLength || 28;

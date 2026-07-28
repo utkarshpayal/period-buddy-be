@@ -8,7 +8,7 @@ const stream = {
 
 const httpLogger = morgan(
   ':remote-addr :method :url :status :res[content-length] - :response-time ms',
-  { stream }
+  { stream },
 );
 
 export default httpLogger;

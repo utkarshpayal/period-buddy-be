@@ -29,7 +29,9 @@ const userSchema = new mongoose.Schema(
     password: {
       // Not required for Google-only accounts (no googleId => must have a password).
       type: String,
-      required: function () { return !this.googleId; },
+      required: function () {
+        return !this.googleId;
+      },
       minlength: 8,
       select: false,
     },
@@ -103,7 +105,7 @@ const userSchema = new mongoose.Schema(
     notificationsEnabled: { type: Boolean, default: true },
     anonymousCommunityMode: { type: Boolean, default: true },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // Hash password before saving

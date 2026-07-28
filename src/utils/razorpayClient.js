@@ -8,7 +8,9 @@ export const isPaymentConfigured = () =>
 let client = null;
 const getClient = () => {
   if (!isPaymentConfigured()) {
-    throw new Error('Payments are not configured on the server (missing RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET)');
+    throw new Error(
+      'Payments are not configured on the server (missing RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET)',
+    );
   }
   if (!client) {
     client = new Razorpay({
@@ -32,8 +34,11 @@ export const createOrder = async ({ amountMinorUnits, currency, receipt, notes }
     });
     return order;
   } catch (error) {
-    logger.error('razorpay_create_order_failed', { action: 'razorpay_create_order_failed', error: error.message });
-    throw new Error('Failed to create payment order');
+    logger.error('razorpay_create_order_failed', {
+      action: 'razorpay_create_order_failed',
+      error: error.message,
+    });
+    throw new Error('Failed to create payment order', { cause: error });
   }
 };
 

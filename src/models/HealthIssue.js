@@ -20,7 +20,7 @@ const healthIssueSchema = new mongoose.Schema(
     isActive: { type: Boolean, default: true },
     order: { type: Number, default: 0 },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 healthIssueSchema.index({ isActive: 1, order: 1 });

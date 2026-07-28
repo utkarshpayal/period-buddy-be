@@ -30,7 +30,7 @@ const wellbeingResourceSchema = new mongoose.Schema(
     order: { type: Number, default: 0 },
     isActive: { type: Boolean, default: true },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 wellbeingResourceSchema.index({ type: 1, isActive: 1, order: 1 });

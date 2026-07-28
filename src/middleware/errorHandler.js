@@ -7,8 +7,9 @@ export const notFound = (req, res, next) => {
   next(error);
 };
 
-export const errorHandler = (err, req, res, next) => {
-  let statusCode = err.statusCode || (res.statusCode !== 200 ? res.statusCode : HTTP_STATUS.INTERNAL_SERVER_ERROR);
+export const errorHandler = (err, req, res, _next) => {
+  let statusCode =
+    err.statusCode || (res.statusCode !== 200 ? res.statusCode : HTTP_STATUS.INTERNAL_SERVER_ERROR);
 
   // Log the error with context
   logger.error('http_error', {
@@ -53,10 +54,14 @@ export const errorHandler = (err, req, res, next) => {
 
   // JWT errors
   if (err.name === 'JsonWebTokenError') {
-    return res.status(401).json({ success: false, statusCode: HTTP_STATUS.UNAUTHORIZED, message: 'Invalid token' });
+    return res
+      .status(401)
+      .json({ success: false, statusCode: HTTP_STATUS.UNAUTHORIZED, message: 'Invalid token' });
   }
   if (err.name === 'TokenExpiredError') {
-    return res.status(401).json({ success: false, statusCode: HTTP_STATUS.UNAUTHORIZED, message: 'Token expired' });
+    return res
+      .status(401)
+      .json({ success: false, statusCode: HTTP_STATUS.UNAUTHORIZED, message: 'Token expired' });
   }
 
   return res.status(statusCode).json({

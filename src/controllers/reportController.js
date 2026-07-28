@@ -67,11 +67,17 @@ export const getHealthReport = async (req, res, next) => {
       Document.find({ userId: req.userId, documentDate: { $gte: start, $lte: end } })
         .sort({ documentDate: 1 })
         .limit(MAX_CONTEXT_DOCS),
-      CycleLog.find({ userId: req.userId, dateKey: { $gte: startKey, $lte: endKey } }).sort({ dateKey: 1 }),
+      CycleLog.find({ userId: req.userId, dateKey: { $gte: startKey, $lte: endKey } }).sort({
+        dateKey: 1,
+      }),
     ]);
 
     if (!documents.length && !logs.length) {
-      return sendError(res, HTTP_STATUS.NOT_FOUND, 'No cycle logs or documents found in that date range');
+      return sendError(
+        res,
+        HTTP_STATUS.NOT_FOUND,
+        'No cycle logs or documents found in that date range',
+      );
     }
 
     const flowLogs = logs.filter((log) => log.flow && log.flow !== 'none');
@@ -80,7 +86,10 @@ export const getHealthReport = async (req, res, next) => {
       periodDays: flowLogs.length,
       symptomCounts: tally(logs.flatMap((log) => log.symptoms || []))
         .slice(0, 8)
-        .map((item) => ({ ...item, label: item.label.charAt(0).toUpperCase() + item.label.slice(1) })),
+        .map((item) => ({
+          ...item,
+          label: item.label.charAt(0).toUpperCase() + item.label.slice(1),
+        })),
       moodCounts: tally(logs.map((log) => log.mood)).map((item) => ({
         ...item,
         label: MOOD_LABELS[item.label] || item.label,
@@ -105,7 +114,8 @@ export const getHealthReport = async (req, res, next) => {
     if (isAiConfigured() && (documents.length || cycle.daysLogged)) {
       try {
         const sections = [];
-        if (documents.length) sections.push(`Uploaded documents:\n\n${buildDocumentContext(documents)}`);
+        if (documents.length)
+          sections.push(`Uploaded documents:\n\n${buildDocumentContext(documents)}`);
         const cycleContext = buildCycleContext(cycle);
         if (cycleContext) sections.push(`Cycle tracker summary:\n\n${cycleContext}`);
 
@@ -115,7 +125,9 @@ export const getHealthReport = async (req, res, next) => {
               role: 'system',
               content:
                 "You are a careful health assistant summarizing a patient's own uploaded medical reports and cycle-tracking data for their personal reference. Write a clear, plain-language analysis: call out abnormal lab values, medication changes, notable symptom patterns, and any follow-up actions. Never invent facts that are not present in the data. End with a short note that this is not medical advice." +
-                (language && language !== 'en-IN' ? ` Respond in ${getLanguageLabel(language)}, not English.` : ''),
+                (language && language !== 'en-IN'
+                  ? ` Respond in ${getLanguageLabel(language)}, not English.`
+                  : ''),
             },
             {
               role: 'user',

@@ -10,7 +10,12 @@ const router = express.Router();
  * @desc    Submit the contact form — persists it and emails the team
  * @access  Public
  */
-router.post('/', validateContactMessage, handleValidationErrors, marketingController.submitContactMessage);
+router.post(
+  '/',
+  validateContactMessage,
+  handleValidationErrors,
+  marketingController.submitContactMessage,
+);
 
 /**
  * @route   GET /api/contact
@@ -24,6 +29,11 @@ router.get('/', authenticate, authorize('admin'), marketingController.getContact
  * @desc    Admin: update a contact message's status
  * @access  Admin
  */
-router.patch('/:id/status', authenticate, authorize('admin'), marketingController.updateContactMessageStatus);
+router.patch(
+  '/:id/status',
+  authenticate,
+  authorize('admin'),
+  marketingController.updateContactMessageStatus,
+);
 
 export default router;

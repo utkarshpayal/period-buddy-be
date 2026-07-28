@@ -52,7 +52,7 @@ const reelSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 reelSchema.index({ isActive: 1, publishedAt: -1 });

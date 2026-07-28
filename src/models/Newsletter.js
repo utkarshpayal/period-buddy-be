@@ -7,7 +7,7 @@ const newsletterSchema = new mongoose.Schema(
     source: { type: String, default: 'marketing_website' },
     unsubscribedAt: { type: Date, default: null },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 newsletterSchema.index({ isActive: 1 });

@@ -15,7 +15,7 @@ const consultationMessageSchema = new mongoose.Schema(
     sentAt: { type: Date, default: Date.now },
     readAt: { type: Date, default: null },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 consultationMessageSchema.index({ consultationId: 1, sentAt: -1 });

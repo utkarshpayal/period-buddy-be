@@ -6,7 +6,14 @@ import { blogStatusEnum } from '../enums/enums.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
-import { buildPagination, escapeRegex, getPagination, isValidObjectId, normalizeStringArray, pickDefined } from '../utils/apiHelpers.js';
+import {
+  buildPagination,
+  escapeRegex,
+  getPagination,
+  isValidObjectId,
+  normalizeStringArray,
+  pickDefined,
+} from '../utils/apiHelpers.js';
 import { SUPPORTED_LANGUAGES, translateText, TRANSLATE_MAX_CHARS } from '../utils/sarvamClient.js';
 
 // A session shorter than this is treated as a bounce (accidental open, back
@@ -68,17 +75,24 @@ export const getBlogs = async (req, res, next) => {
     const filter = { status: blogStatusEnum.PUBLISHED, isPublished: true };
     if (category) filter.category = category;
     if (tag) filter.tags = tag;
-    if (search) filter.$or = [
-      { title: { $regex: escapeRegex(search), $options: 'i' } },
-      { excerpt: { $regex: escapeRegex(search), $options: 'i' } },
-    ];
+    if (search)
+      filter.$or = [
+        { title: { $regex: escapeRegex(search), $options: 'i' } },
+        { excerpt: { $regex: escapeRegex(search), $options: 'i' } },
+      ];
 
     const [blogs, total] = await Promise.all([
       Blog.find(filter).select('-content').sort({ publishedAt: -1 }).skip(skip).limit(limit),
       Blog.countDocuments(filter),
     ]);
 
-    logger.info('blogs_fetched', { action: 'blogs_fetched', count: blogs.length, page, category, tag });
+    logger.info('blogs_fetched', {
+      action: 'blogs_fetched',
+      count: blogs.length,
+      page,
+      category,
+      tag,
+    });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Blogs fetched', {
       blogs: blogs.map(withEffectiveReadTime),
@@ -129,7 +143,7 @@ export const trackBlogView = async (req, res, next) => {
     const blog = await Blog.findByIdAndUpdate(
       req.params.id,
       { $inc: { viewCount: 1, totalReadSeconds: clampedSeconds, readSessionCount: 1 } },
-      { new: true }
+      { new: true },
     );
     if (!blog) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Blog not found');
 
@@ -168,10 +182,17 @@ export const translateBlog = async (req, res, next) => {
     const contentChunks = chunkTextForTranslation(blog.content, TRANSLATE_MAX_CHARS);
     const [translatedTitle, ...translatedChunks] = await Promise.all([
       translateText({ input: blog.title, targetLanguageCode: language }),
-      ...contentChunks.map((chunk) => translateText({ input: chunk, targetLanguageCode: language })),
+      ...contentChunks.map((chunk) =>
+        translateText({ input: chunk, targetLanguageCode: language }),
+      ),
     ]);
 
-    logger.info('blog_translated', { action: 'blog_translated', blogId: blog._id, language, chunks: contentChunks.length });
+    logger.info('blog_translated', {
+      action: 'blog_translated',
+      blogId: blog._id,
+      language,
+      chunks: contentChunks.length,
+    });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Blog translated', {
       title: translatedTitle.translatedText,
@@ -204,9 +225,14 @@ export const toggleBookmark = async (req, res, next) => {
     }
     await user.save();
 
-    return sendResponse(res, HTTP_STATUS.OK, alreadySaved ? 'Blog unbookmarked' : 'Blog bookmarked', {
-      bookmarked: !alreadySaved,
-    });
+    return sendResponse(
+      res,
+      HTTP_STATUS.OK,
+      alreadySaved ? 'Blog unbookmarked' : 'Blog bookmarked',
+      {
+        bookmarked: !alreadySaved,
+      },
+    );
   } catch (error) {
     next(error);
   }
@@ -307,7 +333,8 @@ export const getContentFeed = async (req, res, next) => {
 /** POST /api/blogs — Admin: Create a blog post */
 export const createBlog = async (req, res, next) => {
   try {
-    const { title, content, excerpt, coverImageUrl, category, author, isPublished, status } = req.body;
+    const { title, content, excerpt, coverImageUrl, category, author, isPublished, status } =
+      req.body;
 
     if (!title || !content) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'title and content are required');
@@ -346,7 +373,11 @@ export const likeBlog = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid blog id');
     }
 
-    const blog = await Blog.findByIdAndUpdate(req.params.id, { $inc: { likeCount: 1 } }, { new: true });
+    const blog = await Blog.findByIdAndUpdate(
+      req.params.id,
+      { $inc: { likeCount: 1 } },
+      { new: true },
+    );
     if (!blog) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Blog not found');
     return sendResponse(res, HTTP_STATUS.OK, 'Blog liked', { likesCount: blog.likeCount });
   } catch (error) {
@@ -370,7 +401,7 @@ export const updateBlog = async (req, res, next) => {
       'tags',
       'author',
       'isPublished',
-      'status'
+      'status',
     ]);
 
     if (updates.title) {
@@ -379,7 +410,10 @@ export const updateBlog = async (req, res, next) => {
     if (updates.tags !== undefined) updates.tags = normalizeStringArray(updates.tags);
     if (updates.isPublished === true) updates.publishedAt = new Date();
 
-    const blog = await Blog.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
+    const blog = await Blog.findByIdAndUpdate(req.params.id, updates, {
+      new: true,
+      runValidators: true,
+    });
     if (!blog) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Blog not found');
 
     return sendResponse(res, HTTP_STATUS.OK, 'Blog updated', blog);
@@ -395,7 +429,11 @@ export const deleteBlog = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid blog id');
     }
 
-    const blog = await Blog.findByIdAndUpdate(req.params.id, { isPublished: false, status: blogStatusEnum.DRAFT, publishedAt: null }, { new: true, runValidators: true });
+    const blog = await Blog.findByIdAndUpdate(
+      req.params.id,
+      { isPublished: false, status: blogStatusEnum.DRAFT, publishedAt: null },
+      { new: true, runValidators: true },
+    );
     if (!blog) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Blog not found');
 
     return sendResponse(res, HTTP_STATUS.OK, 'Blog unpublished');

@@ -25,7 +25,7 @@ const forestLogSchema = new mongoose.Schema(
     treeType: { type: String, trim: true },
     completed: { type: Boolean, default: true },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 forestLogSchema.index({ userId: 1, dateKey: 1 }, { unique: true });

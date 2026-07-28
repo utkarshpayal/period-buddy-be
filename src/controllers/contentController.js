@@ -78,9 +78,17 @@ const trimOrUndefined = (value) => {
   return trimmed || undefined;
 };
 
-const normalizeContentType = (value) => TYPE_ALIASES[String(value || '').trim().toLowerCase()] || null;
+const normalizeContentType = (value) =>
+  TYPE_ALIASES[
+    String(value || '')
+      .trim()
+      .toLowerCase()
+  ] || null;
 const normalizeQuestionCategory = (value) => {
-  const normalized = String(value || 'general').trim().toLowerCase().replace(/[_-]+/g, ' ');
+  const normalized = String(value || 'general')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ');
   return QUESTION_CATEGORY_ALIASES[normalized] || normalized.replace(/\s+/g, '_');
 };
 
@@ -114,14 +122,17 @@ const resolveVisibilityInput = (body, fallback) => {
 };
 
 const createUniqueSlug = async (Model, source, existingId = null) => {
-  const baseSlug = slugify(source, { lower: true, strict: true }).slice(0, 90) || `content-${Date.now()}`;
+  const baseSlug =
+    slugify(source, { lower: true, strict: true }).slice(0, 90) || `content-${Date.now()}`;
   let slug = baseSlug;
   let suffix = 1;
 
-  while (await Model.exists({
-    slug,
-    ...(existingId ? { _id: { $ne: existingId } } : {}),
-  })) {
+  while (
+    await Model.exists({
+      slug,
+      ...(existingId ? { _id: { $ne: existingId } } : {}),
+    })
+  ) {
     slug = `${baseSlug}-${suffix}`;
     suffix += 1;
   }
@@ -346,31 +357,42 @@ const getIdentifierFilter = (type, id) => {
   return null;
 };
 
-export const getContentTypes = async (req, res) => sendResponse(res, HTTP_STATUS.OK, 'Content types fetched', {
-  types: [
-    { type: 'blog', label: 'Blogs', statuses: ['published', 'draft'] },
-    { type: 'video', label: 'Videos', aliases: ['reel'], statuses: ['active', 'inactive'] },
-    { type: 'question-answer', label: 'Question Answers', aliases: ['qa'], statuses: ['published', 'draft'] },
-    { type: 'health-issue', label: 'Health Issues', statuses: ['active', 'inactive'] },
-    { type: 'wellbeing', label: 'Wellbeing Resources', statuses: ['active', 'inactive'] },
-  ],
-});
+export const getContentTypes = async (req, res) =>
+  sendResponse(res, HTTP_STATUS.OK, 'Content types fetched', {
+    types: [
+      { type: 'blog', label: 'Blogs', statuses: ['published', 'draft'] },
+      { type: 'video', label: 'Videos', aliases: ['reel'], statuses: ['active', 'inactive'] },
+      {
+        type: 'question-answer',
+        label: 'Question Answers',
+        aliases: ['qa'],
+        statuses: ['published', 'draft'],
+      },
+      { type: 'health-issue', label: 'Health Issues', statuses: ['active', 'inactive'] },
+      { type: 'wellbeing', label: 'Wellbeing Resources', statuses: ['active', 'inactive'] },
+    ],
+  });
 
 export const getContentSummary = async (req, res, next) => {
   try {
-    const entries = await Promise.all(CONTENT_TYPES.map(async (type) => {
-      const config = CONTENT_CONFIG[type];
-      const [total, active] = await Promise.all([
-        config.Model.countDocuments(),
-        config.Model.countDocuments({ [config.statusField]: true }),
-      ]);
+    const entries = await Promise.all(
+      CONTENT_TYPES.map(async (type) => {
+        const config = CONTENT_CONFIG[type];
+        const [total, active] = await Promise.all([
+          config.Model.countDocuments(),
+          config.Model.countDocuments({ [config.statusField]: true }),
+        ]);
 
-      return [type, {
-        total,
-        [config.activeName]: active,
-        [config.inactiveName]: total - active,
-      }];
-    }));
+        return [
+          type,
+          {
+            total,
+            [config.activeName]: active,
+            [config.inactiveName]: total - active,
+          },
+        ];
+      }),
+    );
 
     const byType = Object.fromEntries(entries);
     const total = entries.reduce((sum, [, value]) => sum + value.total, 0);
@@ -414,25 +436,29 @@ export const listContent = async (req, res, next) => {
     // admin tabs) and must never be mixed into one interleaved list — each
     // type is fetched in full and kept in its own bucket, so adding to one
     // type can never push another type out of view.
-    const queryResults = await Promise.all(CONTENT_TYPES.map(async (type) => {
-      const config = CONTENT_CONFIG[type];
-      const filter = config.buildFilter(req.query);
-      if (!filter) return { invalid: true };
+    const queryResults = await Promise.all(
+      CONTENT_TYPES.map(async (type) => {
+        const config = CONTENT_CONFIG[type];
+        const filter = config.buildFilter(req.query);
+        if (!filter) return { invalid: true };
 
-      const documents = await config.Model.find(filter).sort(config.sort);
+        const documents = await config.Model.find(filter).sort(config.sort);
 
-      return {
-        type,
-        items: documents.map((document) => config.serialize(document, { includeBody: true })),
-      };
-    }));
+        return {
+          type,
+          items: documents.map((document) => config.serialize(document, { includeBody: true })),
+        };
+      }),
+    );
 
     if (queryResults.some((result) => result.invalid)) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid status');
     }
 
     const content = Object.fromEntries(queryResults.map((result) => [result.type, result.items]));
-    const totalsByType = Object.fromEntries(queryResults.map((result) => [result.type, result.items.length]));
+    const totalsByType = Object.fromEntries(
+      queryResults.map((result) => [result.type, result.items.length]),
+    );
     const total = queryResults.reduce((sum, result) => sum + result.items.length, 0);
 
     return sendResponse(res, HTTP_STATUS.OK, 'Content fetched', {
@@ -458,7 +484,12 @@ export const getContentById = async (req, res, next) => {
     const document = await config.Model.findOne(filter);
     if (!document) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Content not found');
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Content fetched', config.serialize(document, { includeBody: true }));
+    return sendResponse(
+      res,
+      HTTP_STATUS.OK,
+      'Content fetched',
+      config.serialize(document, { includeBody: true }),
+    );
   } catch (error) {
     next(error);
   }
@@ -489,7 +520,11 @@ const createBlog = async (body) => {
     seoDescription: trimOrUndefined(body.seoDescription),
     keywords: normalizeStringArray(body.keywords),
     isPublished: visibility.value,
-    publishedAt: visibility.value ? (body.publishedAt ? new Date(body.publishedAt) : new Date()) : null,
+    publishedAt: visibility.value
+      ? body.publishedAt
+        ? new Date(body.publishedAt)
+        : new Date()
+      : null,
   });
 
   return { document: blog, serialize: serializeBlog };
@@ -509,7 +544,8 @@ const createVideo = async (body, user) => {
   const video = await Reel.create({
     title,
     creatorId: trimOrUndefined(body.creatorId) || `admin_${user?._id || 'period_buddy'}`,
-    creatorName: trimOrUndefined(body.creatorName) || trimOrUndefined(body.author) || getAdminName(user),
+    creatorName:
+      trimOrUndefined(body.creatorName) || trimOrUndefined(body.author) || getAdminName(user),
     creatorAvatar: trimOrUndefined(body.creatorAvatar),
     duration: trimOrUndefined(body.duration),
     category: trimOrUndefined(body.category) || 'Wellness',
@@ -621,7 +657,12 @@ const createWellbeing = async (body) => {
     items: body.items,
     order: body.order,
     isActive: visibility.value,
-    estimatedReadTime: body.estimatedReadTime !== undefined ? Number(body.estimatedReadTime) : (body.readTimeMinutes !== undefined ? Number(body.readTimeMinutes) : undefined),
+    estimatedReadTime:
+      body.estimatedReadTime !== undefined
+        ? Number(body.estimatedReadTime)
+        : body.readTimeMinutes !== undefined
+          ? Number(body.readTimeMinutes)
+          : undefined,
     videoUrl: trimOrUndefined(body.videoUrl || body.directMp4Url),
     audioUrl: trimOrUndefined(body.audioUrl),
   });
@@ -645,7 +686,12 @@ export const createContent = async (req, res, next) => {
     const result = await creators[type]();
     if (result.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, result.error);
 
-    return sendResponse(res, HTTP_STATUS.CREATED, 'Content created', result.serialize(result.document, { includeBody: true }));
+    return sendResponse(
+      res,
+      HTTP_STATUS.CREATED,
+      'Content created',
+      result.serialize(result.document, { includeBody: true }),
+    );
   } catch (error) {
     next(error);
   }
@@ -667,7 +713,8 @@ const buildBlogUpdates = async (body, id) => {
     'publishedAt',
   ]);
 
-  if (body.imageUrl !== undefined && updates.coverImageUrl === undefined) updates.coverImageUrl = body.imageUrl;
+  if (body.imageUrl !== undefined && updates.coverImageUrl === undefined)
+    updates.coverImageUrl = body.imageUrl;
   if (updates.title !== undefined) {
     const title = trimOrUndefined(updates.title);
     if (!title) return { error: 'title cannot be empty' };
@@ -702,9 +749,12 @@ const buildVideoUpdates = (body) => {
     'publishedAt',
   ]);
 
-  if (body.imageUrl !== undefined && updates.thumbnailUrl === undefined) updates.thumbnailUrl = body.imageUrl;
-  if (body.videoUrl !== undefined && updates.directMp4Url === undefined) updates.directMp4Url = body.videoUrl;
-  if (updates.pollOptions !== undefined) updates.pollOptions = normalizePollOptions(updates.pollOptions);
+  if (body.imageUrl !== undefined && updates.thumbnailUrl === undefined)
+    updates.thumbnailUrl = body.imageUrl;
+  if (body.videoUrl !== undefined && updates.directMp4Url === undefined)
+    updates.directMp4Url = body.videoUrl;
+  if (updates.pollOptions !== undefined)
+    updates.pollOptions = normalizePollOptions(updates.pollOptions);
 
   const visibility = resolveVisibilityInput(body);
   if (visibility.invalid) return { error: 'Invalid status' };
@@ -746,10 +796,13 @@ const buildQuestionAnswerUpdates = async (body, id) => {
     updates.question = question;
     updates.slug = await createUniqueSlug(QuestionAnswer, question, id);
   }
-  if (updates.category !== undefined) updates.category = normalizeQuestionCategory(updates.category);
-  ['bodyPart', 'gender', 'ageGroups', 'tags', 'symptoms', 'relatedProducts', 'sourceLinks'].forEach((field) => {
-    if (updates[field] !== undefined) updates[field] = normalizeStringArray(updates[field]);
-  });
+  if (updates.category !== undefined)
+    updates.category = normalizeQuestionCategory(updates.category);
+  ['bodyPart', 'gender', 'ageGroups', 'tags', 'symptoms', 'relatedProducts', 'sourceLinks'].forEach(
+    (field) => {
+      if (updates[field] !== undefined) updates[field] = normalizeStringArray(updates[field]);
+    },
+  );
 
   const visibility = resolveVisibilityInput(body);
   if (visibility.invalid) return { error: 'Invalid status' };
@@ -762,17 +815,30 @@ const buildHealthIssueUpdates = (body) => {
   if (!validateColor(body.color)) return { error: 'color must be a valid hex color' };
 
   const updates = pickDefined(body, [
-    'title', 'category', 'icon', 'color', 'summary', 'guide', 'imageUrl', 'order',
-    'symptoms', 'causes', 'treatment', 'prevention', 'whenToSeeDoctor'
+    'title',
+    'category',
+    'icon',
+    'color',
+    'summary',
+    'guide',
+    'imageUrl',
+    'order',
+    'symptoms',
+    'causes',
+    'treatment',
+    'prevention',
+    'whenToSeeDoctor',
   ]);
   if (body.content !== undefined && updates.guide === undefined) updates.guide = body.content;
-  if (body.coverImageUrl !== undefined && updates.imageUrl === undefined) updates.imageUrl = body.coverImageUrl;
+  if (body.coverImageUrl !== undefined && updates.imageUrl === undefined)
+    updates.imageUrl = body.coverImageUrl;
 
   if (updates.symptoms !== undefined) updates.symptoms = normalizeStringArray(updates.symptoms);
   if (updates.causes !== undefined) updates.causes = normalizeStringArray(updates.causes);
   if (updates.treatment !== undefined) updates.treatment = trimOrUndefined(updates.treatment);
   if (updates.prevention !== undefined) updates.prevention = trimOrUndefined(updates.prevention);
-  if (updates.whenToSeeDoctor !== undefined) updates.whenToSeeDoctor = trimOrUndefined(updates.whenToSeeDoctor);
+  if (updates.whenToSeeDoctor !== undefined)
+    updates.whenToSeeDoctor = trimOrUndefined(updates.whenToSeeDoctor);
 
   const visibility = resolveVisibilityInput(body);
   if (visibility.invalid) return { error: 'Invalid status' };
@@ -785,12 +851,24 @@ const buildWellbeingUpdates = (body) => {
   if (!validateColor(body.color)) return { error: 'color must be a valid hex color' };
 
   const updates = pickDefined(body, [
-    'type', 'title', 'icon', 'color', 'summary', 'extendedGuide', 'items', 'order',
-    'estimatedReadTime', 'videoUrl', 'audioUrl'
+    'type',
+    'title',
+    'icon',
+    'color',
+    'summary',
+    'extendedGuide',
+    'items',
+    'order',
+    'estimatedReadTime',
+    'videoUrl',
+    'audioUrl',
   ]);
-  if (body.resourceType !== undefined && updates.type === undefined) updates.type = body.resourceType;
-  if (body.content !== undefined && updates.extendedGuide === undefined) updates.extendedGuide = body.content;
-  if (updates.extendedGuide !== undefined) updates.extendedGuide = normalizeStringArray(updates.extendedGuide);
+  if (body.resourceType !== undefined && updates.type === undefined)
+    updates.type = body.resourceType;
+  if (body.content !== undefined && updates.extendedGuide === undefined)
+    updates.extendedGuide = body.content;
+  if (updates.extendedGuide !== undefined)
+    updates.extendedGuide = normalizeStringArray(updates.extendedGuide);
 
   if (body.readTimeMinutes !== undefined && updates.estimatedReadTime === undefined) {
     updates.estimatedReadTime = Number(body.readTimeMinutes);
@@ -810,7 +888,8 @@ export const updateContent = async (req, res, next) => {
   try {
     const type = normalizeContentType(req.params.type);
     if (!type) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid content type');
-    if (!isValidObjectId(req.params.id)) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid content id');
+    if (!isValidObjectId(req.params.id))
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid content id');
 
     const updateBuilders = {
       blog: () => buildBlogUpdates(req.body, req.params.id),
@@ -831,7 +910,12 @@ export const updateContent = async (req, res, next) => {
 
     if (!document) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Content not found');
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Content updated', config.serialize(document, { includeBody: true }));
+    return sendResponse(
+      res,
+      HTTP_STATUS.OK,
+      'Content updated',
+      config.serialize(document, { includeBody: true }),
+    );
   } catch (error) {
     next(error);
   }
@@ -841,7 +925,8 @@ export const setContentVisibility = async (req, res, next) => {
   try {
     const type = normalizeContentType(req.params.type);
     if (!type) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid content type');
-    if (!isValidObjectId(req.params.id)) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid content id');
+    if (!isValidObjectId(req.params.id))
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid content id');
 
     const visibility = resolveVisibilityInput(req.body, true);
     if (visibility.invalid) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid status');
@@ -858,7 +943,12 @@ export const setContentVisibility = async (req, res, next) => {
 
     if (!document) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Content not found');
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Content visibility updated', config.serialize(document, { includeBody: true }));
+    return sendResponse(
+      res,
+      HTTP_STATUS.OK,
+      'Content visibility updated',
+      config.serialize(document, { includeBody: true }),
+    );
   } catch (error) {
     next(error);
   }
@@ -868,13 +958,14 @@ export const deleteContent = async (req, res, next) => {
   try {
     const type = normalizeContentType(req.params.type);
     if (!type) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid content type');
-    if (!isValidObjectId(req.params.id)) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid content id');
+    if (!isValidObjectId(req.params.id))
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid content id');
 
     const config = CONTENT_CONFIG[type];
     const document = await config.Model.findByIdAndUpdate(
       req.params.id,
       { [config.statusField]: false },
-      { new: true }
+      { new: true },
     );
 
     if (!document) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Content not found');

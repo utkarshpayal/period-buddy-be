@@ -7,7 +7,6 @@ import logger from '../utils/logger.js';
 import { createPartnerNotification } from './partnerController.js';
 import {
   dateFromDateKey,
-  isValidObjectId,
   normalizeStringArray,
   pickDefined,
   validateDateKey,
@@ -41,7 +40,7 @@ export const saveCycleLog = async (req, res, next) => {
       weight,
       temperature,
       stressLevel,
-      medication
+      medication,
     } = req.body;
 
     if (!dateKey || !validateDateKey(dateKey)) {
@@ -57,9 +56,8 @@ export const saveCycleLog = async (req, res, next) => {
     // Wrap with a true modulo (not JS's remainder, which keeps the sign of the
     // dividend) so dates before the tracked start land on the correct day of the
     // *previous* cycle instead of all collapsing onto cycleDay 1 / "period".
-    const normalizedCycleDay = offset !== undefined
-      ? (((offset % cycleLength) + cycleLength) % cycleLength) + 1
-      : undefined;
+    const normalizedCycleDay =
+      offset !== undefined ? (((offset % cycleLength) + cycleLength) % cycleLength) + 1 : undefined;
     const phase = normalizedCycleDay
       ? getCyclePhase(normalizedCycleDay, settings?.periodLength || 5, cycleLength)
       : undefined;
@@ -86,17 +84,30 @@ export const saveCycleLog = async (req, res, next) => {
         medication: medication !== undefined ? normalizeStringArray(medication) : undefined,
       },
       [
-        'date', 'flow', 'mood', 'energy', 'symptoms', 'note', 'isIntimate', 'cycleDay', 'phase',
-        'rewardPoints', 'sleepHours', 'waterIntake', 'weight',
-        'temperature', 'stressLevel', 'medication'
-      ]
+        'date',
+        'flow',
+        'mood',
+        'energy',
+        'symptoms',
+        'note',
+        'isIntimate',
+        'cycleDay',
+        'phase',
+        'rewardPoints',
+        'sleepHours',
+        'waterIntake',
+        'weight',
+        'temperature',
+        'stressLevel',
+        'medication',
+      ],
     );
 
-    const cycleLog = await CycleLog.findOneAndUpdate(
-      { userId: req.userId, dateKey },
-      update,
-      { new: true, upsert: true, runValidators: true }
-    );
+    const cycleLog = await CycleLog.findOneAndUpdate({ userId: req.userId, dateKey }, update, {
+      new: true,
+      upsert: true,
+      runValidators: true,
+    });
 
     // Update user token count and tracking streak
     const userUpdates = {};
@@ -115,7 +126,7 @@ export const saveCycleLog = async (req, res, next) => {
       req.userId,
       'partner_message',
       'Cycle Log Updated 📝',
-      `${name} updated their cycle log for ${dateKey}.`
+      `${name} updated their cycle log for ${dateKey}.`,
     );
 
     logger.info('cycle_log_saved', {
@@ -128,7 +139,10 @@ export const saveCycleLog = async (req, res, next) => {
       tokensEarned,
     });
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Cycle log saved successfully', { cycleLog, tokensEarned });
+    return sendResponse(res, HTTP_STATUS.OK, 'Cycle log saved successfully', {
+      cycleLog,
+      tokensEarned,
+    });
   } catch (error) {
     logger.error('cycle_log_save_error', { userId: req.userId, error: error.message });
     next(error);
@@ -140,7 +154,7 @@ export const getMonthLogs = async (req, res, next) => {
   try {
     const { month } = req.query; // 'YYYY-MM'
 
-    let filter = { userId: req.userId };
+    const filter = { userId: req.userId };
     if (month) {
       if (!validateMonthKey(month)) {
         return sendError(res, HTTP_STATUS.BAD_REQUEST, 'month must be in YYYY-MM format');
@@ -150,7 +164,12 @@ export const getMonthLogs = async (req, res, next) => {
 
     const logs = await CycleLog.find(filter).sort({ dateKey: 1 });
 
-    logger.info('cycle_logs_fetched', { action: 'cycle_logs_fetched', userId: req.userId, month, count: logs.length });
+    logger.info('cycle_logs_fetched', {
+      action: 'cycle_logs_fetched',
+      userId: req.userId,
+      month,
+      count: logs.length,
+    });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Logs fetched', logs);
   } catch (error) {
@@ -197,7 +216,7 @@ export const saveCycleSettings = async (req, res, next) => {
       ovulationReminder,
       fertilityReminder,
       pregnancyMode,
-      trackingGoal
+      trackingGoal,
     } = req.body;
 
     if (!lastPeriodStartDate) {
@@ -209,7 +228,10 @@ export const saveCycleSettings = async (req, res, next) => {
     if (periodLength !== undefined && (Number(periodLength) < 1 || Number(periodLength) > 10)) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'periodLength must be between 1 and 10 days');
     }
-    if (reminderDaysBefore !== undefined && (Number(reminderDaysBefore) < 0 || Number(reminderDaysBefore) > 14)) {
+    if (
+      reminderDaysBefore !== undefined &&
+      (Number(reminderDaysBefore) < 0 || Number(reminderDaysBefore) > 14)
+    ) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'reminderDaysBefore must be between 0 and 14');
     }
 
@@ -223,7 +245,7 @@ export const saveCycleSettings = async (req, res, next) => {
         ovulationReminder,
         fertilityReminder,
         pregnancyMode,
-        trackingGoal
+        trackingGoal,
       },
       [
         'lastPeriodStartDate',
@@ -234,15 +256,15 @@ export const saveCycleSettings = async (req, res, next) => {
         'ovulationReminder',
         'fertilityReminder',
         'pregnancyMode',
-        'trackingGoal'
-      ]
+        'trackingGoal',
+      ],
     );
 
-    const settings = await CycleSettings.findOneAndUpdate(
-      { userId: req.userId },
-      updates,
-      { new: true, upsert: true, runValidators: true }
-    );
+    const settings = await CycleSettings.findOneAndUpdate({ userId: req.userId }, updates, {
+      new: true,
+      upsert: true,
+      runValidators: true,
+    });
 
     const updatedUser = await User.findById(req.userId).select('firstName lastName');
     const name = updatedUser ? `${updatedUser.firstName}` : 'Your partner';
@@ -250,10 +272,15 @@ export const saveCycleSettings = async (req, res, next) => {
       req.userId,
       'system',
       'Cycle Settings Updated ⚙️',
-      `${name} updated their cycle parameters.`
+      `${name} updated their cycle parameters.`,
     );
 
-    logger.info('cycle_settings_saved', { action: 'cycle_settings_saved', userId: req.userId, cycleLength, periodLength });
+    logger.info('cycle_settings_saved', {
+      action: 'cycle_settings_saved',
+      userId: req.userId,
+      cycleLength,
+      periodLength,
+    });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Cycle settings saved', settings);
   } catch (error) {
@@ -274,7 +301,9 @@ export const getPredictions = async (req, res, next) => {
     const predictions = computeCyclePredictions(settings);
     const logs = await CycleLog.find({ userId: req.userId }).sort({ dateKey: 1 });
     const analyticsData = buildCycleAnalytics(logs, settings).map((item) => ({
-      month: new Date(`${item.month}-01T00:00:00.000Z`).toLocaleDateString('en-US', { month: 'short' }),
+      month: new Date(`${item.month}-01T00:00:00.000Z`).toLocaleDateString('en-US', {
+        month: 'short',
+      }),
       length: item.estimatedCycleLength || settings.cycleLength,
       daysLogged: item.daysLogged,
       periodDays: item.periodDays,
@@ -283,7 +312,10 @@ export const getPredictions = async (req, res, next) => {
 
     logger.info('predictions_fetched', { action: 'predictions_fetched', userId: req.userId });
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Predictions computed', { ...predictions, analyticsData });
+    return sendResponse(res, HTTP_STATUS.OK, 'Predictions computed', {
+      ...predictions,
+      analyticsData,
+    });
   } catch (error) {
     logger.error('predictions_error', { userId: req.userId, error: error.message });
     next(error);
@@ -299,8 +331,8 @@ export const getCycleStats = async (req, res, next) => {
     const totalTokens = logs.reduce((sum, l) => sum + (l.rewardPoints || l.tokensEarned || 0), 0);
 
     const symptomFreq = {};
-    logs.forEach(log => {
-      (log.symptoms || []).forEach(s => {
+    logs.forEach((log) => {
+      (log.symptoms || []).forEach((s) => {
         symptomFreq[s] = (symptomFreq[s] || 0) + 1;
       });
     });

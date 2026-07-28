@@ -27,13 +27,23 @@ const calculateForest = async (userId) => {
     User.findById(userId),
   ]);
 
-  const trackedDays = cycleLogs.filter((log) =>
-    log.note?.trim() || (log.symptoms || []).length > 0 || (log.flow && log.flow !== 'none')
+  const trackedDays = cycleLogs.filter(
+    (log) =>
+      log.note?.trim() || (log.symptoms || []).length > 0 || (log.flow && log.flow !== 'none'),
   ).length;
-  const habitCompletions = habits.reduce((sum, habit) => sum + (habit.completedDates?.length || 0), 0);
+  const habitCompletions = habits.reduce(
+    (sum, habit) => sum + (habit.completedDates?.length || 0),
+    0,
+  );
   const careScore = forestLogs.reduce((sum, log) => sum + (log.healthDelta || 0), 0);
-  const currentHealth = Math.min(100, Math.max(30, 45 + trackedDays * 3 + habitCompletions + careScore));
-  const healthyTreeCount = Math.max(1, Math.floor((trackedDays + habitCompletions + forestLogs.length) / 2));
+  const currentHealth = Math.min(
+    100,
+    Math.max(30, 45 + trackedDays * 3 + habitCompletions + careScore),
+  );
+  const healthyTreeCount = Math.max(
+    1,
+    Math.floor((trackedDays + habitCompletions + forestLogs.length) / 2),
+  );
 
   const monthlyMap = new Map();
   [...cycleLogs, ...forestLogs].forEach((entry) => {
@@ -95,7 +105,11 @@ export const logForestCare = async (req, res, next) => {
     const careType = req.body.careType || 'manual';
     const allowedTypes = ['water', 'symptom_log', 'habit_completion', 'reflection', 'manual'];
     if (!allowedTypes.includes(careType)) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, `careType must be one of: ${allowedTypes.join(', ')}`);
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        `careType must be one of: ${allowedTypes.join(', ')}`,
+      );
     }
 
     const existing = await ForestLog.findOne({ userId: req.userId, dateKey });
@@ -112,7 +126,7 @@ export const logForestCare = async (req, res, next) => {
         treeType: req.body.treeType?.trim(),
         completed: req.body.completed !== undefined ? !!req.body.completed : undefined,
       },
-      { new: true, upsert: true, runValidators: true }
+      { new: true, upsert: true, runValidators: true },
     );
 
     if (tokensEarned > 0) {
@@ -121,11 +135,16 @@ export const logForestCare = async (req, res, next) => {
 
     const status = await calculateForest(req.userId);
 
-    return sendResponse(res, existing ? HTTP_STATUS.OK : HTTP_STATUS.CREATED, existing ? 'Forest care updated' : 'Forest care logged', {
-      log,
-      tokensEarned,
-      status,
-    });
+    return sendResponse(
+      res,
+      existing ? HTTP_STATUS.OK : HTTP_STATUS.CREATED,
+      existing ? 'Forest care updated' : 'Forest care logged',
+      {
+        log,
+        tokensEarned,
+        status,
+      },
+    );
   } catch (error) {
     next(error);
   }
