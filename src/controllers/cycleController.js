@@ -356,3 +356,98 @@ export const getCycleStats = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * GET /api/cycle/symptom-predictions — Deterministic, history-based likelihood
+ * of each previously-logged symptom recurring in a given cycle phase.
+ *
+ * No AI/ML — purely a frequency count of (symptom, phase) occurrences across
+ * the user's own past cycles, bucketed with the same phase math used by
+ * saveCycleLog/getPredictions (utils/cycle.js).
+ */
+export const getSymptomPredictions = async (req, res, next) => {
+  try {
+    const settings = await CycleSettings.findOne({ userId: req.userId });
+
+    if (!settings) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'Please set up your cycle settings first');
+    }
+
+    const cycleLength = settings.cycleLength || 28;
+    const periodLength = settings.periodLength || 5;
+    const nextCycleStart = computeCyclePredictions(settings).nextPeriodDateKey;
+
+    const logs = await CycleLog.find({
+      userId: req.userId,
+      symptoms: { $exists: true, $ne: [] },
+    }).sort({ dateKey: 1 });
+
+    // Bucket every symptom occurrence by (symptom, phase), and track which
+    // distinct historical cycle (index relative to lastPeriodStartDate) each
+    // occurrence belongs to, so repeat logs within the same cycle only count once.
+    const bucketKey = (symptom, phase) => `${symptom}::${phase}`;
+    const occurrenceCycles = new Map(); // bucketKey -> Set(cycleIndex)
+    const allCycleIndexes = new Set();
+
+    logs.forEach((log) => {
+      const offset = diffDays(log.date, settings.lastPeriodStartDate);
+      const cycleIndex = Math.floor(offset / cycleLength);
+      const cycleDay = (((offset % cycleLength) + cycleLength) % cycleLength) + 1;
+      const phase = getCyclePhase(cycleDay, periodLength, cycleLength);
+
+      allCycleIndexes.add(cycleIndex);
+
+      (log.symptoms || []).forEach((symptom) => {
+        const key = bucketKey(symptom, phase);
+        if (!occurrenceCycles.has(key)) occurrenceCycles.set(key, new Set());
+        occurrenceCycles.get(key).add(cycleIndex);
+      });
+    });
+
+    const cyclesAnalyzed = allCycleIndexes.size;
+
+    if (cyclesAnalyzed < 2) {
+      logger.info('symptom_predictions_insufficient_data', {
+        action: 'symptom_predictions_insufficient_data',
+        userId: req.userId,
+        cyclesAnalyzed,
+      });
+      return sendResponse(
+        res,
+        HTTP_STATUS.OK,
+        'Log at least 2 cycles to unlock symptom predictions',
+        { nextCycleStart, predictions: [] },
+      );
+    }
+
+    const predictions = [...occurrenceCycles.entries()]
+      .map(([key, cycleSet]) => {
+        const [symptom, phase] = key.split('::');
+        const occurrences = cycleSet.size;
+        return {
+          symptom,
+          phase,
+          likelihood: Math.round((occurrences / cyclesAnalyzed) * 100),
+          occurrences,
+          cyclesAnalyzed,
+        };
+      })
+      .filter((prediction) => prediction.occurrences >= 2)
+      .sort((a, b) => b.likelihood - a.likelihood);
+
+    logger.info('symptom_predictions_fetched', {
+      action: 'symptom_predictions_fetched',
+      userId: req.userId,
+      cyclesAnalyzed,
+      predictionCount: predictions.length,
+    });
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Symptom predictions computed', {
+      nextCycleStart,
+      predictions,
+    });
+  } catch (error) {
+    logger.error('symptom_predictions_error', { userId: req.userId, error: error.message });
+    next(error);
+  }
+};

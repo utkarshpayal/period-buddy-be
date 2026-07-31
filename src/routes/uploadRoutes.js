@@ -7,10 +7,13 @@ const router = express.Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 8 * 1024 * 1024 }, // 8MB
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB (covers community photo/video/audio attachments)
   fileFilter: (req, file, cb) => {
-    if (!file.mimetype.startsWith('image/')) {
-      return cb(new Error('Only image uploads are supported'));
+    const isSupported = ['image/', 'video/', 'audio/'].some((prefix) =>
+      file.mimetype.startsWith(prefix),
+    );
+    if (!isSupported) {
+      return cb(new Error('Only image, video, or audio uploads are supported'));
     }
     cb(null, true);
   },
@@ -18,7 +21,7 @@ const upload = multer({
 
 /**
  * @route   POST /api/upload
- * @desc    Upload an image (profile picture, community post image, etc.) to S3
+ * @desc    Upload a file (profile picture, community post image/video/audio, etc.) to S3
  * @access  Private
  */
 router.post('/', authenticate, upload.single('file'), uploadFile);

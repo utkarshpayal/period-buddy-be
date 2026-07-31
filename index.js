@@ -35,6 +35,8 @@ import uploadRoutes from './src/routes/uploadRoutes.js';
 import documentRoutes from './src/routes/documentRoutes.js';
 import reportRoutes from './src/routes/reportRoutes.js';
 import speechRoutes from './src/routes/speechRoutes.js';
+import screeningRoutes from './src/routes/screeningRoutes.js';
+import insightRoutes from './src/routes/insightRoutes.js';
 
 const app = express();
 
@@ -114,6 +116,8 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/speech', speechRoutes);
+app.use('/api/screening', screeningRoutes);
+app.use('/api/insights', insightRoutes);
 
 /* ──────────────────────────────────────────────────────────
    Error Handling

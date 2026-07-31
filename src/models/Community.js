@@ -9,6 +9,14 @@ const communityCommentSchema = new mongoose.Schema(
     },
     content: { type: String, required: true, trim: true, maxlength: 2000 },
     isAnonymous: { type: Boolean, default: false },
+    attachments: [
+      {
+        url: { type: String, required: true, trim: true },
+        key: { type: String, trim: true },
+        type: { type: String, enum: ['image', 'video', 'audio'], required: true },
+        _id: false,
+      },
+    ],
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 );
@@ -30,6 +38,15 @@ const communityPostSchema = new mongoose.Schema(
     },
     tags: [{ type: String, trim: true }],
     isAnonymous: { type: Boolean, default: true },
+
+    attachments: [
+      {
+        url: { type: String, required: true, trim: true },
+        key: { type: String, trim: true },
+        type: { type: String, enum: ['image', 'video', 'audio'], required: true },
+        _id: false,
+      },
+    ],
 
     // Denormalized counters (sources of truth live in CommunityLike / Comment collections)
     likeCount: { type: Number, default: 0 },

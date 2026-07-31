@@ -116,9 +116,22 @@ export const getPosts = async (req, res, next) => {
 };
 
 /** POST /api/community — Create a post */
+const ATTACHMENT_TYPES = ['image', 'video', 'audio'];
+
+const normalizeAttachments = (attachments) => {
+  if (!Array.isArray(attachments)) return [];
+  return attachments
+    .filter((item) => item && typeof item.url === 'string' && item.url.trim())
+    .map((item) => ({
+      url: item.url.trim(),
+      key: typeof item.key === 'string' ? item.key.trim() : undefined,
+      type: ATTACHMENT_TYPES.includes(item.type) ? item.type : 'image',
+    }));
+};
+
 export const createPost = async (req, res, next) => {
   try {
-    const { title, content, category, tags, isAnonymous } = req.body;
+    const { title, content, category, tags, isAnonymous, attachments } = req.body;
 
     if (!content?.trim()) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Post content is required');
@@ -131,6 +144,7 @@ export const createPost = async (req, res, next) => {
       category,
       tags: normalizeStringArray(tags),
       isAnonymous: normalizeBoolean(isAnonymous, true),
+      attachments: normalizeAttachments(attachments),
     });
 
     logger.info('community_post_created', {
@@ -236,7 +250,7 @@ export const toggleLike = async (req, res, next) => {
 /** POST /api/community/:id/comment — Add comment to post */
 export const addComment = async (req, res, next) => {
   try {
-    const { content, isAnonymous } = req.body;
+    const { content, isAnonymous, attachments } = req.body;
     if (!content?.trim())
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Comment content required');
     if (!isValidObjectId(req.params.id)) {
@@ -255,6 +269,7 @@ export const addComment = async (req, res, next) => {
       userId: req.userId,
       content: content.trim(),
       isAnonymous: anonymous,
+      attachments: normalizeAttachments(attachments),
     });
     post.commentCount = post.comments.length;
     await post.save();

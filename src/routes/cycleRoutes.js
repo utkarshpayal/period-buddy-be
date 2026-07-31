@@ -53,4 +53,11 @@ router.get('/log/:dateKey', authenticate, cycleController.getDayLog);
  */
 router.get('/stats', authenticate, cycleController.getCycleStats);
 
+/**
+ * @route   GET /api/cycle/symptom-predictions
+ * @desc    Deterministic per-symptom likelihood by cycle phase, derived from log history
+ * @access  Private
+ */
+router.get('/symptom-predictions', authenticate, cycleController.getSymptomPredictions);
+
 export default router;
