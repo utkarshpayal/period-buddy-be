@@ -37,6 +37,7 @@ import reportRoutes from './src/routes/reportRoutes.js';
 import speechRoutes from './src/routes/speechRoutes.js';
 import screeningRoutes from './src/routes/screeningRoutes.js';
 import insightRoutes from './src/routes/insightRoutes.js';
+import voiceAgentRoutes from './src/routes/voiceAgentRoutes.js';
 
 const app = express();
 
@@ -118,6 +119,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/speech', speechRoutes);
 app.use('/api/screening', screeningRoutes);
 app.use('/api/insights', insightRoutes);
+app.use('/api/voice-agent', voiceAgentRoutes);
 
 /* ──────────────────────────────────────────────────────────
    Error Handling

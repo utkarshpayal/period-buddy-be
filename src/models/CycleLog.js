@@ -48,6 +48,19 @@ const cycleLogSchema = new mongoose.Schema(
     temperature: { type: Number }, // °C BBT
     stressLevel: { type: Number, min: 1, max: 10 },
     medication: [{ type: String, trim: true }],
+    digestion: {
+      type: String,
+      enum: ['normal', 'constipated', 'diarrhea', 'bloated'],
+    },
+    skin: {
+      type: String,
+      enum: ['clear', 'oily', 'dry', 'acne'],
+    },
+    discharge: {
+      type: String,
+      enum: ['none', 'sticky', 'creamy', 'watery', 'egg-white'],
+    },
+    exercise: [{ type: String, trim: true }],
   },
   { timestamps: true },
 );

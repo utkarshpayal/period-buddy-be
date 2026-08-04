@@ -33,7 +33,17 @@ const communityPostSchema = new mongoose.Schema(
     content: { type: String, required: true, trim: true, maxlength: 5000 },
     category: {
       type: String,
-      enum: ['general', 'symptoms', 'advice', 'success_story', 'question', 'rant'],
+      enum: [
+        'general',
+        'symptoms',
+        'advice',
+        'success_story',
+        'question',
+        'rant',
+        'PCOS',
+        'Fitness',
+        'Skin',
+      ],
       default: 'general',
     },
     tags: [{ type: String, trim: true }],

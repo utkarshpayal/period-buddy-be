@@ -472,6 +472,8 @@ Allowed `mood`: `happy`, `calm`, `emotional`, `tired`, `sad`, `anxious`, `irrita
 
 Allowed `energy`: `low`, `medium`, `steady`, `high`.
 
+Optional fields: `isIntimate` (boolean), `sleepHours`, `waterIntake` (ml), `weight` (kg), `temperature` (°C BBT), `stressLevel` (1-10), `medication` (string[]), `digestion` (`normal`/`constipated`/`diarrhea`/`bloated`), `skin` (`clear`/`oily`/`dry`/`acne`), `discharge` (`none`/`sticky`/`creamy`/`watery`/`egg-white`), `exercise` (string[]).
+
 Response:
 
 ```json
@@ -823,6 +825,29 @@ Response:
 ### GET `/api/questions/:idOrSlug`
 
 Response: single published Q&A, increments views.
+
+## Voice Agent
+
+### POST `/api/voice-agent/converse`
+
+One turn of the Sarvam-backed voice agent used by the app's voice mode. Given a transcript, it either answers conversationally or walks the user through logging today's cycle entry and executes it once confirmed (reusing the same upsert as `POST /api/cycle/log`).
+
+Payload:
+
+```json
+{ "transcript": "Log today's entry", "language": "en-IN", "pendingAction": null, "confirmed": false }
+```
+
+`pendingAction` is the `{ action, payload }` echoed back from the previous turn's `action_proposal`/`action_confirm` response so the conversation can span multiple turns without server-side session state. Set `confirmed: true` alongside a `pendingAction` from an `action_confirm` reply to execute it.
+
+Response (`data` is one of):
+
+```json
+{ "type": "answer", "text": "..." }
+{ "type": "action_proposal", "action": "log_cycle_entry", "payload": { "flow": "medium" }, "followUpQuestion": "How was your mood today?" }
+{ "type": "action_confirm", "action": "log_cycle_entry", "payload": { "flow": "medium", "mood": "calm" }, "confirmationText": "I'll log medium flow and calm mood for today — save it?" }
+{ "type": "action_result", "action": "log_cycle_entry", "text": "Done — I've logged that for you.", "cycleLog": {}, "tokensEarned": 1 }
+```
 
 ### Admin Q&A
 
