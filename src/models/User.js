@@ -88,6 +88,13 @@ const userSchema = new mongoose.Schema(
     // Soft delete
     deletedAt: { type: Date, default: null },
 
+    // Self-service account deletion (marketing site "delete my data" page).
+    // Hashed like password/OTP elsewhere — never returned in API responses.
+    selfDeleteOtpHash: { type: String, select: false },
+    selfDeleteOtpExpiresAt: { type: Date, select: false },
+    selfDeleteOtpAttempts: { type: Number, default: 0, select: false },
+    selfDeleteLastSentAt: { type: Date, select: false },
+
     // Community feed — saved posts and self-reported posts (used by communityController)
     savedCommunityPosts: [{ type: mongoose.Schema.Types.ObjectId, ref: 'CommunityPost' }],
     reportedCommunityPosts: [

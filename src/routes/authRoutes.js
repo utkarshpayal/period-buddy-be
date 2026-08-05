@@ -10,6 +10,8 @@ import {
   validateResendOtp,
   validateSignup,
   validateVerifyOtp,
+  validateRequestSelfDeletion,
+  validateConfirmSelfDeletion,
   handleValidationErrors,
 } from '../schemas/authSchema.js';
 import { authenticate } from '../middleware/authMiddleware.js';
@@ -116,6 +118,36 @@ router.delete(
   validateDeleteAccount,
   handleValidationErrors,
   authController.deleteAccount,
+);
+
+/**
+ * @route   POST /api/auth/account/delete/request
+ * @desc    Self-service deletion, step 1 (public, unauthenticated). Emails a
+ *          one-time code to the given address if it belongs to an account —
+ *          nothing is deleted yet. Backs the marketing site's unlisted
+ *          "delete my data" page; deliberately not gated behind login, since
+ *          the whole point is to work even without access to the app.
+ * @access  Public
+ */
+router.post(
+  '/account/delete/request',
+  validateRequestSelfDeletion,
+  handleValidationErrors,
+  authController.requestSelfDeletion,
+);
+
+/**
+ * @route   POST /api/auth/account/delete/confirm
+ * @desc    Self-service deletion, step 2 (public, unauthenticated). Verifies
+ *          the code from step 1 and permanently deletes the account and all
+ *          of its data. Irreversible.
+ * @access  Public
+ */
+router.post(
+  '/account/delete/confirm',
+  validateConfirmSelfDeletion,
+  handleValidationErrors,
+  authController.confirmSelfDeletion,
 );
 
 /**

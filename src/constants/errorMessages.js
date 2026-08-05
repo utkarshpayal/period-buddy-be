@@ -38,6 +38,14 @@ export const ERROR_MESSAGES = {
   // Upload Errors
   NO_FILE_UPLOADED: 'No file was uploaded',
   UPLOAD_FAILED: 'Failed to upload file',
+
+  // Self-service Account Deletion Errors (marketing site "delete my data" page)
+  SELF_DELETE_NO_REQUEST:
+    'No pending deletion request found for this email. Please request a code again.',
+  SELF_DELETE_OTP_EXPIRED: 'This code has expired. Please request a new one.',
+  SELF_DELETE_OTP_INVALID: 'Invalid confirmation code',
+  SELF_DELETE_OTP_MAX_ATTEMPTS: 'Too many incorrect attempts. Please request a new code.',
+  SELF_DELETE_RESEND_TOO_SOON: 'Please wait a moment before requesting another code.',
 };
 
 export const SUCCESS_MESSAGES = {
@@ -51,4 +59,6 @@ export const SUCCESS_MESSAGES = {
   EMAIL_VERIFIED: 'Email verified successfully',
   ONBOARDING_COMPLETE: 'Onboarding completed successfully',
   FILE_UPLOADED: 'File uploaded successfully',
+  SELF_DELETE_OTP_SENT: 'A confirmation code has been sent to that email address',
+  SELF_DELETE_COMPLETE: 'Account and all associated data permanently deleted',
 };
