@@ -375,7 +375,11 @@ export const getMessages = async (req, res, next) => {
     const profile = await Partner.findOne({ userId: req.userId });
     if (!profile) return sendResponse(res, HTTP_STATUS.OK, 'Messages', []);
 
-    const messages = await PartnerMessage.find({ partnerId: profile._id }).sort({ sentAt: 1 });
+    // Cap to the most recent 300 messages (newest-first, then restored to
+    // chronological order) to bound the payload on long conversations.
+    const messages = (
+      await PartnerMessage.find({ partnerId: profile._id }).sort({ sentAt: -1 }).limit(300)
+    ).reverse();
 
     if (messages.length === 0 && profile.messages && profile.messages.length > 0) {
       return sendResponse(res, HTTP_STATUS.OK, 'Messages', profile.messages);

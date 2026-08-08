@@ -28,10 +28,14 @@ const resolveAuthor = (authorObj, authorId, requestingUserId) => {
   return ANONYMOUS_USER;
 };
 
-const serializePost = (post, user, requestingUserId) => {
+const serializePost = (post, user, requestingUserId, { includeComments = true } = {}) => {
   const object = post.toObject ? post.toObject() : post;
   const likedBy = object.likedBy || [];
   const savedPosts = user?.savedCommunityPosts || [];
+  // Prefer the denormalized commentCount (maintained on add/delete) so the feed
+  // can drop the comments array entirely; fall back to the embedded length when
+  // the full array is present (e.g. GET /:id).
+  const totalCommentCount = object.commentCount ?? (object.comments || []).length;
 
   // Resolve post author
   const postAuthorId = object.userId?._id ?? object.userId;
@@ -46,35 +50,38 @@ const serializePost = (post, user, requestingUserId) => {
     resolvedPostUser = isPostOwn ? { ...(rawUser || {}), isOwn: true } : rawUser;
   }
 
-  // Resolve each comment's author
-  const comments = (object.comments || []).map((comment) => {
-    const commentAuthorId = comment.userId?._id ?? comment.userId;
-    const isCommentOwn = String(commentAuthorId) === String(requestingUserId);
+  // Resolve each comment's author. Skipped entirely for the feed, where the
+  // bodies aren't rendered — only the count is.
+  const comments = !includeComments
+    ? []
+    : (object.comments || []).map((comment) => {
+        const commentAuthorId = comment.userId?._id ?? comment.userId;
+        const isCommentOwn = String(commentAuthorId) === String(requestingUserId);
 
-    let resolvedCommentUser;
-    if (comment.isAnonymous) {
-      // Anonymous comment: mask for others, reveal (with isOwn) for the author
-      resolvedCommentUser = isCommentOwn
-        ? {
-            ...((comment.userId?.toObject ? comment.userId.toObject() : comment.userId) || {}),
-            isOwn: true,
-          }
-        : ANONYMOUS_USER;
-    } else {
-      // Non-anonymous comment: show real user, but still attach isOwn for the author
-      const rawUser = comment.userId?.toObject ? comment.userId.toObject() : comment.userId;
-      resolvedCommentUser = isCommentOwn ? { ...(rawUser || {}), isOwn: true } : rawUser;
-    }
+        let resolvedCommentUser;
+        if (comment.isAnonymous) {
+          // Anonymous comment: mask for others, reveal (with isOwn) for the author
+          resolvedCommentUser = isCommentOwn
+            ? {
+                ...((comment.userId?.toObject ? comment.userId.toObject() : comment.userId) || {}),
+                isOwn: true,
+              }
+            : ANONYMOUS_USER;
+        } else {
+          // Non-anonymous comment: show real user, but still attach isOwn for the author
+          const rawUser = comment.userId?.toObject ? comment.userId.toObject() : comment.userId;
+          resolvedCommentUser = isCommentOwn ? { ...(rawUser || {}), isOwn: true } : rawUser;
+        }
 
-    return { ...comment, id: comment._id, userId: resolvedCommentUser };
-  });
+        return { ...comment, id: comment._id, userId: resolvedCommentUser };
+      });
 
   return {
     ...object,
     id: object._id,
     userId: resolvedPostUser,
     comments,
-    commentsCount: comments.length,
+    commentsCount: totalCommentCount,
     likedByMe: likedBy.some((id) => String(id) === String(user?._id)),
     savedByMe: savedPosts.some((id) => String(id) === String(object._id)),
     likedBy: undefined,
@@ -96,18 +103,22 @@ export const getPosts = async (req, res, next) => {
       ];
 
     const [posts, total, user] = await Promise.all([
+      // Feed excludes comment bodies for payload/scale (a viral post could
+      // embed thousands); only the count is shown here. Full comments load via
+      // GET /:id when a user opens the comments sheet. `comments` is still
+      // selected so the count is accurate, but its authors aren't populated.
       CommunityPost.find(filter)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(Number(limit))
-        .populate('userId', 'firstName lastName profilePicture')
-        .populate('comments.userId', 'firstName lastName profilePicture'),
+        .select('-comments')
+        .populate('userId', 'firstName lastName profilePicture'),
       CommunityPost.countDocuments(filter),
       User.findById(req.userId).select('savedCommunityPosts reportedCommunityPosts'),
     ]);
 
     return sendResponse(res, HTTP_STATUS.OK, 'Posts fetched', {
-      posts: posts.map((post) => serializePost(post, user, req.userId)),
+      posts: posts.map((post) => serializePost(post, user, req.userId, { includeComments: false })),
       pagination: buildPagination({ page, limit, total }),
     });
   } catch (error) {

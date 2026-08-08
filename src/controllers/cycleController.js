@@ -46,10 +46,23 @@ export const upsertCycleLog = async (userId, payload) => {
     stressLevel,
     medication,
     digestion,
+    digestions,
     skin,
+    skins,
     discharge,
     exercise,
+    moods,
+    timezoneOffsetMinutes,
   } = payload;
+
+  // The client's local "today" — day logs are keyed by local date, so the
+  // streak must anchor to the user's local date, not server UTC. `timezone
+  // OffsetMinutes` is Date.prototype.getTimezoneOffset() from the client
+  // (UTC−local, e.g. −330 for IST). Falls back to UTC when absent.
+  const tzOffset = Number(timezoneOffsetMinutes);
+  const clientTodayKey = Number.isFinite(tzOffset)
+    ? new Date(Date.now() - tzOffset * 60000).toISOString().slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
 
   if (!dateKey || !validateDateKey(dateKey)) {
     throw Object.assign(new Error('dateKey is required (YYYY-MM-DD)'), {
@@ -79,6 +92,7 @@ export const upsertCycleLog = async (userId, payload) => {
       date,
       flow,
       mood,
+      moods: moods !== undefined ? normalizeStringArray(moods) : undefined,
       energy,
       symptoms: normalizeStringArray(symptoms),
       note: note?.trim(),
@@ -93,7 +107,9 @@ export const upsertCycleLog = async (userId, payload) => {
       stressLevel,
       medication: medication !== undefined ? normalizeStringArray(medication) : undefined,
       digestion,
+      digestions: digestions !== undefined ? normalizeStringArray(digestions) : undefined,
       skin,
+      skins: skins !== undefined ? normalizeStringArray(skins) : undefined,
       discharge,
       exercise: exercise !== undefined ? normalizeStringArray(exercise) : undefined,
     },
@@ -101,6 +117,7 @@ export const upsertCycleLog = async (userId, payload) => {
       'date',
       'flow',
       'mood',
+      'moods',
       'energy',
       'symptoms',
       'note',
@@ -115,7 +132,9 @@ export const upsertCycleLog = async (userId, payload) => {
       'stressLevel',
       'medication',
       'digestion',
+      'digestions',
       'skin',
+      'skins',
       'discharge',
       'exercise',
     ],
@@ -127,13 +146,25 @@ export const upsertCycleLog = async (userId, payload) => {
     runValidators: true,
   });
 
-  // Update user token count and tracking streak
+  // Update user token count and tracking streak.
   const userUpdates = {};
   if (isNewLog) {
     userUpdates.$inc = { walletBalance: tokensEarned };
   }
-  const allUserLogs = await CycleLog.find({ userId });
-  const currentStreak = calculateTrackingStreak(allUserLogs);
+  // The streak only walks back *consecutive* days from today, so it never needs
+  // more than a bounded recent window — and it only reads `dateKey`. Fetching
+  // every full log document on every save grew unbounded with a user's history
+  // on the hot write path; scope to dateKeys within the last ~2 years and pull
+  // just that field as lean objects.
+  const streakWindowStart = new Date();
+  streakWindowStart.setDate(streakWindowStart.getDate() - 730);
+  const recentLogs = await CycleLog.find({
+    userId,
+    dateKey: { $gte: streakWindowStart.toISOString().slice(0, 10) },
+  })
+    .select('dateKey')
+    .lean();
+  const currentStreak = calculateTrackingStreak(recentLogs, clientTodayKey);
   userUpdates.$set = { streakCount: currentStreak };
 
   await User.findByIdAndUpdate(userId, userUpdates);
@@ -246,6 +277,7 @@ export const saveCycleSettings = async (req, res, next) => {
       fertilityReminder,
       pregnancyMode,
       trackingGoal,
+      trackingGoals,
     } = req.body;
 
     if (!lastPeriodStartDate) {
@@ -259,9 +291,9 @@ export const saveCycleSettings = async (req, res, next) => {
     }
     if (
       reminderDaysBefore !== undefined &&
-      (Number(reminderDaysBefore) < 0 || Number(reminderDaysBefore) > 14)
+      (Number(reminderDaysBefore) < 0 || Number(reminderDaysBefore) > 10)
     ) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'reminderDaysBefore must be between 0 and 14');
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'reminderDaysBefore must be between 0 and 10');
     }
 
     const updates = pickDefined(
@@ -275,6 +307,8 @@ export const saveCycleSettings = async (req, res, next) => {
         fertilityReminder,
         pregnancyMode,
         trackingGoal,
+        trackingGoals:
+          trackingGoals !== undefined ? normalizeStringArray(trackingGoals) : undefined,
       },
       [
         'lastPeriodStartDate',
@@ -286,6 +320,7 @@ export const saveCycleSettings = async (req, res, next) => {
         'fertilityReminder',
         'pregnancyMode',
         'trackingGoal',
+        'trackingGoals',
       ],
     );
 

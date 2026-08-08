@@ -225,9 +225,13 @@ export const getMessages = async (req, res, next) => {
     const consultation = await Consultation.findOne({ _id: req.params.id, userId: req.userId });
     if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation not found');
 
-    const messages = await ConsultationMessage.find({ consultationId: consultation._id }).sort({
-      sentAt: 1,
-    });
+    // Cap to the most recent 300 messages (newest-first, then restored to
+    // chronological order) to bound the payload on long conversations.
+    const messages = (
+      await ConsultationMessage.find({ consultationId: consultation._id })
+        .sort({ sentAt: -1 })
+        .limit(300)
+    ).reverse();
 
     if (messages.length === 0 && consultation.messages && consultation.messages.length > 0) {
       return sendResponse(res, HTTP_STATUS.OK, 'Messages fetched', consultation.messages);

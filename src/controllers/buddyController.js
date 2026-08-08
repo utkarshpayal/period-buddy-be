@@ -305,7 +305,12 @@ export const getBuddyMessages = async (req, res, next) => {
     const match = await BuddyMatch.findOne({ userId: req.userId, status: 'active' });
     if (!match) return sendError(res, HTTP_STATUS.NOT_FOUND, 'No active Period Buddy');
 
-    const messages = await BuddyMessage.find({ matchId: match._id }).sort({ sentAt: 1 });
+    // Cap to the most recent 300 messages (fetched newest-first, then restored
+    // to chronological order) so a long-running chat can't return an unbounded
+    // payload. Older history would need a paginated "load earlier" call.
+    const messages = (
+      await BuddyMessage.find({ matchId: match._id }).sort({ sentAt: -1 }).limit(300)
+    ).reverse();
 
     if (messages.length === 0 && match.messages && match.messages.length > 0) {
       return sendResponse(res, HTTP_STATUS.OK, 'Buddy messages fetched', match.messages);

@@ -104,29 +104,145 @@ const blogData = [
     category: 'health',
     tags: ['cycle', 'hormones', 'tracking'],
     excerpt:
-      'A practical guide to menstrual cycle phases, mood and energy shifts, and how tracking helps you notice your own pattern.',
-    content:
-      'Your menstrual cycle is shaped by hormone changes across period, follicular, ovulation, and luteal phases. Tracking flow, mood, energy, and symptoms can help you understand your personal rhythm and prepare for recurring changes.',
+      'A practical guide to the four menstrual cycle phases, the mood and energy shifts each one brings, and how tracking helps you recognise your own pattern.',
+    content: [
+      'Your menstrual cycle is a monthly rhythm driven by four hormones — oestrogen, progesterone, luteinising hormone (LH) and follicle-stimulating hormone (FSH). It is easiest to understand in four phases.',
+      '',
+      '1. Menstrual phase (roughly days 1–5). Hormone levels are at their lowest and the uterine lining sheds. Energy often dips, and rest is genuinely useful here rather than a sign of weakness.',
+      '',
+      '2. Follicular phase (roughly days 6–13). Oestrogen climbs as follicles mature. Many people notice rising energy, clearer skin and a brighter mood — a good window for harder workouts and demanding tasks.',
+      '',
+      '3. Ovulation (around day 14 in a 28-day cycle). LH surges and an egg is released. Libido and confidence often peak, and cervical mucus becomes clear and stretchy.',
+      '',
+      '4. Luteal phase (roughly days 15–28). Progesterone rises then falls if there is no pregnancy. This is when PMS symptoms — bloating, tender breasts, cravings and mood changes — tend to appear.',
+      '',
+      'Everyone’s cycle is different, and phase lengths vary. The real value of tracking flow, mood, energy and symptoms over a few months is that you stop comparing yourself to a textbook 28-day cycle and start seeing your own pattern — which makes recurring changes far easier to plan around.',
+    ].join('\n'),
     coverImageUrl:
       'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?q=80&w=600&auto=format&fit=crop',
     readTimeMinutes: 8,
     isPublished: true,
+    status: 'published',
     publishedAt: new Date(),
   },
   {
-    title: 'PCOS and PCOD: What to Track',
+    title: 'PCOS and PCOD: What to Track and When to Seek Help',
     slug: 'pcos-and-pcod-what-to-track',
     author: 'Dr. Priya Sharma',
     category: 'health',
     tags: ['pcos', 'pcod', 'hormones'],
     excerpt:
-      'Common signs of PCOS/PCOD, what to log, and when to bring symptoms to a clinician for evaluation.',
-    content:
-      'PCOS and PCOD can affect period timing, acne, hair growth, weight changes, and energy. Track cycle gaps, skin changes, hair growth, pain, and fatigue. A clinician can help evaluate hormones, metabolic health, and treatment options.',
+      'Common signs of PCOS/PCOD, the symptoms worth logging, and the point at which it is sensible to bring them to a clinician.',
+    content: [
+      'Polycystic Ovary Syndrome (PCOS) and Polycystic Ovarian Disease (PCOD) are common hormonal conditions that affect how the ovaries work. They can influence period timing, skin, hair growth, weight and energy — but they look different from person to person.',
+      '',
+      'Signs worth paying attention to include: cycles that are consistently longer than 35 days or that skip months, persistent acne along the jaw and chin, new or increased hair growth on the face or body, hair thinning on the scalp, unexplained weight changes, and ongoing fatigue.',
+      '',
+      'What to log in Period Buddy: cycle-gap length, skin changes, hair changes, pain, mood and energy. A few months of this history turns a vague “something feels off” into a clear timeline you can show a clinician.',
+      '',
+      'When to seek help: if periods are regularly absent or very irregular, if acne or hair growth is distressing, or if you are trying to conceive without success. A clinician can check hormone levels and metabolic markers and discuss options — from lifestyle changes to medication. PCOS is manageable, and early tracking makes that conversation much more productive.',
+    ].join('\n'),
     coverImageUrl:
       'https://images.unsplash.com/photo-1511556532299-8f662fc26c06?q=80&w=600&auto=format&fit=crop',
     readTimeMinutes: 12,
     isPublished: true,
+    status: 'published',
+    publishedAt: new Date(),
+  },
+  {
+    title: 'Period Pain: What Helps, and What the Evidence Says',
+    slug: 'period-pain-what-helps',
+    author: 'Dr. Thara Nair',
+    category: 'health',
+    tags: ['cramps', 'pain', 'self-care'],
+    excerpt:
+      'Practical, evidence-backed ways to ease menstrual cramps — and the warning signs that mean pain is worth investigating.',
+    content: [
+      'Menstrual cramps (dysmenorrhoea) happen when the uterus contracts to shed its lining, driven by hormone-like chemicals called prostaglandins. For many people the pain is mild; for others it disrupts daily life.',
+      '',
+      'What tends to help: heat on the lower abdomen (a heat pack is as effective as many painkillers for some people), gentle movement and stretching, staying hydrated, and anti-inflammatory pain relief such as ibuprofen taken early — before pain peaks — if it is safe for you. Regular exercise across the month is linked to less severe cramps over time.',
+      '',
+      'What the evidence is softer on: many supplements are marketed for cramps, but the strongest signals are for magnesium and omega-3s in some studies. Treat these as “worth trying” rather than guaranteed.',
+      '',
+      'When to get checked: pain that stops you working or sleeping, pain that is getting worse month on month, pain with very heavy bleeding, or pain outside your period can point to conditions like endometriosis or fibroids. Track the severity and timing of your pain — that log is the single most useful thing to bring to an appointment.',
+    ].join('\n'),
+    coverImageUrl:
+      'https://images.unsplash.com/photo-1512069772995-ec65ed45afd6?q=80&w=600&auto=format&fit=crop',
+    readTimeMinutes: 7,
+    isPublished: true,
+    status: 'published',
+    publishedAt: new Date(),
+  },
+  {
+    title: 'Eating With Your Cycle: A Simple, Non-Restrictive Guide',
+    slug: 'eating-with-your-cycle',
+    author: 'Maya Okafor, RD',
+    category: 'lifestyle',
+    tags: ['nutrition', 'energy', 'cycle'],
+    excerpt:
+      'How your appetite and energy needs shift across the month, and easy food choices that work with each phase rather than against it.',
+    content: [
+      '“Cycle syncing” your diet does not need to be complicated or restrictive. It is really about noticing that your body’s needs change across the month and responding kindly.',
+      '',
+      'During your period, iron is lost through bleeding, so iron-rich foods — leafy greens, lentils, beans, red meat if you eat it — paired with vitamin C help top you up. Warm, comforting meals are fine; this is not the week for punishing yourself.',
+      '',
+      'In the follicular and ovulation phases, energy is usually higher. Protein and fresh produce support that natural momentum, and it is often the easiest time to cook and plan ahead.',
+      '',
+      'In the luteal phase, cravings for carbohydrates and sweet foods are common as progesterone rises and serotonin dips. Complex carbohydrates (oats, whole grains, fruit) and magnesium-rich foods (dark chocolate, nuts, seeds) can steady mood and energy better than highly processed sugar. The goal is not perfection — it is fewer big crashes.',
+    ].join('\n'),
+    coverImageUrl:
+      'https://images.unsplash.com/photo-1490645935967-10de6ba17061?q=80&w=600&auto=format&fit=crop',
+    readTimeMinutes: 6,
+    isPublished: true,
+    status: 'published',
+    publishedAt: new Date(),
+  },
+  {
+    title: 'Tracking Your Cycle: How to Get Data You Can Actually Use',
+    slug: 'tracking-your-cycle-useful-data',
+    author: 'Period Buddy Team',
+    category: 'general',
+    tags: ['tracking', 'basics', 'getting-started'],
+    excerpt:
+      'A short guide to logging in a way that reveals patterns — without turning tracking into a daily chore.',
+    content: [
+      'The best tracking habit is the one you actually keep. You do not need to log everything every day for your data to be useful.',
+      '',
+      'Start with three things: the days you bleed and how heavy it is, your mood, and your energy. Those alone are enough to reveal your cycle length, your fertile window estimate, and the timing of PMS.',
+      '',
+      'Add detail when it matters to you. If you are investigating acne, log skin. If you get cramps, log pain severity. If you are trying to conceive, log cervical mucus and ovulation signs. Targeted logging beats logging everything and burning out.',
+      '',
+      'Give it time. One cycle tells you very little; three to four cycles start to show a pattern. In Period Buddy, days you have logged appear filled in, while predicted days show as a dashed outline — so you can always see the difference between what actually happened and what the app is forecasting.',
+    ].join('\n'),
+    coverImageUrl:
+      'https://images.unsplash.com/photo-1506784983877-45594efa4cbe?q=80&w=600&auto=format&fit=crop',
+    readTimeMinutes: 5,
+    isPublished: true,
+    status: 'published',
+    publishedAt: new Date(),
+  },
+  {
+    title: 'Sleep and Your Cycle: Why Rest Changes Across the Month',
+    slug: 'sleep-and-your-cycle',
+    author: 'Dr. Sarah Chen',
+    category: 'lifestyle',
+    tags: ['sleep', 'luteal', 'wellbeing'],
+    excerpt:
+      'Progesterone, body temperature and PMS all affect how you sleep. Here is what changes, and how to protect your rest.',
+    content: [
+      'If your sleep feels worse in the days before your period, you are not imagining it. Hormones that shift across the cycle also affect body temperature and sleep quality.',
+      '',
+      'After ovulation, rising progesterone nudges your core body temperature up by a few tenths of a degree. A warmer body can make it harder to fall and stay asleep, which is why the late luteal phase often feels restless.',
+      '',
+      'PMS symptoms — cramps, anxiety, bloating — add to this, and disrupted sleep in turn makes mood symptoms worse, creating a loop.',
+      '',
+      'What helps: keep the bedroom cool, especially in the luteal phase; hold a consistent sleep and wake time; get daylight in the morning; and ease off caffeine and alcohol in the second half of your cycle. Logging your sleep alongside your cycle in Period Buddy makes it obvious which phase disrupts your rest most — and lets you plan lighter days accordingly.',
+    ].join('\n'),
+    coverImageUrl:
+      'https://images.unsplash.com/photo-1541781774459-bb2af2f05b55?q=80&w=600&auto=format&fit=crop',
+    readTimeMinutes: 6,
+    isPublished: true,
+    status: 'published',
     publishedAt: new Date(),
   },
 ];
@@ -370,12 +486,19 @@ export const seedDatabase = async () => {
       });
     }
 
-    // Seed Blogs
-    const blogCount = await Blog.countDocuments();
-    if (blogCount === 0) {
-      await Blog.insertMany(blogData);
-      logger.info('seeder_blogs_seeded', { action: 'seeder_blogs_seeded', count: blogData.length });
-    }
+    // Seed Blogs — upsert by slug (not a one-time count guard) so newly added
+    // articles land on existing databases, and so the earlier seed blogs that
+    // were saved without status:'published' (and were therefore invisible in
+    // the feed) get corrected on the next boot.
+    const blogResults = await Promise.all(
+      blogData.map((blog) => Blog.updateOne({ slug: blog.slug }, { $set: blog }, { upsert: true })),
+    );
+    const blogsUpserted = blogResults.filter((r) => r.upsertedCount > 0).length;
+    logger.info('seeder_blogs_seeded', {
+      action: 'seeder_blogs_seeded',
+      total: blogData.length,
+      inserted: blogsUpserted,
+    });
 
     // Seed Reels
     const reelCount = await Reel.countDocuments();

@@ -29,6 +29,25 @@ const cycleLogSchema = new mongoose.Schema(
         'energetic',
       ],
     },
+    // Multi-select counterpart to `mood` — a day can carry several moods. The
+    // scalar `mood` stays populated with the primary (first) value for
+    // backward-compat; `moods` holds the full set.
+    moods: [
+      {
+        type: String,
+        enum: [
+          'happy',
+          'calm',
+          'emotional',
+          'tired',
+          'sad',
+          'anxious',
+          'irritable',
+          'neutral',
+          'energetic',
+        ],
+      },
+    ],
     energy: { type: String, enum: ['low', 'medium', 'steady', 'high'] },
     symptoms: [{ type: String, trim: true }],
     note: { type: String, trim: true, maxlength: 1000, default: '' },
@@ -52,10 +71,24 @@ const cycleLogSchema = new mongoose.Schema(
       type: String,
       enum: ['normal', 'constipated', 'diarrhea', 'bloated'],
     },
+    // Multi-select counterpart to `digestion` (see `moods` above).
+    digestions: [
+      {
+        type: String,
+        enum: ['normal', 'constipated', 'diarrhea', 'bloated'],
+      },
+    ],
     skin: {
       type: String,
       enum: ['clear', 'oily', 'dry', 'acne'],
     },
+    // Multi-select counterpart to `skin` (see `moods` above).
+    skins: [
+      {
+        type: String,
+        enum: ['clear', 'oily', 'dry', 'acne'],
+      },
+    ],
     discharge: {
       type: String,
       enum: ['none', 'sticky', 'creamy', 'watery', 'egg-white'],

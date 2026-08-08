@@ -12,7 +12,7 @@ const cycleSettingsSchema = new mongoose.Schema(
     cycleLength: { type: Number, default: 28, min: 20, max: 45 },
     periodLength: { type: Number, default: 5, min: 1, max: 10 },
     remindersEnabled: { type: Boolean, default: true },
-    reminderDaysBefore: { type: Number, default: 2, min: 0, max: 14 },
+    reminderDaysBefore: { type: Number, default: 2, min: 0, max: 10 },
 
     // Additional reminder settings
     ovulationReminder: { type: Boolean, default: false },
@@ -30,6 +30,24 @@ const cycleSettingsSchema = new mongoose.Schema(
         'general_health',
       ],
       default: 'track_period',
+    },
+    // Multi-select goals — users often track for more than one reason. The
+    // scalar `trackingGoal` stays the primary (first) goal for backward-compat;
+    // `trackingGoals` holds the full set.
+    trackingGoals: {
+      type: [
+        {
+          type: String,
+          enum: [
+            'track_period',
+            'avoid_pregnancy',
+            'achieve_pregnancy',
+            'manage_symptoms',
+            'general_health',
+          ],
+        },
+      ],
+      default: ['track_period'],
     },
   },
   { timestamps: true },

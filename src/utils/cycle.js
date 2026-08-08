@@ -105,22 +105,35 @@ export const buildCycleAnalytics = (logs = [], settings = null) => {
     }));
 };
 
-export const calculateTrackingStreak = (logs = []) => {
+/**
+ * Counts consecutive days logged, walking back from `todayKey`.
+ *
+ * `todayKey` (YYYY-MM-DD) is the anchor for "today" and should be the *client's*
+ * local date — day logs are keyed by the user's local date, so anchoring the
+ * streak to server-UTC "today" would mis-count near midnight for users far from
+ * UTC. It defaults to UTC today only as a fallback. Iteration uses UTC date math
+ * on a Z-parsed cursor so it doesn't drift with the server's own timezone.
+ */
+export const calculateTrackingStreak = (
+  logs = [],
+  todayKey = new Date().toISOString().slice(0, 10),
+) => {
   const loggedDates = new Set(logs.map((log) => log.dateKey));
   let streak = 0;
 
-  const today = new Date();
-  let dateKey = today.toISOString().slice(0, 10);
+  const cursor = new Date(`${todayKey}T00:00:00Z`);
+  let dateKey = todayKey;
 
+  // A streak is still "alive" if today isn't logged yet but yesterday was.
   if (!loggedDates.has(dateKey)) {
-    today.setDate(today.getDate() - 1);
-    dateKey = today.toISOString().slice(0, 10);
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+    dateKey = cursor.toISOString().slice(0, 10);
   }
 
   while (loggedDates.has(dateKey)) {
     streak += 1;
-    today.setDate(today.getDate() - 1);
-    dateKey = today.toISOString().slice(0, 10);
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+    dateKey = cursor.toISOString().slice(0, 10);
   }
 
   return streak;
