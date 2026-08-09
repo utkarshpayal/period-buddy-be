@@ -282,3 +282,28 @@ export const getContactNotificationTemplate = ({ name, email, topic, message }) 
   `;
   return emailLayout('New Contact Message', content);
 };
+
+/**
+ * Template for a gynecologist invite. Sent when an admin adds a doctor to the
+ * platform — carries a one-time link to set their password and access the
+ * clinician dashboard.
+ */
+export const getDoctorInviteTemplate = ({ name, inviteUrl, expiryHours, specialty }) => {
+  const content = `
+    <span class="badge">You're invited to Nura</span>
+    <h2 style="margin-top: 0; color: #2E3A33; font-size: 24px; font-weight: 600;">Hi Dr. ${name || 'there'},</h2>
+    <p>The Nura team has invited you to join as a ${specialty || 'gynecologist'} on our clinician platform. From your dashboard you can manage bookings, chat and video-consult with patients, share prescriptions, publish educational reels, and track your earnings.</p>
+
+    <div style="text-align: center; margin: 32px 0;">
+      <a href="${inviteUrl}" class="button">Set your password & sign in</a>
+    </div>
+
+    <p>This secure link expires in <strong>${expiryHours} hours</strong>. If the button doesn't work, copy and paste this URL into your browser:</p>
+    <p style="word-break: break-all; color: #8FA89B; font-size: 13px;">${inviteUrl}</p>
+    <div class="divider"></div>
+    <p>If you weren't expecting this invitation, you can safely ignore this email.</p>
+    <p style="margin-bottom: 0;">Warmly,</p>
+    <p style="font-weight: 600; margin-top: 4px; color: #8FA89B;">The Nura Team</p>
+  `;
+  return emailLayout('Your Nura clinician invitation', content);
+};

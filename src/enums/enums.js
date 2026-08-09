@@ -2,6 +2,7 @@ export const userRoleEnum = {
   USER: 'user',
   ADMIN: 'admin',
   PARTNER: 'partner',
+  DOCTOR: 'doctor',
 };
 
 export const genderEnum = {

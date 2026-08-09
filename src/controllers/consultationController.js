@@ -1,6 +1,7 @@
 import Doctor from '../models/Doctor.js';
 import Consultation from '../models/Consultation.js';
 import ConsultationMessage from '../models/ConsultationMessage.js';
+import DoctorAvailability from '../models/DoctorAvailability.js';
 import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
@@ -35,6 +36,52 @@ export const getDoctors = async (req, res, next) => {
     });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Doctors fetched', doctors);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const DAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/** GET /api/consultation/doctors/:id/availability — Public-facing weekly
+ * schedule for a doctor, grouped by day, so the app can render bookable slots. */
+export const getDoctorAvailability = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid doctor id');
+    }
+
+    const doctor = await Doctor.findById(req.params.id);
+    if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor not found');
+
+    const slots = await DoctorAvailability.find({
+      doctorId: doctor._id,
+      isAvailable: true,
+    }).sort({ dayOfWeek: 1, startTime: 1 });
+
+    // Group into { dayOfWeek, day, slots: [{startTime,endTime,maxSlots}] }
+    const byDay = new Map();
+    for (const slot of slots) {
+      if (!byDay.has(slot.dayOfWeek)) {
+        byDay.set(slot.dayOfWeek, {
+          dayOfWeek: slot.dayOfWeek,
+          day: DAY_LABELS[slot.dayOfWeek],
+          slots: [],
+        });
+      }
+      byDay.get(slot.dayOfWeek).slots.push({
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        maxSlots: slot.maxSlots,
+        timezone: slot.timezone,
+      });
+    }
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Availability fetched', {
+      doctorId: doctor._id,
+      isAvailable: doctor.isAvailable,
+      days: Array.from(byDay.values()),
+    });
   } catch (error) {
     next(error);
   }
@@ -170,6 +217,9 @@ export const verifyConsultationPayment = async (req, res, next) => {
     consultation.paymentStatus = 'paid';
     consultation.razorpayPaymentId = razorpay_payment_id;
     consultation.startedAt = new Date();
+    // Deterministic Jitsi room so patient and doctor land in the same call
+    // (mirrors meetingLinkFor() in doctorController).
+    consultation.meetingLink = `https://meet.jit.si/PeriodBuddy-Consult-${consultation._id}`;
     consultation.messages = [{ sender: 'doctor', text: doctorGreeting(doctor) }];
     await consultation.save();
 

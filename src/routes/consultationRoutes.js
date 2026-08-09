@@ -12,6 +12,13 @@ const router = express.Router();
 router.get('/doctors', authenticate, consultationController.getDoctors);
 
 /**
+ * @route   GET /api/consultation/doctors/:id/availability
+ * @desc    Weekly availability for a doctor, grouped by day
+ * @access  Private
+ */
+router.get('/doctors/:id/availability', authenticate, consultationController.getDoctorAvailability);
+
+/**
  * @route   POST /api/consultation/order
  * @desc    Create a Razorpay order for a consultation session
  * @access  Private

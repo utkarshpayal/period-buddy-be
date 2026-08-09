@@ -85,6 +85,12 @@ const userSchema = new mongoose.Schema(
     },
     subscriptionExpiry: { type: Date },
 
+    // Doctor invite flow — a gynecologist invited from the admin panel gets a
+    // one-time set-password link. Hashed like OTPs; never returned in responses.
+    inviteTokenHash: { type: String, select: false },
+    inviteTokenExpiresAt: { type: Date, select: false },
+    mustSetPassword: { type: Boolean, default: false },
+
     // Soft delete
     deletedAt: { type: Date, default: null },
 
