@@ -43,6 +43,12 @@ router.get('/dashboard', authenticate, authorize('doctor'), doctorController.get
 
 router.get('/consultations', authenticate, authorize('doctor'), doctorController.getConsultations);
 router.get(
+  '/consultations/:id/patient',
+  authenticate,
+  authorize('doctor'),
+  doctorController.getConsultationPatient,
+);
+router.get(
   '/consultations/:id/messages',
   authenticate,
   authorize('doctor'),

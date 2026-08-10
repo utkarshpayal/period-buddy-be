@@ -5,6 +5,9 @@ import ConsultationMessage from '../models/ConsultationMessage.js';
 import DoctorAvailability from '../models/DoctorAvailability.js';
 import Reel from '../models/Reel.js';
 import User from '../models/User.js';
+import CycleSettings from '../models/CycleSettings.js';
+import CycleLog from '../models/CycleLog.js';
+import ScreeningAssessment from '../models/ScreeningAssessment.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
@@ -22,16 +25,20 @@ const INVITE_EXPIRY_HOURS = 48;
 const meetingLinkFor = (consultationId) =>
   `https://meet.jit.si/PeriodBuddy-Consult-${consultationId}`;
 
-/** Build the set-password link the invitee follows. Falls back to a localhost
- * dev origin so the link is never host-less even when no env var is set. */
-const buildInviteUrl = (email, rawToken) => {
-  const base = (
-    process.env.ADMIN_APP_URL ||
-    process.env.FRONTEND_URL ||
-    'http://localhost:5173'
-  ).replace(/\/$/, '');
-  return `${base}/set-password?token=${rawToken}&email=${encodeURIComponent(email)}`;
+/** Base origin for the admin/clinician CMS where invitees set their password.
+ * Prefers the explicit env var; otherwise falls back per environment so the
+ * link is never host-less — and, critically, never points at localhost in
+ * production (which broke real invite emails). */
+const adminAppBaseUrl = () => {
+  const explicit = process.env.ADMIN_APP_URL || process.env.FRONTEND_URL;
+  if (explicit) return explicit.replace(/\/$/, '');
+  const isProd = process.env.NODE_ENV === 'production';
+  return isProd ? 'https://admin.thenura.care' : 'http://localhost:5173';
 };
+
+/** Build the set-password link the invitee follows. */
+const buildInviteUrl = (email, rawToken) =>
+  `${adminAppBaseUrl()}/set-password?token=${rawToken}&email=${encodeURIComponent(email)}`;
 
 /** Resolve the Doctor profile backing the currently logged-in doctor User.
  * Returns null when the account has no linked profile. */
@@ -464,6 +471,101 @@ const loadOwnedConsultation = async (userId, consultationId) => {
   });
   if (!consultation) return { error: 'Consultation not found', code: HTTP_STATUS.NOT_FOUND };
   return { doctor, consultation };
+};
+
+/** Statuses at which a doctor is "connected" to a patient and may view their
+ * health data. A pending/cancelled booking grants no clinical access. */
+const CONNECTED_STATUSES = ['paid', 'active', 'completed'];
+
+/** Whole years between a date of birth and now; null when DOB is unknown. */
+const ageFromDob = (dob) => {
+  if (!dob) return null;
+  const birth = new Date(dob);
+  if (Number.isNaN(birth.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - birth.getFullYear();
+  const m = now.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age -= 1;
+  return age >= 0 ? age : null;
+};
+
+/** GET /api/doctor/consultations/:id/patient — the connected patient's health
+ * overview (profile, cycle settings, recent logs, screenings). Only exposed
+ * for consultations the doctor owns that reached a paid/active/completed state,
+ * so a doctor can only ever see the data of a genuinely connected patient. */
+export const getConsultationPatient = async (req, res, next) => {
+  try {
+    const { error, code, consultation } = await loadOwnedConsultation(req.userId, req.params.id);
+    if (error) return sendError(res, code, error);
+
+    if (!CONNECTED_STATUSES.includes(consultation.status)) {
+      return sendError(
+        res,
+        HTTP_STATUS.FORBIDDEN,
+        'Patient records are available only after the booking is confirmed (paid or active).',
+      );
+    }
+
+    const patientId = consultation.userId;
+    const [user, cycleSettings, recentLogs, screenings] = await Promise.all([
+      User.findById(patientId).select(
+        'firstName lastName email profilePicture dateOfBirth gender country language',
+      ),
+      CycleSettings.findOne({ userId: patientId }).select(
+        'lastPeriodStartDate cycleLength periodLength pregnancyMode trackingGoal',
+      ),
+      CycleLog.find({ userId: patientId })
+        .select('date dateKey flow mood energy symptoms phase cycleDay note')
+        .sort({ date: -1 })
+        .limit(14),
+      ScreeningAssessment.find({ userId: patientId })
+        .select('condition score riskLevel summary doctorDiscussionSummary createdAt')
+        .sort({ createdAt: -1 })
+        .limit(8),
+    ]);
+
+    if (!user) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Patient not found');
+
+    // Keep only the most recent screening per condition.
+    const latestByCondition = {};
+    for (const s of screenings) {
+      if (!latestByCondition[s.condition]) latestByCondition[s.condition] = s;
+    }
+
+    const overview = {
+      profile: {
+        id: user._id,
+        name: [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email,
+        email: user.email,
+        profilePicture: user.profilePicture,
+        gender: user.gender,
+        age: ageFromDob(user.dateOfBirth),
+        dateOfBirth: user.dateOfBirth,
+        country: user.country,
+      },
+      cycle: cycleSettings
+        ? {
+            lastPeriodStartDate: cycleSettings.lastPeriodStartDate,
+            cycleLength: cycleSettings.cycleLength,
+            periodLength: cycleSettings.periodLength,
+            pregnancyMode: cycleSettings.pregnancyMode,
+            trackingGoal: cycleSettings.trackingGoal,
+          }
+        : null,
+      recentLogs,
+      screenings: Object.values(latestByCondition),
+      consultation: {
+        id: consultation._id,
+        status: consultation.status,
+        prescription: consultation.prescription,
+        startedAt: consultation.startedAt,
+      },
+    };
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Patient overview fetched', overview);
+  } catch (error) {
+    next(error);
+  }
 };
 
 /** GET /api/doctor/consultations/:id/messages */
