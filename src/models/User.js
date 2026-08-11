@@ -74,6 +74,8 @@ const userSchema = new mongoose.Schema(
     // Locale / notification
     timezone: { type: String, trim: true },
     country: { type: String, trim: true },
+    // State/UT — used to personalize state government schemes (e.g. Rajasthan).
+    state: { type: String, trim: true },
     language: { type: String, trim: true, default: 'en' },
     notificationToken: { type: String, trim: true },
 

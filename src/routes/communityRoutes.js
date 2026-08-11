@@ -54,6 +54,13 @@ router.post('/:id/report', authenticate, communityController.reportPost);
 router.post('/:id/comment', authenticate, communityController.addComment);
 
 /**
+ * @route   POST /api/community/:id/poll/vote
+ * @desc    Cast a vote on a post's poll (body: { optionIds: string[] })
+ * @access  Private
+ */
+router.post('/:id/poll/vote', authenticate, communityController.votePoll);
+
+/**
  * @route   DELETE /api/community/:id
  * @desc    Delete own post (soft-delete)
  * @access  Private

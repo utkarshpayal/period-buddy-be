@@ -4,6 +4,8 @@ import HealthIssue from '../models/HealthIssue.js';
 import WellbeingResource from '../models/WellbeingResource.js';
 import Blog from '../models/Blog.js';
 import Reel from '../models/Reel.js';
+import GovernmentBenefit from '../models/GovernmentBenefit.js';
+import { governmentBenefitData } from './schemeSeedData.js';
 import logger from './logger.js';
 
 const qaData = [
@@ -506,6 +508,20 @@ export const seedDatabase = async () => {
       await Reel.insertMany(reelData);
       logger.info('seeder_reels_seeded', { action: 'seeder_reels_seeded', count: reelData.length });
     }
+
+    // Seed Government Benefits — upsert by slug so newly added schemes and
+    // re-verified details land on existing databases (like blogs above).
+    const benefitResults = await Promise.all(
+      governmentBenefitData.map((benefit) =>
+        GovernmentBenefit.updateOne({ slug: benefit.slug }, { $set: benefit }, { upsert: true }),
+      ),
+    );
+    const benefitsUpserted = benefitResults.filter((r) => r.upsertedCount > 0).length;
+    logger.info('seeder_government_benefits_seeded', {
+      action: 'seeder_government_benefits_seeded',
+      total: governmentBenefitData.length,
+      inserted: benefitsUpserted,
+    });
 
     logger.info('seeder_complete', { action: 'seeder_complete' });
   } catch (error) {

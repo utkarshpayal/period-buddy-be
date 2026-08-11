@@ -28,6 +28,33 @@ const resolveAuthor = (authorObj, authorId, requestingUserId) => {
   return ANONYMOUS_USER;
 };
 
+/**
+ * Shape a post's poll for the client: expose option vote counts + total, plus
+ * the requester's own selections (myVote), and hide the raw per-user pollVotes.
+ * Returns undefined when the post has no poll.
+ */
+const serializePoll = (object, requestingUserId) => {
+  if (!object.poll || !Array.isArray(object.poll.options) || object.poll.options.length === 0) {
+    return undefined;
+  }
+  const options = object.poll.options.map((option) => ({
+    optionId: option.optionId,
+    topic: option.topic,
+    votes: option.votes || 0,
+  }));
+  const totalVotes = options.reduce((sum, option) => sum + option.votes, 0);
+  const myEntry = (object.pollVotes || []).find(
+    (vote) => String(vote.userId) === String(requestingUserId),
+  );
+  return {
+    question: object.poll.question,
+    allowMultiple: !!object.poll.allowMultiple,
+    options,
+    totalVotes,
+    myVote: myEntry ? myEntry.optionIds : [],
+  };
+};
+
 const serializePost = (post, user, requestingUserId, { includeComments = true } = {}) => {
   const object = post.toObject ? post.toObject() : post;
   const likedBy = object.likedBy || [];
@@ -85,6 +112,8 @@ const serializePost = (post, user, requestingUserId, { includeComments = true } 
     likedByMe: likedBy.some((id) => String(id) === String(user?._id)),
     savedByMe: savedPosts.some((id) => String(id) === String(object._id)),
     likedBy: undefined,
+    poll: serializePoll(object, requestingUserId),
+    pollVotes: undefined,
   };
 };
 
@@ -140,12 +169,52 @@ const normalizeAttachments = (attachments) => {
     }));
 };
 
+const POLL_MIN_OPTIONS = 2;
+const POLL_MAX_OPTIONS = 6;
+
+/**
+ * Validate and normalize a poll payload from createPost.
+ * Accepts `{ question?, allowMultiple?, options: string[] }` and assigns stable
+ * optionIds (option_1..option_n). Returns { poll } on success, { error } on a
+ * validation failure, or {} when no poll was supplied.
+ */
+const normalizePoll = (poll) => {
+  if (poll === undefined || poll === null) return {};
+
+  const rawOptions = Array.isArray(poll.options) ? poll.options : [];
+  const topics = rawOptions
+    .map((option) => (typeof option === 'string' ? option : option?.topic))
+    .map((topic) => (typeof topic === 'string' ? topic.trim() : ''))
+    .filter(Boolean);
+
+  if (topics.length < POLL_MIN_OPTIONS || topics.length > POLL_MAX_OPTIONS) {
+    return { error: `A poll needs between ${POLL_MIN_OPTIONS} and ${POLL_MAX_OPTIONS} options` };
+  }
+
+  return {
+    poll: {
+      question: typeof poll.question === 'string' ? poll.question.trim() : undefined,
+      allowMultiple: normalizeBoolean(poll.allowMultiple, false),
+      options: topics.map((topic, index) => ({
+        optionId: `option_${index + 1}`,
+        topic,
+        votes: 0,
+      })),
+    },
+  };
+};
+
 export const createPost = async (req, res, next) => {
   try {
-    const { title, content, category, tags, isAnonymous, attachments } = req.body;
+    const { title, content, category, tags, isAnonymous, attachments, poll } = req.body;
 
     if (!content?.trim()) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Post content is required');
+    }
+
+    const { poll: normalizedPoll, error: pollError } = normalizePoll(poll);
+    if (pollError) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, pollError);
     }
 
     const created = await CommunityPost.create({
@@ -156,6 +225,7 @@ export const createPost = async (req, res, next) => {
       tags: normalizeStringArray(tags),
       isAnonymous: normalizeBoolean(isAnonymous, true),
       attachments: normalizeAttachments(attachments),
+      ...(normalizedPoll ? { poll: normalizedPoll } : {}),
     });
 
     logger.info('community_post_created', {
@@ -470,6 +540,70 @@ export const deleteComment = async (req, res, next) => {
 
     return sendResponse(res, HTTP_STATUS.OK, 'Comment deleted', {
       commentsCount: post.comments.length,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/community/:id/poll/vote — Cast a vote on a post's poll */
+export const votePoll = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid post id');
+    }
+
+    // Accept either optionIds (multi-select) or a single optionId for convenience.
+    const rawOptionIds = Array.isArray(req.body.optionIds)
+      ? req.body.optionIds
+      : req.body.optionId
+        ? [req.body.optionId]
+        : [];
+    const optionIds = [...new Set(rawOptionIds.map((id) => String(id).trim()).filter(Boolean))];
+    if (optionIds.length === 0) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'At least one optionId is required');
+    }
+
+    const post = await CommunityPost.findOne({ _id: req.params.id, isActive: true });
+    if (!post) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Post not found');
+    if (!post.poll || !Array.isArray(post.poll.options) || post.poll.options.length === 0) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'This post has no poll');
+    }
+
+    if (!post.poll.allowMultiple && optionIds.length > 1) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'This poll only allows a single choice');
+    }
+
+    if (post.pollVotes.some((vote) => String(vote.userId) === String(req.userId))) {
+      return sendError(res, HTTP_STATUS.CONFLICT, 'You have already voted on this poll');
+    }
+
+    const validIds = new Set(post.poll.options.map((option) => option.optionId));
+    if (optionIds.some((id) => !validIds.has(id))) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid poll option');
+    }
+
+    post.poll.options.forEach((option) => {
+      if (optionIds.includes(option.optionId)) option.votes += 1;
+    });
+    post.pollVotes.push({ userId: req.userId, optionIds });
+    await post.save();
+    await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: 5 } });
+
+    const totalVotes = post.poll.options.reduce((sum, option) => sum + option.votes, 0);
+    return sendResponse(res, HTTP_STATUS.OK, 'Vote counted', {
+      poll: {
+        question: post.poll.question,
+        allowMultiple: !!post.poll.allowMultiple,
+        options: post.poll.options.map((option) => ({
+          optionId: option.optionId,
+          topic: option.topic,
+          votes: option.votes,
+        })),
+        totalVotes,
+        myVote: optionIds,
+      },
+      tokensAwarded: 5,
     });
   } catch (error) {
     next(error);

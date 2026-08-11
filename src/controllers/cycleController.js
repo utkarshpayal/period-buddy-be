@@ -362,8 +362,11 @@ export const getPredictions = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Please set up your cycle settings first');
     }
 
-    const predictions = computeCyclePredictions(settings);
     const logs = await CycleLog.find({ userId: req.userId }).sort({ dateKey: 1 });
+    // Pass the full log history so the prediction is anchored on the user's
+    // actual logged periods (and their real cycle-length variability), not a
+    // fixed configured cycle length.
+    const predictions = computeCyclePredictions(settings, logs);
     const analyticsData = buildCycleAnalytics(logs, settings).map((item) => ({
       month: new Date(`${item.month}-01T00:00:00.000Z`).toLocaleDateString('en-US', {
         month: 'short',

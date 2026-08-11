@@ -356,7 +356,7 @@ const PROFILE_COMPLETE_BONUS = 20;
 
 export const onboarding = async (req, res, next) => {
   try {
-    const { dateOfBirth, gender, phone, profilePicture } = req.body;
+    const { dateOfBirth, gender, phone, profilePicture, state } = req.body;
 
     const existingUser = await User.findById(req.userId);
     if (!existingUser) {
@@ -367,11 +367,12 @@ export const onboarding = async (req, res, next) => {
 
     const updates = {
       isProfileComplete: true,
-      ...pickDefined({ dateOfBirth, gender, phone, profilePicture }, [
+      ...pickDefined({ dateOfBirth, gender, phone, profilePicture, state }, [
         'dateOfBirth',
         'gender',
         'phone',
         'profilePicture',
+        'state',
       ]),
       ...(isFirstCompletion && {
         walletBalance: (existingUser.walletBalance || 0) + PROFILE_COMPLETE_BONUS,
@@ -426,6 +427,7 @@ export const updateProfile = async (req, res, next) => {
       'dateOfBirth',
       'gender',
       'profilePicture',
+      'state',
       'notificationsEnabled',
       'anonymousCommunityMode',
     ]);
