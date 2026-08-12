@@ -115,12 +115,18 @@ export const initWebSocket = (server) => {
             sentAt: new Date().toISOString(),
             userId,
           });
-        } else if (room && room.startsWith('buddy_') && type) {
-          // Period Buddy presence/video-call signaling (presence_ping/pong/leave,
+        } else if (
+          room &&
+          (room.startsWith('buddy_') || room.startsWith('consultation_')) &&
+          type
+        ) {
+          // Video-call / presence signaling (presence_ping/pong/leave,
           // call_request/accept/decline/end, webrtc_offer/answer/ice_candidate).
-          // Both sides of a pairing join the same buddy_<roomKey> room (roomKey is
-          // unique per pairing — see BuddyMatch.roomKey), so this is a plain shared-room
-          // broadcast; we just skip the sender itself to avoid it reacting to its own signal.
+          // Used both by anonymous buddy pairings (buddy_<roomKey>) and by
+          // doctor<->patient consultations (consultation_<id>) — the clinician
+          // portal and the patient app join the same consultation room and speak
+          // this same WebRTC signaling protocol. It's a plain shared-room
+          // broadcast; we skip the sender itself to avoid it reacting to its own signal.
           if (!userId) return;
 
           logger.info('ws_signal_relay', { userId, room, signalType: type });
