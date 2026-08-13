@@ -64,10 +64,20 @@ export const errorHandler = (err, req, res, _next) => {
       .json({ success: false, statusCode: HTTP_STATUS.UNAUTHORIZED, message: 'Token expired' });
   }
 
+  // For server-side (5xx) errors in production, never surface the raw error
+  // message to the client — it can leak DB internals, file paths, or secrets
+  // (e.g. "connect ECONNREFUSED 127.0.0.1:27017"). The real message is still
+  // logged above. Intentional 4xx messages remain client-visible.
+  const isServerError = statusCode >= HTTP_STATUS.INTERNAL_SERVER_ERROR;
+  const safeMessage =
+    isServerError && process.env.NODE_ENV === 'production'
+      ? 'Internal Server Error'
+      : err.message || 'Internal Server Error';
+
   return res.status(statusCode).json({
     success: false,
     statusCode,
-    message: err.message || 'Internal Server Error',
+    message: safeMessage,
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   });
 };

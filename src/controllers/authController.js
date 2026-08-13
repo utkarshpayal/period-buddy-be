@@ -43,6 +43,7 @@ import {
 } from '../templates/emailTemplates.js';
 import { verifyGoogleIdToken } from '../utils/googleAuth.js';
 import logger from '../utils/logger.js';
+import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
 
 const sendOtpEmail = async ({ email, firstName, otp }) => {
   await sendMail({
@@ -520,6 +521,13 @@ export const deleteAccount = async (req, res, next) => {
     user.email = `deleted_${user._id}_${user.email}`;
     await user.save();
 
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.ACCOUNT_DELETED,
+      resourceType: 'user',
+      resourceId: user._id,
+      metadata: { mode: 'authenticated' },
+    });
     return sendResponse(res, HTTP_STATUS.OK, 'Account deleted successfully');
   } catch (error) {
     next(error);
@@ -745,6 +753,13 @@ export const confirmSelfDeletion = async (req, res, next) => {
 
     await purgeAllUserData(userId);
 
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.ACCOUNT_DELETED,
+      resourceType: 'user',
+      resourceId: userId,
+      metadata: { mode: 'self_service' },
+    });
     return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.SELF_DELETE_COMPLETE);
   } catch (error) {
     next(error);

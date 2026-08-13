@@ -11,6 +11,7 @@ import ScreeningAssessment from '../models/ScreeningAssessment.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
+import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
 import { isValidObjectId, escapeRegex, pickDefined } from '../utils/apiHelpers.js';
 import { broadcastToRoom } from '../config/websocket.js';
 import { generateToken } from '../utils/jwt.js';
@@ -143,6 +144,13 @@ export const inviteDoctor = async (req, res, next) => {
       mailDelivered: mailResult?.delivered !== false,
     });
 
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.DOCTOR_INVITED,
+      resourceType: 'doctor',
+      resourceId: doctor._id,
+      metadata: { email: normalizedEmail },
+    });
     return sendResponse(res, HTTP_STATUS.CREATED, 'Gynecologist invited', {
       doctor,
       inviteEmailDelivered: mailResult?.delivered !== false,
@@ -206,6 +214,13 @@ export const updateDoctorByAdmin = async (req, res, next) => {
     });
     if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor not found');
 
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.DOCTOR_UPDATED,
+      resourceType: 'doctor',
+      resourceId: doctor._id,
+      metadata: { fields: Object.keys(updates) },
+    });
     return sendResponse(res, HTTP_STATUS.OK, 'Doctor updated', doctor);
   } catch (error) {
     next(error);
@@ -274,6 +289,12 @@ export const deactivateDoctor = async (req, res, next) => {
       await User.findByIdAndUpdate(doctor.userId, { isActive: false });
     }
 
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.DOCTOR_DEACTIVATED,
+      resourceType: 'doctor',
+      resourceId: doctor._id,
+    });
     return sendResponse(res, HTTP_STATUS.OK, 'Doctor deactivated', doctor);
   } catch (error) {
     next(error);

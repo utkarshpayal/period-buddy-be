@@ -213,15 +213,33 @@ export const verifyConsultationPayment = async (req, res, next) => {
 
     const doctor = await Doctor.findById(consultation.doctorId);
 
-    consultation.status = 'paid';
-    consultation.paymentStatus = 'paid';
-    consultation.razorpayPaymentId = razorpay_payment_id;
-    consultation.startedAt = new Date();
-    // Deterministic Jitsi room so patient and doctor land in the same call
-    // (mirrors meetingLinkFor() in doctorController).
-    consultation.meetingLink = `https://meet.jit.si/PeriodBuddy-Consult-${consultation._id}`;
-    consultation.messages = [{ sender: 'doctor', text: doctorGreeting(doctor) }];
-    await consultation.save();
+    // Atomically claim the pending → paid transition. Only the first of any
+    // concurrent /verify calls matches (status not yet paid/active), so the
+    // one-time side effects below (wallet credit, doctor counter, greeting)
+    // can never run twice for the same consultation.
+    const claimed = await Consultation.findOneAndUpdate(
+      { _id: consultation._id, status: { $nin: ['paid', 'active', 'completed'] } },
+      {
+        $set: {
+          status: 'paid',
+          paymentStatus: 'paid',
+          razorpayPaymentId: razorpay_payment_id,
+          startedAt: new Date(),
+          // Deterministic Jitsi room so patient and doctor land in the same call
+          // (mirrors meetingLinkFor() in doctorController).
+          meetingLink: `https://meet.jit.si/PeriodBuddy-Consult-${consultation._id}`,
+          messages: [{ sender: 'doctor', text: doctorGreeting(doctor) }],
+        },
+      },
+      { new: true },
+    );
+
+    if (!claimed) {
+      // A concurrent request already booked it — return the booked state
+      // without re-running side effects.
+      await consultation.populate('doctorId');
+      return sendResponse(res, HTTP_STATUS.OK, 'Consultation already booked', consultation);
+    }
 
     await ConsultationMessage.create({
       consultationId: consultation._id,
@@ -243,9 +261,9 @@ export const verifyConsultationPayment = async (req, res, next) => {
       paymentId: razorpay_payment_id,
     });
 
-    await consultation.populate('doctorId');
+    await claimed.populate('doctorId');
 
-    return sendResponse(res, HTTP_STATUS.CREATED, 'Consultation booked successfully', consultation);
+    return sendResponse(res, HTTP_STATUS.CREATED, 'Consultation booked successfully', claimed);
   } catch (error) {
     logger.error('consultation_verify_error', { userId: req.userId, error: error.message });
     next(error);

@@ -15,8 +15,13 @@ import {
   handleValidationErrors,
 } from '../schemas/authSchema.js';
 import { authenticate } from '../middleware/authMiddleware.js';
+import { authLimiter, rateLimitEnabled, noopLimiter } from '../middleware/rateLimiters.js';
 
 const router = express.Router();
+
+// Strict brute-force guard on unauthenticated, sensitive endpoints. No-op when
+// rate limiting is disabled (dev) so local flows aren't throttled.
+const sensitiveLimiter = rateLimitEnabled ? authLimiter : noopLimiter;
 
 /**
  * @route   POST /api/auth/signup
@@ -24,35 +29,65 @@ const router = express.Router();
  *          account exists yet — see POST /verify-otp.
  * @access  Public
  */
-router.post('/signup', validateSignup, handleValidationErrors, authController.signup);
+router.post(
+  '/signup',
+  sensitiveLimiter,
+  validateSignup,
+  handleValidationErrors,
+  authController.signup,
+);
 
 /**
  * @route   POST /api/auth/verify-otp
  * @desc    Verify the OTP for a pending signup and create the user account
  * @access  Public
  */
-router.post('/verify-otp', validateVerifyOtp, handleValidationErrors, authController.verifyOtp);
+router.post(
+  '/verify-otp',
+  sensitiveLimiter,
+  validateVerifyOtp,
+  handleValidationErrors,
+  authController.verifyOtp,
+);
 
 /**
  * @route   POST /api/auth/resend-otp
  * @desc    Resend a fresh OTP for a pending signup
  * @access  Public
  */
-router.post('/resend-otp', validateResendOtp, handleValidationErrors, authController.resendOtp);
+router.post(
+  '/resend-otp',
+  sensitiveLimiter,
+  validateResendOtp,
+  handleValidationErrors,
+  authController.resendOtp,
+);
 
 /**
  * @route   POST /api/auth/login
  * @desc    Login user
  * @access  Public
  */
-router.post('/login', validateLogin, handleValidationErrors, authController.login);
+router.post(
+  '/login',
+  sensitiveLimiter,
+  validateLogin,
+  handleValidationErrors,
+  authController.login,
+);
 
 /**
  * @route   POST /api/auth/google
  * @desc    Sign in (or sign up) with a Google ID token
  * @access  Public
  */
-router.post('/google', validateGoogleAuth, handleValidationErrors, authController.googleAuth);
+router.post(
+  '/google',
+  sensitiveLimiter,
+  validateGoogleAuth,
+  handleValidationErrors,
+  authController.googleAuth,
+);
 
 /**
  * @route   POST /api/auth/onboarding
@@ -131,6 +166,7 @@ router.delete(
  */
 router.post(
   '/account/delete/request',
+  sensitiveLimiter,
   validateRequestSelfDeletion,
   handleValidationErrors,
   authController.requestSelfDeletion,
@@ -145,6 +181,7 @@ router.post(
  */
 router.post(
   '/account/delete/confirm',
+  sensitiveLimiter,
   validateConfirmSelfDeletion,
   handleValidationErrors,
   authController.confirmSelfDeletion,

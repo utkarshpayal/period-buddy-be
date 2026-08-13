@@ -4,6 +4,7 @@ import SchemeApplication from '../models/SchemeApplication.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
+import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
 import {
   buildPagination,
   escapeRegex,
@@ -258,6 +259,13 @@ export const createScheme = async (req, res, next) => {
 
     const scheme = await GovernmentBenefit.create(payload);
     logger.info(`Admin ${req.user?._id} created scheme ${scheme._id} (${scheme.slug})`);
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.SCHEME_CREATED,
+      resourceType: 'scheme',
+      resourceId: scheme._id,
+      metadata: { slug: scheme.slug, name: scheme.name },
+    });
     return sendResponse(res, HTTP_STATUS.CREATED, 'Scheme created', { scheme });
   } catch (error) {
     next(error);
@@ -299,6 +307,13 @@ export const updateScheme = async (req, res, next) => {
     Object.assign(scheme, updates);
     await scheme.save();
     logger.info(`Admin ${req.user?._id} updated scheme ${scheme._id}`);
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.SCHEME_UPDATED,
+      resourceType: 'scheme',
+      resourceId: scheme._id,
+      metadata: { fields: Object.keys(updates) },
+    });
     return sendResponse(res, HTTP_STATUS.OK, 'Scheme updated', { scheme });
   } catch (error) {
     next(error);
@@ -316,6 +331,13 @@ export const deleteScheme = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Scheme not found');
     }
     logger.info(`Admin ${req.user?._id} deleted scheme ${req.params.id}`);
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.SCHEME_DELETED,
+      resourceType: 'scheme',
+      resourceId: req.params.id,
+      metadata: { slug: scheme.slug, name: scheme.name },
+    });
     return sendResponse(res, HTTP_STATUS.OK, 'Scheme deleted', { success: true });
   } catch (error) {
     next(error);

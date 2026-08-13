@@ -4,6 +4,7 @@ import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { buildPagination, getPagination, isValidObjectId } from '../utils/apiHelpers.js';
 import { uploadBufferToS3, deleteFromS3 } from '../utils/s3.js';
+import { assertAllowedUpload } from '../utils/fileValidation.js';
 import {
   createChatCompletion,
   extractDocumentText,
@@ -57,6 +58,14 @@ export const uploadDocument = async (req, res, next) => {
     }
     if (!DOCUMENT_TYPES.includes(docType)) {
       docType = 'other';
+    }
+
+    // Verify real file content matches an allowed type — the client-declared
+    // mimetype the multer filter saw is spoofable, and this is medical data.
+    try {
+      assertAllowedUpload(req.file.buffer, ['image', 'pdf']);
+    } catch (validationError) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, validationError.message);
     }
 
     const { url, key } = await uploadBufferToS3({
