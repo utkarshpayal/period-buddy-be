@@ -619,7 +619,10 @@ const SELF_DELETE_RESEND_COOLDOWN_SECONDS = OTP_RESEND_COOLDOWN_SECONDS;
 const purgeAllUserData = async (userId) => {
   const [ownedConsultations, ownedMatches] = await Promise.all([
     Consultation.find({ userId }).select('_id'),
-    BuddyMatch.find({ userId }).select('_id'),
+    // Buddy pairings are shared rows keyed by `members` (both participants), not
+    // a per-user `userId` — deleting the account removes the whole pairing and
+    // its message stream for both sides.
+    BuddyMatch.find({ members: userId }).select('_id'),
   ]);
   const consultationIds = ownedConsultations.map((c) => c._id);
   const matchIds = ownedMatches.map((m) => m._id);
@@ -630,7 +633,7 @@ const purgeAllUserData = async (userId) => {
     Habit.deleteMany({ userId }),
     HabitCompletion.deleteMany({ userId }),
     ForestLog.deleteMany({ userId }),
-    BuddyMatch.deleteMany({ userId }),
+    BuddyMatch.deleteMany({ members: userId }),
     BuddyMessage.deleteMany({ matchId: { $in: matchIds } }),
     Consultation.deleteMany({ userId }),
     ConsultationMessage.deleteMany({ consultationId: { $in: consultationIds } }),

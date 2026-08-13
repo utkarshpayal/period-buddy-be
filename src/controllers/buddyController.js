@@ -5,9 +5,19 @@ import CycleSettings from '../models/CycleSettings.js';
 import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
-import { computeCyclePredictions } from '../utils/cycle.js';
 import { escapeRegex, isValidObjectId } from '../utils/apiHelpers.js';
+import { scoreBuddyCompatibility } from '../utils/buddyMatching.js';
 import { broadcastToRoom } from '../config/websocket.js';
+
+/**
+ * Buddy pairing — one canonical BuddyMatch document per pairing (see the model).
+ * The per-user "buddy card" is projected from live data at read time so both
+ * sides always see fresh names/phases and there's no divergent second copy.
+ *
+ * Discovery candidates (the "matches" list) are never persisted — a BuddyMatch
+ * row only exists once two real users are actually paired. Demo/fallback cards
+ * exist purely to keep the discovery list from looking empty on a fresh install.
+ */
 
 const fallbackMatches = [
   {
@@ -19,6 +29,7 @@ const fallbackMatches = [
     lastUpdate: 'Updated today',
     compatibility: 95,
     similarities: ['28-Day Cycle', 'PMDD Fatigue', 'Craves Dark Chocolate'],
+    isRealUser: false,
   },
   {
     id: 'demo_cosmic_fern',
@@ -29,6 +40,7 @@ const fallbackMatches = [
     lastUpdate: 'Updated today',
     compatibility: 88,
     similarities: ['31-Day Cycle', 'Insomnia Spikes', 'Hot Yoga Routine'],
+    isRealUser: false,
   },
   {
     id: 'demo_aura_amber',
@@ -39,73 +51,153 @@ const fallbackMatches = [
     lastUpdate: 'Updated 2 days ago',
     compatibility: 85,
     similarities: ['26-Day Cycle', 'Anxiety Spikes', 'Chamomile Tea Log'],
+    isRealUser: false,
   },
 ];
 
 const getAvatarSeed = (name) =>
-  name
+  (name || '')
     .split(/\s+/)
+    .filter(Boolean)
     .map((part) => part[0])
     .join('')
     .slice(0, 2)
-    .toUpperCase();
+    .toUpperCase() || 'PB';
 
-const buildMatchFromUser = async (candidate, currentSettings) => {
-  const settings = await CycleSettings.findOne({ userId: candidate._id });
-  const alias = `${candidate.firstName || ''} ${candidate.lastName || ''}`.trim() || 'Period Buddy';
-  const candidatePredictions = settings ? computeCyclePredictions(settings) : null;
-  const currentPredictions = currentSettings ? computeCyclePredictions(currentSettings) : null;
-  const cycleDelta =
-    settings && currentSettings ? Math.abs(settings.cycleLength - currentSettings.cycleLength) : 4;
-  const samePhase = candidatePredictions?.currentPhase === currentPredictions?.currentPhase;
-  const compatibility = Math.max(70, Math.min(98, 95 - cycleDelta * 2 + (samePhase ? 5 : 0)));
+const fullName = (user) =>
+  (user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : '') || 'Period Buddy';
+
+/** Stable sorted member pair so a pairing maps to exactly one document. */
+const memberPair = (a, b) => [String(a), String(b)].sort();
+
+/** Deterministic unique key for a pair — matches BuddyMatch.pairKey. */
+const pairKeyOf = (a, b) => memberPair(a, b).join('_');
+
+/**
+ * Builds the discovery card for a candidate user, scored against the viewer.
+ * Not persisted — this is the shape the matches list and nominate resolution use.
+ */
+const buildCandidateCard = (candidate, candidateSettings, viewerSettings) => {
+  const alias = fullName(candidate);
+  const score = scoreBuddyCompatibility(viewerSettings, candidateSettings, {
+    aLastActive: viewerSettings?.updatedAt,
+    bLastActive: candidateSettings?.updatedAt ?? candidate.lastLogin,
+  });
 
   return {
     id: String(candidate._id),
     alias,
     avatarSeed: getAvatarSeed(alias),
-    cyclePhase: `${candidatePredictions?.currentPhase || 'Cycle'} Phase`,
-    cycleOverlapDays: Math.max(0, 28 - cycleDelta),
+    cyclePhase: score.candidatePhaseLabel,
+    cycleOverlapDays: score.cycleOverlapDays,
     lastUpdate: candidate.lastLogin ? 'Recently active' : 'Updated this cycle',
-    compatibility,
-    similarities: [
-      `${settings?.cycleLength || 28}-Day Cycle`,
-      samePhase ? 'Similar Current Phase' : 'Nearby Cycle Pattern',
-      'Private Wellness Tracking',
-    ],
+    compatibility: score.compatibility,
+    similarities: score.similarities,
     isRealUser: true,
   };
 };
 
-const getCandidateByMatchId = async (matchId, userId) => {
-  if (isValidObjectId(matchId)) {
-    if (String(matchId) === String(userId)) return null;
-    const candidate = await User.findOne({ _id: matchId, isActive: true });
-    if (!candidate) return null;
+/**
+ * Projects a persisted pairing into the buddy card the requester should see:
+ * the *counterpart's* name/avatar/phase, a freshly scored compatibility, and
+ * the requester's own unread count. Keeps the API response shape identical to
+ * the old per-user document so the app needs no contract change.
+ */
+const projectMatchForUser = async (match, requesterId) => {
+  const otherId = match.members.find((m) => String(m) !== String(requesterId));
 
-    const currentSettings = await CycleSettings.findOne({ userId });
-    return buildMatchFromUser(candidate, currentSettings);
-  }
+  const [otherUser, otherSettings, viewerSettings] = await Promise.all([
+    User.findById(otherId).select('firstName lastName lastLogin'),
+    CycleSettings.findOne({ userId: otherId }),
+    CycleSettings.findOne({ userId: requesterId }),
+  ]);
 
-  return fallbackMatches.find((match) => match.id === matchId) || null;
+  const alias = fullName(otherUser);
+  const score = scoreBuddyCompatibility(viewerSettings, otherSettings, {
+    aLastActive: viewerSettings?.updatedAt,
+    bLastActive: otherSettings?.updatedAt ?? otherUser?.lastLogin,
+  });
+
+  const read = match.reads?.find((r) => String(r.userId) === String(requesterId));
+  const unreadCount = await BuddyMessage.countDocuments({
+    matchId: match._id,
+    senderId: { $ne: requesterId },
+    sentAt: { $gt: read?.lastReadAt || new Date(0) },
+  });
+
+  return {
+    _id: String(match._id),
+    id: String(otherId),
+    buddyUserId: String(otherId),
+    matchKey: String(otherId),
+    roomKey: match.roomKey,
+    status: match.status,
+    alias,
+    avatarSeed: getAvatarSeed(alias),
+    cyclePhase: score.candidatePhaseLabel,
+    compatibility: match.compatibility ?? score.compatibility,
+    cycleOverlapDays: match.cycleOverlapDays ?? score.cycleOverlapDays,
+    similarities: match.similarities?.length ? match.similarities : score.similarities,
+    lastMessage: match.lastMessage,
+    lastMessageAt: match.lastMessageAt,
+    unreadCount,
+    nominatedAt: match.nominatedAt,
+  };
 };
+
+/** Maps a stored message to the viewer-relative shape the app expects. */
+const projectMessage = (msg, requesterId) => ({
+  _id: String(msg._id),
+  id: String(msg._id),
+  sender: String(msg.senderId) === String(requesterId) ? 'me' : 'buddy',
+  text: msg.text,
+  sentAt: msg.sentAt,
+});
+
+// How many raw candidates to pull before scoring. Bounded so this endpoint is
+// O(pool) — never a function of the total number of pairings in the system.
+const CANDIDATE_POOL = 60;
+const MATCHES_RETURNED = 10;
 
 export const getBuddyMatches = async (req, res, next) => {
   try {
     const { search } = req.query;
-    const currentSettings = await CycleSettings.findOne({ userId: req.userId });
-    // Not filtered by `role` — a 'partner'-role account (someone who has
-    // connected to someone else's cycle as a viewer) can still independently
-    // track their own cycle in this app, so they're a perfectly valid buddy
-    // candidate. Filtering on role: 'user' here excluded every non-'user'
-    // account (including every admin/partner test account) from ever
-    // appearing, which in practice meant real people never showed up at all.
-    const users = await User.find({
-      _id: { $ne: req.userId },
-      isActive: true,
-    }).limit(10);
+    const viewerSettings = await CycleSettings.findOne({ userId: req.userId });
 
-    let matches = await Promise.all(users.map((user) => buildMatchFromUser(user, currentSettings)));
+    // Pull a bounded pool of active users (indexed on isActive), excluding self.
+    // Not filtered by `role` — a 'partner'-role account (a viewer of someone
+    // else's cycle) can still track their own cycle and is a valid buddy.
+    const pool = await User.find({ _id: { $ne: req.userId }, isActive: true })
+      .select('firstName lastName lastLogin')
+      .limit(CANDIDATE_POOL);
+    const poolIds = pool.map((u) => u._id);
+
+    // Drop anyone in the pool who's already paired — bounded by the pool size
+    // via `$in`, not by scanning every pairing in the collection.
+    const busyDocs = await BuddyMatch.find({ members: { $in: poolIds }, status: 'active' })
+      .select('members')
+      .lean();
+    const busy = new Set();
+    for (const doc of busyDocs) for (const m of doc.members) busy.add(String(m));
+
+    const available = pool.filter((u) => !busy.has(String(u._id)));
+
+    const settingsById = new Map(
+      (await CycleSettings.find({ userId: { $in: available.map((u) => u._id) } })).map((s) => [
+        String(s.userId),
+        s,
+      ]),
+    );
+
+    let matches = available.map((user) =>
+      buildCandidateCard(user, settingsById.get(String(user._id)), viewerSettings),
+    );
+
+    // Best cycle fit first; this is the actual match ranking.
+    matches.sort((a, b) => b.compatibility - a.compatibility);
+    matches = matches.slice(0, MATCHES_RETURNED);
+
+    // Keep the list from looking empty on a fresh install / tiny user base.
     if (matches.length < 3) {
       matches = [...matches, ...fallbackMatches].slice(0, 6);
     }
@@ -120,8 +212,6 @@ export const getBuddyMatches = async (req, res, next) => {
       );
     }
 
-    matches.sort((a, b) => b.compatibility - a.compatibility);
-
     return sendResponse(res, HTTP_STATUS.OK, 'Buddy matches fetched', {
       matches,
       activeLimit: 1,
@@ -133,36 +223,13 @@ export const getBuddyMatches = async (req, res, next) => {
 
 export const getActiveBuddy = async (req, res, next) => {
   try {
-    const match = await BuddyMatch.findOne({ userId: req.userId, status: 'active' }).sort({
+    const match = await BuddyMatch.findOne({ members: req.userId, status: 'active' }).sort({
       createdAt: -1,
     });
+    if (!match) return sendResponse(res, HTTP_STATUS.OK, 'Active buddy fetched', null);
 
-    if (match && !match.roomKey) {
-      // Backfill matches created before roomKey existed (rolled out below). Derived
-      // deterministically from the sorted pair of user ids so both sides independently
-      // land on the identical value with no coordination — unlike nominateBuddy's
-      // crypto.randomUUID(), which is safe there because one request creates both docs
-      // at once. Without this, an existing active pairing loses live chat/presence/calls
-      // entirely, since the client won't open its socket without a roomKey.
-      const roomKey = match.buddyUserId
-        ? [String(req.userId), String(match.buddyUserId)].sort().join('_')
-        : crypto.randomUUID();
-      match.roomKey = roomKey;
-      await match.save();
-      if (match.buddyUserId) {
-        await BuddyMatch.updateOne(
-          {
-            userId: match.buddyUserId,
-            buddyUserId: req.userId,
-            status: 'active',
-            $or: [{ roomKey: { $exists: false } }, { roomKey: null }, { roomKey: '' }],
-          },
-          { roomKey },
-        );
-      }
-    }
-
-    return sendResponse(res, HTTP_STATUS.OK, 'Active buddy fetched', match || null);
+    const card = await projectMatchForUser(match, req.userId);
+    return sendResponse(res, HTTP_STATUS.OK, 'Active buddy fetched', card);
   } catch (error) {
     next(error);
   }
@@ -171,7 +238,9 @@ export const getActiveBuddy = async (req, res, next) => {
 export const nominateBuddy = async (req, res, next) => {
   try {
     const { matchId } = req.params;
-    const active = await BuddyMatch.findOne({ userId: req.userId, status: 'active' });
+
+    // One buddy at a time.
+    const active = await BuddyMatch.findOne({ members: req.userId, status: 'active' });
     if (active) {
       return sendError(
         res,
@@ -180,119 +249,93 @@ export const nominateBuddy = async (req, res, next) => {
       );
     }
 
-    const candidate = await getCandidateByMatchId(matchId, req.userId);
+    // Only real users can be paired — demo cards are display-only.
+    if (!isValidObjectId(matchId) || String(matchId) === String(req.userId)) {
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        'Pick a real Period Buddy from your matches to connect',
+      );
+    }
+
+    const candidate = await User.findOne({ _id: matchId, isActive: true }).select(
+      'firstName lastName lastLogin',
+    );
     if (!candidate) {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Buddy match not found');
     }
 
-    const welcomeText =
-      'Hey period buddy. Our cycle windows look close this month. How are you feeling today?';
-    // Shared by both sides of a real-user match so their WebSocket room is
-    // unique to this pairing and can never collide with a later pairing.
-    const roomKey = crypto.randomUUID();
+    // Don't stomp someone who's already paired — consent-safe by construction.
+    const candidateBusy = await BuddyMatch.findOne({ members: candidate._id, status: 'active' });
+    if (candidateBusy) {
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        'This buddy just connected with someone else — try another match',
+      );
+    }
 
-    const match = await BuddyMatch.create({
-      userId: req.userId,
-      buddyUserId: candidate.isRealUser ? candidate.id : null,
-      matchKey: candidate.id,
-      roomKey,
-      alias: candidate.alias,
-      avatarSeed: candidate.avatarSeed,
-      cyclePhase: candidate.cyclePhase,
-      cycleOverlapDays: candidate.cycleOverlapDays,
-      compatibility: candidate.compatibility,
-      similarities: candidate.similarities,
-      lastMessage: welcomeText,
-      lastMessageAt: new Date(),
-      unreadCount: 0,
-      messages: [
-        {
-          sender: 'buddy',
-          text: welcomeText,
-        },
-      ],
+    const [viewerSettings, candidateSettings] = await Promise.all([
+      CycleSettings.findOne({ userId: req.userId }),
+      CycleSettings.findOne({ userId: candidate._id }),
+    ]);
+    const score = scoreBuddyCompatibility(viewerSettings, candidateSettings, {
+      aLastActive: viewerSettings?.updatedAt,
+      bLastActive: candidateSettings?.updatedAt ?? candidate.lastLogin,
     });
 
+    const members = memberPair(req.userId, candidate._id);
+    const roomKey = crypto.randomUUID();
+    const welcomeText =
+      'Hey period buddy. Our cycle windows look close this month. How are you feeling today?';
+
+    let match;
+    try {
+      match = await BuddyMatch.create({
+        members,
+        pairKey: pairKeyOf(req.userId, candidate._id),
+        roomKey,
+        compatibility: score.compatibility,
+        cycleOverlapDays: score.cycleOverlapDays,
+        similarities: score.similarities,
+        lastMessage: welcomeText,
+        lastMessageAt: new Date(),
+        nominatedBy: req.userId,
+        nominatedAt: new Date(),
+        reads: [
+          // The initiator has "seen" the welcome; the counterpart hasn't.
+          { userId: req.userId, lastReadAt: new Date() },
+          { userId: candidate._id, lastReadAt: null },
+        ],
+      });
+    } catch (err) {
+      // Unique index race: the pair got created by a concurrent request.
+      if (err?.code === 11000) {
+        return sendError(
+          res,
+          HTTP_STATUS.CONFLICT,
+          'This buddy just connected with someone else — try another match',
+        );
+      }
+      throw err;
+    }
+
+    // Seed the welcome as a real message authored by the counterpart.
     await BuddyMessage.create({
       matchId: match._id,
-      sender: 'buddy',
+      senderId: candidate._id,
       text: welcomeText,
     });
 
-    // If it's a real user candidate, create the reciprocal active match for User B pointing back to User A
-    if (candidate.isRealUser) {
-      // 1. End any existing active buddy match User B has, and its reciprocal on the
-      // other side (User C) too — otherwise C's match stays 'active' while B has moved
-      // on, so C can still post into a room B no longer listens to, and B's personal
-      // room keeps receiving C's messages inside whatever chat B has open next.
-      const supersededMatches = await BuddyMatch.find({ userId: candidate.id, status: 'active' });
-      await BuddyMatch.updateMany(
-        { userId: candidate.id, status: 'active' },
-        { status: 'ended', endedAt: new Date() },
-      );
-      for (const superseded of supersededMatches) {
-        if (!superseded.buddyUserId) continue;
-        await BuddyMatch.updateMany(
-          { userId: superseded.buddyUserId, buddyUserId: candidate.id, status: 'active' },
-          { status: 'ended', endedAt: new Date() },
-        );
-        broadcastToRoom(`user_${superseded.buddyUserId}`, { type: 'buddy_ended' });
-      }
-
-      // 2. Fetch User A's cycle settings to compute predictions and compatibility for User B
-      const settingsA = await CycleSettings.findOne({ userId: req.userId });
-      const settingsB = await CycleSettings.findOne({ userId: candidate.id });
-      const predictionsA = settingsA ? computeCyclePredictions(settingsA) : null;
-      const predictionsB = settingsB ? computeCyclePredictions(settingsB) : null;
-
-      const cycleDelta =
-        settingsA && settingsB ? Math.abs(settingsA.cycleLength - settingsB.cycleLength) : 4;
-      const samePhase = predictionsA?.currentPhase === predictionsB?.currentPhase;
-      const compatibility = Math.max(70, Math.min(98, 95 - cycleDelta * 2 + (samePhase ? 5 : 0)));
-      const cycleOverlapDays = Math.max(0, 28 - cycleDelta);
-      const cyclePhase = `${predictionsA?.currentPhase || 'Cycle'} Phase`;
-      const similarities = [
-        `${settingsA?.cycleLength || 28}-Day Cycle`,
-        samePhase ? 'Similar Current Phase' : 'Nearby Cycle Pattern',
-        'Private Wellness Tracking',
-      ];
-
-      const userA = await User.findById(req.userId);
-      const aliasA = userA ? `${userA.firstName} ${userA.lastName}` : 'Period Buddy';
-
-      const buddyMatch = await BuddyMatch.create({
-        userId: candidate.id,
-        buddyUserId: req.userId,
-        matchKey: req.userId,
-        roomKey,
-        alias: aliasA,
-        avatarSeed: getAvatarSeed(aliasA),
-        cyclePhase,
-        cycleOverlapDays,
-        compatibility,
-        similarities,
-        lastMessage: welcomeText,
-        lastMessageAt: new Date(),
-        unreadCount: 0,
-        messages: [
-          {
-            sender: 'buddy',
-            text: welcomeText,
-          },
-        ],
-      });
-
-      await BuddyMessage.create({
-        matchId: buddyMatch._id,
-        sender: 'buddy',
-        text: welcomeText,
-      });
-    }
-
     await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: 25 } });
 
+    // Let the counterpart's app know in real time so the pairing appears
+    // without a manual refresh.
+    broadcastToRoom(`user_${candidate._id}`, { type: 'buddy_matched' });
+
+    const card = await projectMatchForUser(match, req.userId);
     return sendResponse(res, HTTP_STATUS.CREATED, 'Buddy nominated', {
-      match,
+      match: card,
       tokensAwarded: 25,
     });
   } catch (error) {
@@ -302,20 +345,22 @@ export const nominateBuddy = async (req, res, next) => {
 
 export const getBuddyMessages = async (req, res, next) => {
   try {
-    const match = await BuddyMatch.findOne({ userId: req.userId, status: 'active' });
+    const match = await BuddyMatch.findOne({ members: req.userId, status: 'active' });
     if (!match) return sendError(res, HTTP_STATUS.NOT_FOUND, 'No active Period Buddy');
 
-    // Cap to the most recent 300 messages (fetched newest-first, then restored
-    // to chronological order) so a long-running chat can't return an unbounded
-    // payload. Older history would need a paginated "load earlier" call.
-    const messages = (
+    // Newest-first for the cap, then restored to chronological order. Older
+    // history would need a paginated "load earlier" call.
+    const docs = (
       await BuddyMessage.find({ matchId: match._id }).sort({ sentAt: -1 }).limit(300)
     ).reverse();
 
-    if (messages.length === 0 && match.messages && match.messages.length > 0) {
-      return sendResponse(res, HTTP_STATUS.OK, 'Buddy messages fetched', match.messages);
-    }
+    // Opening the chat marks everything read for this member.
+    await BuddyMatch.updateOne(
+      { _id: match._id, 'reads.userId': req.userId },
+      { $set: { 'reads.$.lastReadAt': new Date() } },
+    );
 
+    const messages = docs.map((m) => projectMessage(m, req.userId));
     return sendResponse(res, HTTP_STATUS.OK, 'Buddy messages fetched', messages);
   } catch (error) {
     next(error);
@@ -329,69 +374,49 @@ export const sendBuddyMessage = async (req, res, next) => {
     if (text.trim().length > 1000)
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Message must be 1000 characters or fewer');
 
-    const match = await BuddyMatch.findOne({ userId: req.userId, status: 'active' });
+    const match = await BuddyMatch.findOne({ members: req.userId, status: 'active' });
     if (!match) return sendError(res, HTTP_STATUS.NOT_FOUND, 'No active Period Buddy');
 
     const userText = text.trim();
+    const now = new Date();
 
-    // ──────────────────────────────────────────────────────────
-    // Message Persistence (Sender)
-    // ──────────────────────────────────────────────────────────
-    match.messages.push({ sender: 'me', text: userText });
-    match.lastMessage = userText;
-    match.lastMessageAt = new Date();
-    await match.save();
-
-    const msgMe = await BuddyMessage.create({
+    // One write to the shared stream.
+    const msg = await BuddyMessage.create({
       matchId: match._id,
-      sender: 'me',
+      senderId: req.userId,
       text: userText,
+      sentAt: now,
     });
+
+    match.lastMessage = userText;
+    match.lastMessageAt = now;
+    // Sending counts as reading your own thread up to now.
+    const myRead = match.reads.find((r) => String(r.userId) === String(req.userId));
+    if (myRead) myRead.lastReadAt = now;
+    else match.reads.push({ userId: req.userId, lastReadAt: now });
+    await match.save();
 
     await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: 2 } });
 
-    // ──────────────────────────────────────────────────────────
-    // Reciprocal Message Persistence & Real-time Update (Receiver)
-    // ──────────────────────────────────────────────────────────
-    if (match.buddyUserId) {
-      const buddyMatch = await BuddyMatch.findOne({
-        userId: match.buddyUserId,
-        buddyUserId: req.userId,
-        status: 'active',
+    const otherId = match.members.find((m) => String(m) !== String(req.userId));
+
+    // Broadcast to each side on their personal room, with the sender mapped
+    // relative to that recipient (absolute senderId, projected per-viewer).
+    if (otherId) {
+      broadcastToRoom(`user_${otherId}`, {
+        messages: [projectMessage(msg, otherId)],
+        tokensAwarded: 0,
       });
-      if (buddyMatch) {
-        buddyMatch.messages.push({ sender: 'buddy', text: userText });
-        buddyMatch.lastMessage = userText;
-        buddyMatch.lastMessageAt = new Date();
-        buddyMatch.unreadCount = (buddyMatch.unreadCount || 0) + 1;
-        await buddyMatch.save();
-
-        const msgBuddy = await BuddyMessage.create({
-          matchId: buddyMatch._id,
-          sender: 'buddy',
-          text: userText,
-        });
-
-        // Broadcast to receiver (User B) on their personal room. Personal rooms are
-        // keyed by the user's own stable id (auto-joined on every authenticated
-        // connection), so — unlike the old buddy_<userId>-named room — they can't be
-        // left over from, or reused by, an unrelated past or future pairing.
-        broadcastToRoom(`user_${match.buddyUserId}`, {
-          messages: [msgBuddy],
-          tokensAwarded: 0,
-        });
-      }
     }
-
-    const responseData = {
-      messages: [msgMe],
+    broadcastToRoom(`user_${req.userId}`, {
+      messages: [projectMessage(msg, req.userId)],
       tokensAwarded: 2,
-    };
+    });
 
-    // Broadcast to sender's other devices/sessions on their own personal room.
-    broadcastToRoom(`user_${req.userId}`, responseData);
-
-    return sendResponse(res, HTTP_STATUS.OK, 'Buddy message sent', responseData);
+    return sendResponse(res, HTTP_STATUS.OK, 'Buddy message sent', {
+      messages: [projectMessage(msg, req.userId)],
+      tokensAwarded: 2,
+    });
   } catch (error) {
     next(error);
   }
@@ -399,29 +424,25 @@ export const sendBuddyMessage = async (req, res, next) => {
 
 export const endActiveBuddy = async (req, res, next) => {
   try {
-    const match = await BuddyMatch.findOneAndUpdate(
-      { userId: req.userId, status: 'active' },
-      { status: 'ended', endedAt: new Date() },
-      { new: true },
-    );
+    const match = await BuddyMatch.findOne({ members: req.userId, status: 'active' });
     if (!match) return sendError(res, HTTP_STATUS.NOT_FOUND, 'No active Period Buddy');
 
-    if (match.buddyUserId) {
-      // Also end reciprocal match for User B
-      await BuddyMatch.findOneAndUpdate(
-        { userId: match.buddyUserId, buddyUserId: req.userId, status: 'active' },
-        { status: 'ended', endedAt: new Date() },
-      );
+    const otherId = match.members.find((m) => String(m) !== String(req.userId));
+
+    // Exiting a buddy space deletes it and its whole message history — the space
+    // is private and disposable by design, so nothing is left behind for either
+    // side to stumble back into.
+    await BuddyMessage.deleteMany({ matchId: match._id });
+    await BuddyMatch.deleteOne({ _id: match._id });
+
+    // Tell the counterpart in real time on their personal room (not the shared
+    // buddy_<roomKey> room, which would also reach the leaver's own socket and
+    // show them a confusing "your buddy left" about their own action).
+    if (otherId) {
+      broadcastToRoom(`user_${otherId}`, { type: 'buddy_ended' });
     }
 
-    // Tell the counterpart in real time, on their personal room (not the shared
-    // buddy_<roomKey> room — that would also reach the leaver's own still-open socket
-    // and show them a confusing "your buddy left" message about their own action).
-    if (match.buddyUserId) {
-      broadcastToRoom(`user_${match.buddyUserId}`, { type: 'buddy_ended' });
-    }
-
-    return sendResponse(res, HTTP_STATUS.OK, 'Active buddy ended', match);
+    return sendResponse(res, HTTP_STATUS.OK, 'Active buddy ended', { ended: true });
   } catch (error) {
     next(error);
   }

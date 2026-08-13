@@ -317,11 +317,6 @@ export const sendMessage = async (req, res, next) => {
     const userText = text.trim();
     consultation.messages.push({ sender: 'user', text: userText });
 
-    // Simulate doctor's auto-reply
-    const doctorReply =
-      'Understood. Our logging engine is checking your cycle history trend structures to fine-tune diagnostic assessments. Please provide any related physical updates.';
-    consultation.messages.push({ sender: 'doctor', text: doctorReply });
-
     await consultation.save();
 
     const msgUser = await ConsultationMessage.create({
@@ -330,19 +325,13 @@ export const sendMessage = async (req, res, next) => {
       text: userText,
     });
 
-    const msgDoctor = await ConsultationMessage.create({
-      consultationId: consultation._id,
-      sender: 'doctor',
-      text: doctorReply,
-    });
-
     logger.info('consultation_message_sent', {
       action: 'consultation_message_sent',
       userId: req.userId,
       consultationId: consultation._id,
     });
 
-    const responseData = [msgUser, msgDoctor];
+    const responseData = [msgUser];
 
     // Broadcast messages to active consultation room
     broadcastToRoom(`consultation_${consultation._id}`, {

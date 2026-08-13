@@ -1,6 +1,14 @@
 import mongoose from 'mongoose';
 
-/** BuddyMessage — message history for active buddy pairs. */
+/**
+ * BuddyMessage — a single shared message stream per pairing.
+ *
+ * `senderId` is the absolute author of the message; each side maps it to the
+ * viewer-relative "me"/"buddy" at read time. This replaces the old
+ * viewer-relative `sender` string, which forced the same message to be written
+ * twice (once as "me" for the sender's row, once as "buddy" for the receiver's).
+ * `sender` is retained, optional, only so legacy rows still parse.
+ */
 const buddyMessageSchema = new mongoose.Schema(
   {
     matchId: {
@@ -9,10 +17,17 @@ const buddyMessageSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    sender: { type: String, enum: ['me', 'buddy'], required: true },
+    senderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      index: true,
+    },
     text: { type: String, required: true, trim: true, maxlength: 1000 },
     sentAt: { type: Date, default: Date.now },
-    readAt: { type: Date, default: null },
+
+    /** @deprecated legacy viewer-relative field; new rows use `senderId`. */
+    sender: { type: String, enum: ['me', 'buddy'] },
   },
   { timestamps: true },
 );
