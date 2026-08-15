@@ -8,7 +8,7 @@ const apiBaseUrl = () => {
   const explicit = process.env.API_BASE_URL;
   if (explicit) return explicit.replace(/\/$/, '');
   const isLocalDev = process.env.NODE_ENV === 'development';
-  return isLocalDev ? 'http://localhost:5000' : 'https://api.thenura.care';
+  return isLocalDev ? 'http://localhost:5000' : 'https://backend.thenura.care';
 };
 
 /** Nura brand palette, matching the mobile app's light theme (components/theme.tsx)
