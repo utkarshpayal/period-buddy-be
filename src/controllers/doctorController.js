@@ -29,12 +29,17 @@ const meetingLinkFor = (consultationId) =>
 /** Base origin for the admin/clinician CMS where invitees set their password.
  * Prefers the explicit env var; otherwise falls back per environment so the
  * link is never host-less — and, critically, never points at localhost in
- * production (which broke real invite emails). */
+ * production (which broke real invite emails).
+ *
+ * Localhost is opt-in (NODE_ENV must be exactly "development"), not the
+ * default — a deployed host with NODE_ENV unset/misconfigured (staging,
+ * or "production" never actually reaching this process) still gets the
+ * real domain instead of silently leaking localhost into invite emails. */
 const adminAppBaseUrl = () => {
   const explicit = process.env.ADMIN_APP_URL || process.env.FRONTEND_URL;
   if (explicit) return explicit.replace(/\/$/, '');
-  const isProd = process.env.NODE_ENV === 'production';
-  return isProd ? 'https://admin.thenura.care' : 'http://localhost:5173';
+  const isLocalDev = process.env.NODE_ENV === 'development';
+  return isLocalDev ? 'http://localhost:5173' : 'https://admin.thenura.care';
 };
 
 /** Build the set-password link the invitee follows. */
@@ -638,7 +643,17 @@ export const sendConsultationMessage = async (req, res, next) => {
       attachmentUrl: attachmentUrl || undefined,
     });
 
-    broadcastToRoom(`consultation_${consultation._id}`, { messages: [message] });
+    // Broadcast the full recent log, not just this one message — the mobile
+    // client replaces its local message list wholesale with whatever a "message"
+    // WS event carries, so sending only the delta made every earlier message in
+    // the thread disappear on the patient's side until they refreshed the screen.
+    const recentMessages = (
+      await ConsultationMessage.find({ consultationId: consultation._id })
+        .sort({ sentAt: -1 })
+        .limit(300)
+    ).reverse();
+
+    broadcastToRoom(`consultation_${consultation._id}`, { messages: recentMessages });
 
     return sendResponse(res, HTTP_STATUS.CREATED, 'Message sent', message);
   } catch (error) {
@@ -686,6 +701,13 @@ export const setPrescription = async (req, res, next) => {
 
     const { error, code, consultation } = await loadOwnedConsultation(req.userId, req.params.id);
     if (error) return sendError(res, code, error);
+
+    // Only during a live session — once completed/cancelled, the record is
+    // closed and shouldn't be editable from the dashboard, disabled button
+    // or not (the UI-only guard was bypassable via a direct API call).
+    if (!['paid', 'active'].includes(consultation.status)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'This consultation session is not active');
+    }
 
     consultation.prescription = prescription.trim();
     await consultation.save();

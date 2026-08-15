@@ -36,7 +36,7 @@ export const subscribeNewsletter = async (req, res, next) => {
     sendMail({
       to: email,
       subject: "You're on the list — welcome to Nura",
-      html: getNewsletterWelcomeTemplate(),
+      html: getNewsletterWelcomeTemplate({ email }),
       text: "Thanks for subscribing to Nura's newsletter. You'll get our science advisory board's research articles once a month.",
     }).catch((error) =>
       logger.error('newsletter_welcome_mail_failed', {
@@ -80,6 +80,57 @@ export const unsubscribeNewsletter = async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+};
+
+/** Small standalone HTML page for the one-click unsubscribe link — mail
+ * clients render whatever this returns directly, so it needs to be a full,
+ * self-contained page rather than a JSON envelope. */
+const unsubscribePage = (heading, message) => `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${heading} — Nura</title>
+<style>
+  body { margin:0; padding:40px 20px; min-height:100vh; box-sizing:border-box; display:flex; align-items:center; justify-content:center;
+    background-color:#F6EEF1; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:#3A2A32; }
+  .card { max-width:420px; width:100%; background:#FFFFFF; border-radius:20px; padding:36px 28px; text-align:center; box-shadow:0 4px 20px rgba(0,0,0,0.06); }
+  h1 { font-size:20px; margin:0 0 12px; color:#E8618F; }
+  p { font-size:14px; line-height:1.6; margin:0; color:#3A2A32; }
+</style></head>
+<body><div class="card"><h1>${heading}</h1><p>${message}</p></div></body></html>`;
+
+/** GET /api/newsletter/unsubscribe?email=... — Public: one-click unsubscribe
+ * for the plain link in emails (see newsletterRoutes.js for why this needs
+ * to be a separate GET endpoint from the POST one above). */
+export const unsubscribeNewsletterViaLink = async (req, res) => {
+  const email = String(req.query.email || '')
+    .trim()
+    .toLowerCase();
+
+  if (!email) {
+    return res
+      .status(HTTP_STATUS.BAD_REQUEST)
+      .send(unsubscribePage('Missing email', 'This unsubscribe link is missing an email address.'));
+  }
+
+  const subscription = await Newsletter.findOneAndUpdate(
+    { email },
+    { isActive: false, unsubscribedAt: new Date() },
+    { new: true },
+  );
+
+  if (!subscription) {
+    // Not found isn't a real error here — most likely already unsubscribed,
+    // or was never subscribed. Either way, the reader's *intent* ("stop
+    // emailing me") is satisfied, so this reads as success, not an error page.
+    return res.send(
+      unsubscribePage("You're unsubscribed", `${email} won't receive further emails from Nura.`),
+    );
+  }
+
+  logger.info('newsletter_unsubscribed', { action: 'newsletter_unsubscribed', email, via: 'link' });
+
+  return res.send(
+    unsubscribePage("You're unsubscribed", `${email} has been removed from the Nura newsletter.`),
+  );
 };
 
 /** GET /api/newsletter — Admin: list subscribers */

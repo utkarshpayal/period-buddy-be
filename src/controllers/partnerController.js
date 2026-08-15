@@ -250,7 +250,11 @@ export const getPartnerSharedData = async (req, res, next) => {
     if (perms.shareCyclePhase || perms.shareAlerts) {
       const settings = await CycleSettings.findOne({ userId: myProfile.partnerId });
       if (settings) {
-        predictions = computeCyclePredictions(settings);
+        // Anchor on the owner's actual logged period history, not just the
+        // configured lastPeriodStartDate, so the phase shown to the partner
+        // matches what the owner's own tracker screen shows.
+        const logs = await CycleLog.find({ userId: myProfile.partnerId }).sort({ dateKey: 1 });
+        predictions = computeCyclePredictions(settings, logs);
       }
     }
 

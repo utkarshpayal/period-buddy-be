@@ -337,7 +337,7 @@ export const sendMessage = async (req, res, next) => {
 
     await consultation.save();
 
-    const msgUser = await ConsultationMessage.create({
+    await ConsultationMessage.create({
       consultationId: consultation._id,
       sender: 'user',
       text: userText,
@@ -349,7 +349,17 @@ export const sendMessage = async (req, res, next) => {
       consultationId: consultation._id,
     });
 
-    const responseData = [msgUser];
+    // Both the REST response and the WS broadcast must carry the full
+    // recent log (not just the message just created) — the mobile client
+    // treats each of these as the authoritative list and replaces its
+    // local state wholesale, so sending only the delta here made every
+    // earlier message in the thread disappear until the screen refetched
+    // via GET /messages.
+    const responseData = (
+      await ConsultationMessage.find({ consultationId: consultation._id })
+        .sort({ sentAt: -1 })
+        .limit(300)
+    ).reverse();
 
     // Broadcast messages to active consultation room
     broadcastToRoom(`consultation_${consultation._id}`, {
