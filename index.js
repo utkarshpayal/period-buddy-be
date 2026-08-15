@@ -73,11 +73,17 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .map((o) => o.trim())
   .filter(Boolean);
 
+const allowAllOrigins = allowedOrigins.includes('*');
+
 const corsOptions = {
   origin(origin, callback) {
     // Non-browser clients (mobile app, curl, server-to-server) send no Origin.
     if (!origin) return callback(null, true);
     if (process.env.NODE_ENV !== 'production') return callback(null, true);
+    // ALLOWED_ORIGINS=* opts into reflecting any origin (note: with
+    // credentials:true, browsers require the actual origin echoed back,
+    // not a literal "*" header — the `cors` package handles that).
+    if (allowAllOrigins) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
     return callback(new Error('Not allowed by CORS'));
   },
