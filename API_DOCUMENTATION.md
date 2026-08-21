@@ -468,7 +468,7 @@ Payload:
 
 Allowed `flow`: `none`, `light`, `medium`, `heavy`, `spotting`.
 
-Allowed `mood`: `happy`, `calm`, `emotional`, `tired`, `sad`, `anxious`, `irritable`, `neutral`, `energetic`.
+Allowed `mood`: `happy`, `calm`, `emotional`, `tired`, `sad`, `anxious`, `irritable`, `neutral`, `energetic`, `frisky`, `moodSwings`, `depressed`, `guilty`, `obsessive`, `lowEnergy`, `apathetic`, `confused`, `selfCritical`. Same list for `moods` (string[], multi-select counterpart — see below).
 
 Allowed `energy`: `low`, `medium`, `steady`, `high`.
 

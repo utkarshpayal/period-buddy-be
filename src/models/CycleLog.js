@@ -1,5 +1,33 @@
 import mongoose from 'mongoose';
 
+// Shared by `mood` and `moods` below so the two enums can't drift apart.
+// `emotional`/`tired`/`neutral` are kept for backward-compat with older logs
+// even though the app's log modal no longer offers them as chips — their
+// closest replacements are `moodSwings`/`lowEnergy`/`apathetic`. The rest
+// (frisky, moodSwings, depressed, guilty, obsessive, lowEnergy, apathetic,
+// confused, selfCritical) were added alongside period-buddy's expanded
+// day-log modal (see period-buddy/components/DayDetailsModal.tsx).
+const MOOD_VALUES = [
+  'happy',
+  'calm',
+  'emotional',
+  'tired',
+  'sad',
+  'anxious',
+  'irritable',
+  'neutral',
+  'energetic',
+  'frisky',
+  'moodSwings',
+  'depressed',
+  'guilty',
+  'obsessive',
+  'lowEnergy',
+  'apathetic',
+  'confused',
+  'selfCritical',
+];
+
 const cycleLogSchema = new mongoose.Schema(
   {
     userId: {
@@ -17,17 +45,7 @@ const cycleLogSchema = new mongoose.Schema(
     },
     mood: {
       type: String,
-      enum: [
-        'happy',
-        'calm',
-        'emotional',
-        'tired',
-        'sad',
-        'anxious',
-        'irritable',
-        'neutral',
-        'energetic',
-      ],
+      enum: MOOD_VALUES,
     },
     // Multi-select counterpart to `mood` — a day can carry several moods. The
     // scalar `mood` stays populated with the primary (first) value for
@@ -35,17 +53,7 @@ const cycleLogSchema = new mongoose.Schema(
     moods: [
       {
         type: String,
-        enum: [
-          'happy',
-          'calm',
-          'emotional',
-          'tired',
-          'sad',
-          'anxious',
-          'irritable',
-          'neutral',
-          'energetic',
-        ],
+        enum: MOOD_VALUES,
       },
     ],
     energy: { type: String, enum: ['low', 'medium', 'steady', 'high'] },
