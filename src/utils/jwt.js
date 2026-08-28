@@ -1,9 +1,14 @@
 import jwt from 'jsonwebtoken';
 
-export const generateToken = (payload) => {
+// `options` lets callers override the default session expiry — e.g. the
+// short-lived (~30 min) token minted for a Samvaad outbound check-in call
+// (see samvaadClient.js), which must not live as long as a normal login
+// session.
+export const generateToken = (payload, options = {}) => {
   try {
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
       expiresIn: process.env.JWT_EXPIRE || '7d',
+      ...options,
     });
     return token;
   } catch (error) {

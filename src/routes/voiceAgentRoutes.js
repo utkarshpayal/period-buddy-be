@@ -12,4 +12,22 @@ const router = express.Router();
  */
 router.post('/converse', authenticate, voiceAgentController.converse);
 
+/**
+ * @route   POST /api/voice-agent/checkin-call
+ * @desc    Trigger an outbound Samvaad "call me now" cycle check-in call for
+ *          the logged-in user
+ * @access  Private
+ */
+router.post('/checkin-call', authenticate, voiceAgentController.triggerCheckinCall);
+
+/**
+ * @route   POST /api/voice-agent/checkin-call/webhook
+ * @desc    Sarvam Instant Outbound's call-completion webhook (see
+ *          samvaadClient.js's webhook_config) — public, no auth (Sarvam has
+ *          no way to send our JWT); correlates back to a user purely via
+ *          the webhook_config.metadata.userId echoed back in the payload.
+ * @access  Public
+ */
+router.post('/checkin-call/webhook', voiceAgentController.checkinCallWebhook);
+
 export default router;

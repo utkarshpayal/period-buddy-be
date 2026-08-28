@@ -7,6 +7,7 @@ import logger from '../utils/logger.js';
 import { createPartnerNotification } from './partnerController.js';
 import {
   dateFromDateKey,
+  normalizeBoolean,
   normalizeStringArray,
   pickDefined,
   validateDateKey,
@@ -23,6 +24,24 @@ import {
 /* ──────────────────────────────────────────────
    Controllers
 ────────────────────────────────────────────── */
+
+// The Samvaad voice agent sends "not_discussed" (a string) for any topic the
+// caller skipped, rather than omitting the field, and sends its numeric
+// fields (sleepHours/waterIntake/weight/temperature/stressLevel) as strings.
+// Strip the placeholder and coerce numerics here so a skipped topic never
+// hits Mongoose as an invalid enum value / cast target and fails the whole
+// day's log.
+const NOT_DISCUSSED = 'not_discussed';
+
+const sanitizeEnumField = (value) =>
+  typeof value === 'string' && value.trim().toLowerCase() === NOT_DISCUSSED ? undefined : value;
+
+const sanitizeNumberField = (value) => {
+  const stripped = sanitizeEnumField(value);
+  if (stripped === undefined || stripped === null || stripped === '') return undefined;
+  const num = Number(stripped);
+  return Number.isFinite(num) ? num : undefined;
+};
 
 /**
  * Shared upsert used by both the REST endpoint (saveCycleLog) and the voice
@@ -90,27 +109,32 @@ export const upsertCycleLog = async (userId, payload) => {
   const update = pickDefined(
     {
       date,
-      flow,
-      mood,
+      flow: sanitizeEnumField(flow),
+      mood: sanitizeEnumField(mood),
       moods: moods !== undefined ? normalizeStringArray(moods) : undefined,
-      energy,
+      energy: sanitizeEnumField(energy),
       symptoms: normalizeStringArray(symptoms),
       note: note?.trim(),
-      isIntimate: typeof isIntimate === 'boolean' ? isIntimate : undefined,
+      isIntimate:
+        typeof isIntimate === 'boolean'
+          ? isIntimate
+          : sanitizeEnumField(isIntimate) !== undefined
+            ? normalizeBoolean(isIntimate)
+            : undefined,
       cycleDay: normalizedCycleDay,
       phase,
       rewardPoints: tokensEarned,
-      sleepHours,
-      waterIntake,
-      weight,
-      temperature,
-      stressLevel,
+      sleepHours: sanitizeNumberField(sleepHours),
+      waterIntake: sanitizeNumberField(waterIntake),
+      weight: sanitizeNumberField(weight),
+      temperature: sanitizeNumberField(temperature),
+      stressLevel: sanitizeNumberField(stressLevel),
       medication: medication !== undefined ? normalizeStringArray(medication) : undefined,
-      digestion,
+      digestion: sanitizeEnumField(digestion),
       digestions: digestions !== undefined ? normalizeStringArray(digestions) : undefined,
-      skin,
+      skin: sanitizeEnumField(skin),
       skins: skins !== undefined ? normalizeStringArray(skins) : undefined,
-      discharge,
+      discharge: sanitizeEnumField(discharge),
       exercise: exercise !== undefined ? normalizeStringArray(exercise) : undefined,
     },
     [

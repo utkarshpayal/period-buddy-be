@@ -2,6 +2,10 @@ import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
 import { createChatCompletion, isAiConfigured } from '../utils/sarvamClient.js';
+import { isSamvaadConfigured, startCheckinCall } from '../utils/samvaadClient.js';
+import { computeCyclePredictions } from '../utils/cycle.js';
+import CycleSettings from '../models/CycleSettings.js';
+import CycleLog from '../models/CycleLog.js';
 import { upsertCycleLog } from './cycleController.js';
 
 // Actions the voice agent is currently allowed to perform. Kept to a single
@@ -158,4 +162,129 @@ export const converse = async (req, res, next) => {
     logger.error('voice_agent_error', { userId: req.userId, error: error.message });
     next(error);
   }
+};
+
+/**
+ * POST /api/voice-agent/checkin-call — the logged-in user requests an
+ * outbound "call me now" cycle check-in from the Buddy voice agent (Sarvam's
+ * Instant Outbound API, see samvaadClient.js). Pulls the predicted next
+ * period date + a short cycle summary from this user's own
+ * CycleSettings/CycleLog history so the agent has context going into the
+ * call. The call's outcome (and any data it collects) comes back later via
+ * checkinCallWebhook below, not synchronously in this response.
+ */
+export const triggerCheckinCall = async (req, res, next) => {
+  try {
+    if (!isSamvaadConfigured()) {
+      return sendError(
+        res,
+        HTTP_STATUS.SERVICE_UNAVAILABLE,
+        'Check-in calling is not configured on the server',
+      );
+    }
+
+    const { user } = req;
+    if (!user.phone) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Add a phone number to your account first');
+    }
+
+    const settings = await CycleSettings.findOne({ userId: req.userId });
+    if (!settings) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'Please set up your cycle settings first');
+    }
+
+    // Same query shape as getPredictions — ascending by dateKey so the last
+    // element is the most recent log.
+    const logs = await CycleLog.find({ userId: req.userId }).sort({ dateKey: 1 });
+    const predictions = computeCyclePredictions(settings, logs);
+    const lastLog = logs[logs.length - 1];
+
+    const summaryParts = [`${settings.cycleLength || 28}-day cycle`];
+    if (lastLog?.symptoms?.length) {
+      summaryParts.push(`${lastLog.symptoms.slice(0, 2).join(' and ')} last time`);
+    } else if (lastLog?.flow && lastLog.flow !== 'none') {
+      summaryParts.push(`${lastLog.flow} flow last time`);
+    }
+
+    await startCheckinCall({
+      id: req.userId,
+      phone: user.phone,
+      name: user.firstName,
+      gender: user.gender,
+      expectedPeriodDate: predictions.nextPeriodDateKey,
+      lastCycleSummary: summaryParts.join(', '),
+    });
+
+    logger.info('checkin_call_triggered', {
+      action: 'checkin_call_triggered',
+      userId: req.userId,
+    });
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Check-in call started', {
+      expectedPeriodDate: predictions.nextPeriodDateKey,
+    });
+  } catch (error) {
+    logger.error('checkin_call_error', { userId: req.userId, error: error.message });
+    next(error);
+  }
+};
+
+/**
+ * POST /api/voice-agent/checkin-call/webhook — Sarvam's Instant Outbound
+ * webhook, fired after each call attempt completes (see samvaadClient.js's
+ * webhook_config). Public/unauthenticated: Sarvam has no way to send our
+ * JWT, so this correlates back to a user purely via the
+ * `webhook_config.metadata.userId` we attached at call-creation time, which
+ * Sarvam echoes back verbatim.
+ *
+ * KNOWN GAP: Sarvam's docs don't document a webhook signature/HMAC scheme
+ * for verifying a request actually came from them — revisit if/when they
+ * publish one.
+ *
+ * If the call collected any cycle data (`final_agent_variables`), saves it
+ * through the same `upsertCycleLog` the REST endpoint and the in-app voice
+ * agent use, so all three entry points stay consistent.
+ */
+export const checkinCallWebhook = async (req, res) => {
+  try {
+    const {
+      attempt_id: attemptId,
+      status,
+      failure_reason: failureReason,
+      duration,
+      final_agent_variables: finalVars,
+      webhook_config: webhookConfig,
+    } = req.body || {};
+    const userId = webhookConfig?.metadata?.userId;
+
+    logger.info('checkin_call_completed', {
+      action: 'checkin_call_completed',
+      userId,
+      attemptId,
+      status,
+      failureReason,
+      duration,
+    });
+
+    if (userId && finalVars && typeof finalVars === 'object') {
+      const payload = Object.fromEntries(
+        Object.entries(finalVars).filter(([key]) => CYCLE_LOG_FIELDS.includes(key)),
+      );
+      // Only bother saving if the agent actually extracted something beyond
+      // the context (user_name/expected_period_date/...) we seeded it with.
+      if (Object.keys(payload).length > 0) {
+        try {
+          await upsertCycleLog(userId, { dateKey: todayDateKey(), ...payload });
+        } catch (error) {
+          logger.error('checkin_call_log_save_failed', { userId, attemptId, error: error.message });
+        }
+      }
+    }
+  } catch (error) {
+    // This is a fire-and-forget notification from Sarvam, not a request we
+    // want retried over our own internal hiccups — log and still ack below.
+    logger.error('checkin_call_webhook_error', { error: error.message });
+  }
+
+  return sendResponse(res, HTTP_STATUS.OK, 'Webhook received');
 };
