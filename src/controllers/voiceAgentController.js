@@ -4,8 +4,10 @@ import logger from '../utils/logger.js';
 import { createChatCompletion, isAiConfigured } from '../utils/sarvamClient.js';
 import { isSamvaadConfigured, startCheckinCall } from '../utils/samvaadClient.js';
 import { computeCyclePredictions } from '../utils/cycle.js';
+import { pickDefined } from '../utils/apiHelpers.js';
 import CycleSettings from '../models/CycleSettings.js';
 import CycleLog from '../models/CycleLog.js';
+import User from '../models/User.js';
 import { upsertCycleLog } from './cycleController.js';
 
 // Actions the voice agent is currently allowed to perform. Kept to a single
@@ -165,66 +167,173 @@ export const converse = async (req, res, next) => {
 };
 
 /**
+ * Core logic for triggering one outbound "Buddy" cycle check-in call for a
+ * user (Sarvam's Instant Outbound API, see samvaadClient.js) — shared by the
+ * HTTP route (triggerCheckinCall, below) and the recurring cron scheduler
+ * (utils/checkinCallScheduler.js), so both build the call's context
+ * (expected period date, cycle summary) identically. Throws an Error with
+ * `.status` set for expected failure cases (not configured / no phone / no
+ * settings) so an HTTP caller can map it straight to a response; the cron
+ * caller just logs and skips that user (see checkinCallScheduler.js).
+ */
+export const runCheckinCallForUser = async (userId) => {
+  if (!isSamvaadConfigured()) {
+    throw Object.assign(new Error('Check-in calling is not configured on the server'), {
+      status: HTTP_STATUS.SERVICE_UNAVAILABLE,
+    });
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw Object.assign(new Error('User not found'), { status: HTTP_STATUS.NOT_FOUND });
+  }
+  if (!user.phone) {
+    throw Object.assign(new Error('Add a phone number to your account first'), {
+      status: HTTP_STATUS.BAD_REQUEST,
+    });
+  }
+
+  const settings = await CycleSettings.findOne({ userId });
+  if (!settings) {
+    throw Object.assign(new Error('Please set up your cycle settings first'), {
+      status: HTTP_STATUS.NOT_FOUND,
+    });
+  }
+
+  // Same query shape as getPredictions — ascending by dateKey so the last
+  // element is the most recent log.
+  const logs = await CycleLog.find({ userId }).sort({ dateKey: 1 });
+  const predictions = computeCyclePredictions(settings, logs);
+  const lastLog = logs[logs.length - 1];
+
+  const summaryParts = [`${settings.cycleLength || 28}-day cycle`];
+  if (lastLog?.symptoms?.length) {
+    summaryParts.push(`${lastLog.symptoms.slice(0, 2).join(' and ')} last time`);
+  } else if (lastLog?.flow && lastLog.flow !== 'none') {
+    summaryParts.push(`${lastLog.flow} flow last time`);
+  }
+
+  await startCheckinCall({
+    id: userId,
+    phone: user.phone,
+    name: user.firstName,
+    gender: user.gender,
+    expectedPeriodDate: predictions.nextPeriodDateKey,
+    lastCycleSummary: summaryParts.join(', '),
+  });
+
+  logger.info('checkin_call_triggered', { action: 'checkin_call_triggered', userId });
+
+  return { expectedPeriodDate: predictions.nextPeriodDateKey };
+};
+
+/**
  * POST /api/voice-agent/checkin-call — the logged-in user requests an
- * outbound "call me now" cycle check-in from the Buddy voice agent (Sarvam's
- * Instant Outbound API, see samvaadClient.js). Pulls the predicted next
- * period date + a short cycle summary from this user's own
- * CycleSettings/CycleLog history so the agent has context going into the
- * call. The call's outcome (and any data it collects) comes back later via
- * checkinCallWebhook below, not synchronously in this response.
+ * outbound "call me now" cycle check-in right away. The call's outcome (and
+ * any data it collects) comes back later via checkinCallWebhook below, not
+ * synchronously in this response.
  */
 export const triggerCheckinCall = async (req, res, next) => {
   try {
-    if (!isSamvaadConfigured()) {
-      return sendError(
-        res,
-        HTTP_STATUS.SERVICE_UNAVAILABLE,
-        'Check-in calling is not configured on the server',
-      );
+    const result = await runCheckinCallForUser(req.userId);
+    return sendResponse(res, HTTP_STATUS.OK, 'Check-in call started', result);
+  } catch (error) {
+    if (error.status) {
+      return sendError(res, error.status, error.message);
+    }
+    logger.error('checkin_call_error', { userId: req.userId, error: error.message });
+    next(error);
+  }
+};
+
+const CHECKIN_CALL_TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * GET /api/voice-agent/checkin-call/schedule — this user's recurring
+ * check-in call preference (see CycleSettings.checkinCall* fields and
+ * utils/checkinCallScheduler.js, which actually fires it).
+ */
+export const getCheckinCallSchedule = async (req, res, next) => {
+  try {
+    const settings = await CycleSettings.findOne({ userId: req.userId }).select(
+      'checkinCallEnabled checkinCallDayOffset checkinCallTime',
+    );
+    if (!settings) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'Please set up your cycle settings first');
+    }
+    return sendResponse(res, HTTP_STATUS.OK, 'Check-in call schedule fetched', {
+      enabled: settings.checkinCallEnabled || false,
+      dayOffset: settings.checkinCallDayOffset ?? 0,
+      time: settings.checkinCallTime || null,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /api/voice-agent/checkin-call/schedule — save this user's recurring
+ * check-in call preference. Body: { enabled, dayOffset, time: "HH:mm",
+ * timezoneOffsetMinutes }. `time`/`timezoneOffsetMinutes` are required when
+ * enabling (the scheduler needs both to resolve the user's local moment).
+ */
+export const saveCheckinCallSchedule = async (req, res, next) => {
+  try {
+    const { enabled, dayOffset, time, timezoneOffsetMinutes } = req.body;
+
+    if (enabled) {
+      if (!time || !CHECKIN_CALL_TIME_REGEX.test(time)) {
+        return sendError(
+          res,
+          HTTP_STATUS.BAD_REQUEST,
+          'time is required as "HH:mm" (24h) when enabling',
+        );
+      }
+      if (!Number.isFinite(Number(timezoneOffsetMinutes))) {
+        return sendError(
+          res,
+          HTTP_STATUS.BAD_REQUEST,
+          'timezoneOffsetMinutes is required when enabling',
+        );
+      }
     }
 
-    const { user } = req;
-    if (!user.phone) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Add a phone number to your account first');
-    }
+    const settings = await CycleSettings.findOneAndUpdate(
+      { userId: req.userId },
+      pickDefined(
+        {
+          checkinCallEnabled: typeof enabled === 'boolean' ? enabled : undefined,
+          checkinCallDayOffset: dayOffset !== undefined ? Number(dayOffset) : undefined,
+          checkinCallTime: time,
+          checkinCallTimezoneOffsetMinutes:
+            timezoneOffsetMinutes !== undefined ? Number(timezoneOffsetMinutes) : undefined,
+        },
+        [
+          'checkinCallEnabled',
+          'checkinCallDayOffset',
+          'checkinCallTime',
+          'checkinCallTimezoneOffsetMinutes',
+        ],
+      ),
+      { new: true, runValidators: true },
+    );
 
-    const settings = await CycleSettings.findOne({ userId: req.userId });
     if (!settings) {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Please set up your cycle settings first');
     }
 
-    // Same query shape as getPredictions — ascending by dateKey so the last
-    // element is the most recent log.
-    const logs = await CycleLog.find({ userId: req.userId }).sort({ dateKey: 1 });
-    const predictions = computeCyclePredictions(settings, logs);
-    const lastLog = logs[logs.length - 1];
-
-    const summaryParts = [`${settings.cycleLength || 28}-day cycle`];
-    if (lastLog?.symptoms?.length) {
-      summaryParts.push(`${lastLog.symptoms.slice(0, 2).join(' and ')} last time`);
-    } else if (lastLog?.flow && lastLog.flow !== 'none') {
-      summaryParts.push(`${lastLog.flow} flow last time`);
-    }
-
-    await startCheckinCall({
-      id: req.userId,
-      phone: user.phone,
-      name: user.firstName,
-      gender: user.gender,
-      expectedPeriodDate: predictions.nextPeriodDateKey,
-      lastCycleSummary: summaryParts.join(', '),
-    });
-
-    logger.info('checkin_call_triggered', {
-      action: 'checkin_call_triggered',
+    logger.info('checkin_call_schedule_saved', {
+      action: 'checkin_call_schedule_saved',
       userId: req.userId,
+      enabled: settings.checkinCallEnabled,
     });
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Check-in call started', {
-      expectedPeriodDate: predictions.nextPeriodDateKey,
+    return sendResponse(res, HTTP_STATUS.OK, 'Check-in call schedule saved', {
+      enabled: settings.checkinCallEnabled || false,
+      dayOffset: settings.checkinCallDayOffset ?? 0,
+      time: settings.checkinCallTime || null,
     });
   } catch (error) {
-    logger.error('checkin_call_error', { userId: req.userId, error: error.message });
     next(error);
   }
 };

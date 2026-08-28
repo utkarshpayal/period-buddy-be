@@ -391,6 +391,107 @@ npm install -g pm2
 pm2 start index.js --name "period-buddy-be"
 ```
 
+## Push notifications (Firebase Admin / FCM)
+
+`src/utils/fcm.js` sends every push through Firebase Admin, which needs a
+service account key at `src/utils/firebase-service-account.json` (gitignored
+— never commit it). **Without that file, push sending is silently a no-op**:
+`sendPushNotification` logs `fcm_send_mock` with the message it would have
+sent and returns, instead of throwing — so in-app `Notification` docs still
+get created and show up in `app/(app)/notifications.tsx` fine, but nothing
+ever reaches a device. If push notifications (existing ones — partner
+connect, buddy messages — or the new reminders below) aren't arriving on a
+real phone, check the server logs for `fcm_init_warning` first; that means
+this file is missing in that environment, not a bug in the sending code.
+
+1. Firebase Console → Project Settings → Service Accounts → **Generate new
+   private key** (for the same Firebase project the mobile app's
+   `google-services.json`/`GoogleService-Info.plist` belong to).
+2. Save the downloaded JSON as `src/utils/firebase-service-account.json` on
+   the server (or inject it as a file at that path in your deploy pipeline —
+   same pattern as any other secret file, not an env var here).
+
+## Scheduled jobs
+
+Two recurring features run as HTTP endpoints meant to be triggered by an
+**external** scheduler, not an in-process timer (`node-cron`, `setInterval`,
+...) — an in-process timer only fires correctly on exactly one running
+instance, so if this backend ever scales to more than one process the same
+job would double-fire. Both endpoints authenticate via a shared-secret
+header instead of a user JWT, since there's no logged-in user making the
+call.
+
+If reminders/auto check-in calls aren't happening even though a user has
+them enabled, **check this section first** — the application code has no way
+to know whether the scheduler on the AWS side actually exists; it only
+exposes the endpoint and trusts something is calling it.
+
+| Job | Endpoint | Header | Env var | Cadence | Code |
+|---|---|---|---|---|---|
+| Recurring check-in calls | `POST /api/voice-agent/checkin-call/scheduler-tick` | `X-Scheduler-Secret` | `CHECKIN_CALL_SCHEDULER_SECRET` | **Every 1 minute** (needs minute-of-day precision — see `checkinCallTime`) | `src/utils/checkinCallScheduler.js` |
+| Period/ovulation reminders + daily nudge | `POST /api/notifications/daily-tick` | `X-Scheduler-Secret` | `NOTIFICATION_SCHEDULER_SECRET` | **Once a day** (day-level precision only) | `src/utils/dailyNotificationScheduler.js` |
+
+Both are safe to invoke more often than needed — each guards itself against
+double-firing the same reminder/call (`checkinCallLastFiredDateKey`,
+`lastPeriodReminderCycleKey`, etc. on `CycleSettings`) — so an extra tick is
+a harmless no-op, not a duplicate call/notification.
+
+### Setting up the AWS EventBridge Scheduler rules
+
+Requires the AWS CLI configured against the account/region this backend is
+deployed to. Replace `$API_BASE_URL` and the two secrets with your real
+values (the same ones set in this service's environment variables).
+
+```bash
+# Every 1 minute — check-in calls
+aws scheduler create-schedule \
+  --name period-buddy-checkin-call-tick \
+  --schedule-expression "rate(1 minute)" \
+  --flexible-time-window '{"Mode": "OFF"}' \
+  --target '{
+    "Arn": "arn:aws:scheduler:::http-invoke",
+    "RoleArn": "<an IAM role EventBridge Scheduler can assume to invoke HTTPS targets>",
+    "Input": "{}",
+    "HttpParameters": {
+      "HeaderParameters": { "X-Scheduler-Secret": "<CHECKIN_CALL_SCHEDULER_SECRET value>" }
+    },
+    "HttpInvocationParameters": {
+      "HttpMethod": "POST",
+      "Uri": "$API_BASE_URL/api/voice-agent/checkin-call/scheduler-tick"
+    }
+  }'
+
+# Once a day — reminders/nudge (pick a UTC hour that lands sensibly for
+# your user base's timezones, e.g. 03:00 UTC ≈ 8:30am IST)
+aws scheduler create-schedule \
+  --name period-buddy-daily-notification-tick \
+  --schedule-expression "cron(0 3 * * ? *)" \
+  --flexible-time-window '{"Mode": "OFF"}' \
+  --target '{
+    "Arn": "arn:aws:scheduler:::http-invoke",
+    "RoleArn": "<same IAM role as above>",
+    "Input": "{}",
+    "HttpParameters": {
+      "HeaderParameters": { "X-Scheduler-Secret": "<NOTIFICATION_SCHEDULER_SECRET value>" }
+    },
+    "HttpInvocationParameters": {
+      "HttpMethod": "POST",
+      "Uri": "$API_BASE_URL/api/notifications/daily-tick"
+    }
+  }'
+```
+
+(The exact `--target` shape for an `http-invoke` connection depends on how
+your account's EventBridge Scheduler is set up to reach a public HTTPS
+endpoint — a Connection + API destination, or a role with
+`scheduler:InvokeHttpEndpoint` permission. Adjust to match your existing
+EventBridge setup rather than treating the above as copy-paste-exact.)
+
+To confirm either job is actually being triggered, tail the server logs for
+`checkin_call_scheduler_tick` / `daily_notification_tick` — each tick logs
+its own result (candidates checked, how many fired) regardless of whether
+anything happened.
+
 ## Database Indexes
 
 The application creates indexes on:
