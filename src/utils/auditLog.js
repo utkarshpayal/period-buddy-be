@@ -22,6 +22,9 @@ export const AUDIT_ACTIONS = {
   COMPANY_ASSET_UPDATED: 'company_asset.updated',
   COMPANY_ASSET_VISIBILITY_CHANGED: 'company_asset.visibility_changed',
   COMPANY_ASSET_DELETED: 'company_asset.deleted',
+  COMPANY_FOLDER_CREATED: 'company_folder.created',
+  COMPANY_FOLDER_UPDATED: 'company_folder.updated',
+  COMPANY_FOLDER_DELETED: 'company_folder.deleted',
   ACCOUNT_DELETED: 'account.deleted',
 };
 

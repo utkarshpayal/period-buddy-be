@@ -31,6 +31,14 @@ const companyAssetSchema = new mongoose.Schema(
     // portal (and anyone with the direct link) can reach it.
     isPublic: { type: Boolean, default: false, index: true },
 
+    // null = lives at the library root, matching CompanyFolder's convention.
+    folderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'CompanyFolder',
+      default: null,
+      index: true,
+    },
+
     uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   },
   { timestamps: true },
@@ -46,6 +54,7 @@ companyAssetSchema.pre('validate', function preValidate(next) {
 });
 
 companyAssetSchema.index({ category: 1, createdAt: -1 });
+companyAssetSchema.index({ folderId: 1, createdAt: -1 });
 companyAssetSchema.index({ title: 'text', description: 'text' });
 
 export default mongoose.model('CompanyAsset', companyAssetSchema);

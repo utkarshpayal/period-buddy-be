@@ -43,25 +43,9 @@ function restrictToPublicAssetsOrigin(req, res, next) {
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB — covers pitch/flow videos, not just decks
-  fileFilter: (req, file, cb) => {
-    const officeTypes = [
-      'application/pdf',
-      'application/zip',
-      'application/msword',
-      'application/vnd.ms-excel',
-      'application/vnd.ms-powerpoint',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    ];
-    const isSupported =
-      ['image/', 'video/'].some((prefix) => file.mimetype.startsWith(prefix)) ||
-      officeTypes.includes(file.mimetype);
-    if (!isSupported) {
-      return cb(new Error('Only images, videos, PDFs, or Office documents are supported'));
-    }
-    cb(null, true);
-  },
+  // No type restriction — this library holds whatever the team stores.
+  // The controller still neuters the Content-Type for browser-executable
+  // uploads (HTML/SVG) so a public link to one can't run script.
 });
 
 /**

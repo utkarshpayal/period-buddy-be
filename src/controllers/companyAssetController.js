@@ -1,8 +1,9 @@
 import CompanyAsset, { COMPANY_ASSET_CATEGORIES } from '../models/CompanyAsset.js';
+import CompanyFolder from '../models/CompanyFolder.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { uploadBufferToS3, deleteFromS3, getSignedDownloadUrl } from '../utils/s3.js';
-import { assertAllowedUpload } from '../utils/fileValidation.js';
+import { detectMimeType } from '../utils/fileValidation.js';
 import {
   buildPagination,
   escapeRegex,
@@ -27,6 +28,42 @@ const isHttpUrl = (value) => {
 };
 
 /**
+ * Validates a `folderId` from the request body/query and resolves it to
+ * either `null` (root) or the folder's real ObjectId. Returns `{ error }`
+ * when a non-empty value doesn't point at a real folder.
+ */
+// This library accepts any file type — pitch decks, spreadsheets, zips,
+// audio, whatever the team stores. The one exception: browser-executable
+// document types (HTML/SVG/XHTML) get their stored Content-Type neutered to
+// application/octet-stream. Everything else about the upload still succeeds
+// unmodified — this only changes what a *direct* GET on the object serves
+// back, so a crafted file can't run script in the bucket's origin if its
+// raw S3 link is opened (relevant since a file here can be marked public).
+const BROWSER_EXECUTABLE_MIME_TYPES = new Set([
+  'text/html',
+  'application/xhtml+xml',
+  'image/svg+xml',
+]);
+
+const resolveSafeMimeType = (declaredMimeType, detectedMimeType) => {
+  const mimeType = declaredMimeType || detectedMimeType || 'application/octet-stream';
+  return BROWSER_EXECUTABLE_MIME_TYPES.has(mimeType.toLowerCase())
+    ? 'application/octet-stream'
+    : mimeType;
+};
+
+const resolveFolderId = async (rawValue) => {
+  // 'root' is an explicit sentinel for the library root — distinct from the
+  // query param being omitted entirely, which callers use to mean "every
+  // folder" (search). A bare empty string is treated the same way.
+  if (!rawValue || rawValue === 'root') return { folderId: null };
+  if (!isValidObjectId(rawValue)) return { error: 'Folder not found' };
+  const folder = await CompanyFolder.findById(rawValue).select('_id');
+  if (!folder) return { error: 'Folder not found' };
+  return { folderId: folder._id };
+};
+
+/**
  * POST /api/company-assets — upload a file straight to S3 and create its
  * library record in one step (admin only). Mirrors the medical-document
  * upload flow, but for company collateral: pitch decks, flow diagrams,
@@ -45,18 +82,19 @@ export const uploadAsset = async (req, res, next) => {
       : 'other';
     const isPublic = normalizeBoolean(req.body.isPublic, false);
 
-    // The client-declared mimetype is spoofable — confirm the real bytes
-    // match a type we're willing to serve back out of the bucket.
-    let detectedType;
-    try {
-      detectedType = assertAllowedUpload(req.file.buffer, ['image', 'pdf', 'video', 'office']);
-    } catch (validationError) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, validationError.message);
+    const folderResult = await resolveFolderId(req.body.folderId);
+    if (folderResult.error) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, folderResult.error);
     }
+
+    // No type restriction — this is an admin-only library meant to hold
+    // anything the team stores. Only the specific browser-executable types
+    // get neutered (see resolveSafeMimeType above).
+    const mimeType = resolveSafeMimeType(req.file.mimetype, detectMimeType(req.file.buffer));
 
     const { url, key } = await uploadBufferToS3({
       buffer: req.file.buffer,
-      mimeType: req.file.mimetype || detectedType,
+      mimeType,
       originalName: req.file.originalname,
       folder: S3_FOLDER,
     });
@@ -67,10 +105,11 @@ export const uploadAsset = async (req, res, next) => {
       category,
       fileUrl: url,
       fileKey: key,
-      mimeType: req.file.mimetype || detectedType,
+      mimeType,
       originalFileName: req.file.originalname,
       fileSize: req.file.size,
       isPublic,
+      folderId: folderResult.folderId,
       uploadedBy: req.userId,
     });
 
@@ -110,6 +149,11 @@ export const createLinkAsset = async (req, res, next) => {
       : 'other';
     const isPublic = normalizeBoolean(req.body.isPublic, false);
 
+    const folderResult = await resolveFolderId(req.body.folderId);
+    if (folderResult.error) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, folderResult.error);
+    }
+
     const asset = await CompanyAsset.create({
       title,
       description,
@@ -117,6 +161,7 @@ export const createLinkAsset = async (req, res, next) => {
       assetType: 'link',
       linkUrl: req.body.linkUrl.trim(),
       isPublic,
+      folderId: folderResult.folderId,
       uploadedBy: req.userId,
     });
 
@@ -149,6 +194,15 @@ export const listAssets = async (req, res, next) => {
     }
     if (req.query.isPublic !== undefined) {
       filter.isPublic = normalizeBoolean(req.query.isPublic);
+    }
+    // Omitted entirely -> no folder filter (used while searching, so results
+    // span every folder). Present (including '' for root) -> scoped browse.
+    if (req.query.folderId !== undefined) {
+      const folderResult = await resolveFolderId(req.query.folderId);
+      if (folderResult.error) {
+        return sendError(res, HTTP_STATUS.NOT_FOUND, folderResult.error);
+      }
+      filter.folderId = folderResult.folderId;
     }
     if (req.query.search) {
       const rx = new RegExp(escapeRegex(String(req.query.search).trim()), 'i');
@@ -268,6 +322,14 @@ export const updateAsset = async (req, res, next) => {
       req.body.isPublic !== undefined && normalizeBoolean(req.body.isPublic) !== asset.isPublic;
     if (req.body.isPublic !== undefined) {
       updates.isPublic = normalizeBoolean(req.body.isPublic);
+    }
+
+    if (req.body.folderId !== undefined) {
+      const folderResult = await resolveFolderId(req.body.folderId);
+      if (folderResult.error) {
+        return sendError(res, HTTP_STATUS.NOT_FOUND, folderResult.error);
+      }
+      updates.folderId = folderResult.folderId;
     }
 
     Object.assign(asset, updates);
