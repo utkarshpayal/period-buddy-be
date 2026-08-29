@@ -50,6 +50,14 @@ const detectors = {
   'video/webm': (b) => startsWith(b, [0x1a, 0x45, 0xdf, 0xa3]),
   'video/x-matroska': (b) => startsWith(b, [0x1a, 0x45, 0xdf, 0xa3]),
   'video/x-msvideo': (b) => isRiff(b, [0x41, 0x56, 0x49, 0x20]), // "AVI "
+  // office / archives — DOCX, PPTX, XLSX and plain ZIP are all the same
+  // "PK" zip container at the byte level, so they share one detector; the
+  // legacy binary Office formats (.doc/.xls/.ppt) share the OLE header.
+  'application/zip': (b) =>
+    startsWith(b, [0x50, 0x4b, 0x03, 0x04]) ||
+    startsWith(b, [0x50, 0x4b, 0x05, 0x06]) ||
+    startsWith(b, [0x50, 0x4b, 0x07, 0x08]),
+  'application/x-cfb': (b) => startsWith(b, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
 };
 
 const CATEGORY_TYPES = {
@@ -57,6 +65,8 @@ const CATEGORY_TYPES = {
   pdf: ['application/pdf'],
   audio: ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4'],
   video: ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska', 'video/x-msvideo'],
+  // Word/Excel/PowerPoint (old and new format) plus plain .zip bundles.
+  office: ['application/zip', 'application/x-cfb'],
 };
 
 /**

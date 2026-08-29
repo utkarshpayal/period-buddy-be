@@ -3,12 +3,14 @@ import path from 'path';
 import {
   S3Client,
   PutObjectCommand,
+  GetObjectCommand,
   DeleteObjectCommand,
   HeadBucketCommand,
   CreateBucketCommand,
   PutPublicAccessBlockCommand,
   PutBucketPolicyCommand,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import logger from './logger.js';
 
 let s3Client = null;
@@ -158,6 +160,35 @@ export const uploadBufferToS3 = async ({ buffer, mimeType, originalName, folder 
 
   logger.info('s3_upload_success', { action: 's3_upload_success', key });
   return { url, key };
+};
+
+/**
+ * A short-lived signed GET URL that forces the browser to download the
+ * object rather than display it. Plain public-object URLs (as returned by
+ * uploadBufferToS3) can't do this — S3 rejects `response-content-*` header
+ * overrides on anonymous requests ("Request specific response headers
+ * cannot be used for anonymous GET requests"); those overrides only work on
+ * a signed request, which is what this generates.
+ */
+export const getSignedDownloadUrl = async ({ key, filename, expiresIn = 300 }) => {
+  const client = getClient();
+  if (!client) {
+    throw new Error(
+      'S3 is not configured. Set AWS_REGION, AWS_S3_BUCKET, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.',
+    );
+  }
+
+  // Strip CR/LF and quotes so a crafted title/filename can't inject extra
+  // response headers through the Content-Disposition value.
+  const safeName = String(filename || 'download').replace(/[\r\n"]/g, '');
+
+  const command = new GetObjectCommand({
+    Bucket: process.env.AWS_S3_BUCKET,
+    Key: key,
+    ResponseContentDisposition: `attachment; filename="${safeName}"`,
+  });
+
+  return getSignedUrl(client, command, { expiresIn });
 };
 
 export const deleteFromS3 = async (key) => {

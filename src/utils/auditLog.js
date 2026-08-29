@@ -18,6 +18,10 @@ export const AUDIT_ACTIONS = {
   SCHEME_CREATED: 'scheme.created',
   SCHEME_UPDATED: 'scheme.updated',
   SCHEME_DELETED: 'scheme.deleted',
+  COMPANY_ASSET_UPLOADED: 'company_asset.uploaded',
+  COMPANY_ASSET_UPDATED: 'company_asset.updated',
+  COMPANY_ASSET_VISIBILITY_CHANGED: 'company_asset.visibility_changed',
+  COMPANY_ASSET_DELETED: 'company_asset.deleted',
   ACCOUNT_DELETED: 'account.deleted',
 };
 

@@ -44,6 +44,7 @@ import doctorRoutes from './src/routes/doctorRoutes.js';
 import schemeRoutes from './src/routes/schemeRoutes.js';
 import schemeApplicationRoutes from './src/routes/schemeApplicationRoutes.js';
 import auditRoutes from './src/routes/auditRoutes.js';
+import companyAssetRoutes from './src/routes/companyAssetRoutes.js';
 import adminRoutes from './src/routes/adminRoutes.js';
 
 const app = express();
@@ -169,6 +170,7 @@ app.use('/api/doctor', doctorRoutes);
 app.use('/api/schemes', schemeRoutes);
 app.use('/api/scheme-applications', schemeApplicationRoutes);
 app.use('/api/audit-logs', auditRoutes);
+app.use('/api/company-assets', companyAssetRoutes);
 app.use('/api/admin', adminRoutes);
 
 /* ──────────────────────────────────────────────────────────
