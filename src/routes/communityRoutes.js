@@ -15,6 +15,8 @@ router.get('/', authenticate, communityController.getPosts);
  * @route   POST /api/community
  * @desc    Create an anonymous community post
  * @access  Private
+ * @note    Gated behind 'community_posting' via the global feature-route
+ *          registry (config/subscriptionRouteRegistry.js), not inline here.
  */
 router.post('/', authenticate, communityController.createPost);
 

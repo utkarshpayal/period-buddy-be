@@ -32,6 +32,10 @@ router.post('/ask', optionalAuth, askQuestion);
 // login-gated since this is per-user history, unlike the anonymous-friendly
 // /ask above. Mounted ahead of the generic /:id so "sessions" never gets
 // swallowed as a QuestionAnswer id/slug lookup.
+// New sessions/messages are gated behind 'ai_assistant' via the global
+// feature-route registry (config/subscriptionRouteRegistry.js) — free until
+// an admin marks it premium; reading/deleting a session you already have
+// stays free regardless — you already paid for that history.
 router.post('/sessions', authenticate, createChatSession);
 router.get('/sessions', authenticate, listChatSessions);
 router.get('/sessions/:id', authenticate, getChatSession);

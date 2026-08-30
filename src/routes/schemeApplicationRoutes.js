@@ -43,6 +43,8 @@ router.patch(
  * @route   POST /api/scheme-applications
  * @desc    Create a self-service application record for an APPLY-type scheme
  * @access  Private
+ * @note    Gated behind 'government_scheme_applications' via the global
+ *          feature-route registry (config/subscriptionRouteRegistry.js).
  */
 router.post('/', authenticate, schemeController.createApplication);
 

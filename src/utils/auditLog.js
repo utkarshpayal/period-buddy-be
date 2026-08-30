@@ -26,6 +26,16 @@ export const AUDIT_ACTIONS = {
   COMPANY_FOLDER_UPDATED: 'company_folder.updated',
   COMPANY_FOLDER_DELETED: 'company_folder.deleted',
   ACCOUNT_DELETED: 'account.deleted',
+  SUBSCRIPTION_SETTINGS_UPDATED: 'subscription_settings.updated',
+  SUBSCRIPTION_FEATURE_CREATED: 'subscription_feature.created',
+  SUBSCRIPTION_FEATURE_UPDATED: 'subscription_feature.updated',
+  SUBSCRIPTION_FEATURE_DELETED: 'subscription_feature.deleted',
+  SUBSCRIPTION_PLAN_CREATED: 'subscription_plan.created',
+  SUBSCRIPTION_PLAN_UPDATED: 'subscription_plan.updated',
+  SUBSCRIPTION_PLAN_DELETED: 'subscription_plan.deleted',
+  COUPON_CREATED: 'coupon.created',
+  COUPON_UPDATED: 'coupon.updated',
+  COUPON_DELETED: 'coupon.deleted',
 };
 
 /**

@@ -10,6 +10,7 @@ import { errorHandler, notFound } from './src/middleware/errorHandler.js';
 import httpLogger from './src/utils/httpLogger.js';
 import logger from './src/utils/logger.js';
 import { authenticate } from './src/middleware/authMiddleware.js';
+import { globalFeatureGate } from './src/middleware/subscriptionMiddleware.js';
 import { logout as logoutController } from './src/controllers/authController.js';
 import { createServer } from 'http';
 import { initWebSocket } from './src/config/websocket.js';
@@ -47,6 +48,8 @@ import auditRoutes from './src/routes/auditRoutes.js';
 import companyAssetRoutes from './src/routes/companyAssetRoutes.js';
 import companyFolderRoutes from './src/routes/companyFolderRoutes.js';
 import adminRoutes from './src/routes/adminRoutes.js';
+import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
+import adminSubscriptionRoutes from './src/routes/adminSubscriptionRoutes.js';
 
 const app = express();
 
@@ -141,6 +144,13 @@ app.get('/health/ready', (req, res) => {
 /* ──────────────────────────────────────────────────────────
    API Routes
 ────────────────────────────────────────────────────────── */
+// Mounted ahead of every domain router below: for the handful of
+// registered method+path pairs (config/subscriptionRouteRegistry.js) this
+// enforces the subscription paywall before the request reaches its real
+// handler; every other request is a single cheap array scan and falls
+// straight through. See subscriptionMiddleware.js#globalFeatureGate.
+app.use(globalFeatureGate);
+
 app.use('/api/auth', authRoutes);
 app.post('/api/logout', authenticate, logoutController);
 app.use('/api/questions', questionAnswerRoutes);
@@ -173,6 +183,11 @@ app.use('/api/scheme-applications', schemeApplicationRoutes);
 app.use('/api/audit-logs', auditRoutes);
 app.use('/api/company-assets', companyAssetRoutes);
 app.use('/api/company-folders', companyFolderRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
+// Mounted before /api/admin so its own auth/authorize pass runs exactly
+// once (adminRoutes has no catch-all, so a request under /api/admin/
+// subscriptions/* would otherwise fall through its middleware first too).
+app.use('/api/admin/subscriptions', adminSubscriptionRoutes);
 app.use('/api/admin', adminRoutes);
 
 /* ──────────────────────────────────────────────────────────

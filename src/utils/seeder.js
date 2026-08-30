@@ -5,7 +5,10 @@ import WellbeingResource from '../models/WellbeingResource.js';
 import Blog from '../models/Blog.js';
 import Reel from '../models/Reel.js';
 import GovernmentBenefit from '../models/GovernmentBenefit.js';
+import SubscriptionFeature from '../models/SubscriptionFeature.js';
+import SubscriptionSettings from '../models/SubscriptionSettings.js';
 import { governmentBenefitData } from './schemeSeedData.js';
+import { subscriptionFeatureData } from './subscriptionSeedData.js';
 import logger from './logger.js';
 
 const qaData = [
@@ -522,6 +525,37 @@ export const seedDatabase = async () => {
       total: governmentBenefitData.length,
       inserted: benefitsUpserted,
     });
+
+    // Seed the subscription feature catalog — by key, insert-only
+    // ($setOnInsert). Unlike blogs/benefits above, an existing row is never
+    // overwritten: an admin's isPremium/price/isActive edits from the
+    // Content Studio must survive every server restart untouched. New keys
+    // added to subscriptionFeatureData.js in future deploys still land.
+    const featureResults = await Promise.all(
+      subscriptionFeatureData.map((feature) =>
+        SubscriptionFeature.updateOne(
+          { key: feature.key },
+          { $setOnInsert: feature },
+          { upsert: true },
+        ),
+      ),
+    );
+    const featuresInserted = featureResults.filter((r) => r.upsertedCount > 0).length;
+    logger.info('seeder_subscription_features_seeded', {
+      action: 'seeder_subscription_features_seeded',
+      total: subscriptionFeatureData.length,
+      inserted: featuresInserted,
+    });
+
+    // Seed the subscription settings singleton — only when it doesn't exist
+    // yet, so an admin's saved settings are never reset on restart.
+    const settingsCount = await SubscriptionSettings.countDocuments();
+    if (settingsCount === 0) {
+      await SubscriptionSettings.create({});
+      logger.info('seeder_subscription_settings_seeded', {
+        action: 'seeder_subscription_settings_seeded',
+      });
+    }
 
     logger.info('seeder_complete', { action: 'seeder_complete' });
   } catch (error) {

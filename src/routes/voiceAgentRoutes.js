@@ -19,6 +19,8 @@ router.post('/converse', authenticate, voiceAgentController.converse);
  *          the logged-in user
  * @access  Private
  */
+// Gated behind 'voice_checkin_calls' via the global feature-route registry
+// (config/subscriptionRouteRegistry.js), not inline here.
 router.post('/checkin-call', authenticate, voiceAgentController.triggerCheckinCall);
 
 /**
@@ -34,6 +36,7 @@ router.get('/checkin-call/schedule', authenticate, voiceAgentController.getCheck
  *          fired automatically by utils/checkinCallScheduler.js
  * @access  Private
  */
+// Also gated behind 'voice_checkin_calls' via the global registry.
 router.put('/checkin-call/schedule', authenticate, voiceAgentController.saveCheckinCallSchedule);
 
 /**
