@@ -8,7 +8,12 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
 import { escapeRegex, isValidObjectId } from '../utils/apiHelpers.js';
 import { broadcastToRoom } from '../config/websocket.js';
-import { createOrder, verifySignature, isPaymentConfigured } from '../utils/razorpayClient.js';
+import {
+  createOrder,
+  getOrderStatus,
+  isPaymentConfigured,
+  cashfreeMode,
+} from '../utils/cashfreeClient.js';
 
 const doctorGreeting = (doctor) =>
   `Hello! I am ${doctor.name}. Your confidential dashboard log has been successfully shared. How can I guide your wellness milestones today?`;
@@ -87,7 +92,7 @@ export const getDoctorAvailability = async (req, res, next) => {
   }
 };
 
-/** POST /api/consultation/order — Create a Razorpay order + a pending
+/** POST /api/consultation/order — Create a Cashfree order + a pending
  * Consultation for it. No session access is granted until /verify confirms
  * the payment actually went through. */
 export const createConsultationOrder = async (req, res, next) => {
@@ -129,12 +134,21 @@ export const createConsultationOrder = async (req, res, next) => {
       paymentStatus: 'unpaid',
     });
 
+    const user = await User.findById(req.userId);
+    // Cashfree order ids must be unique per order (not reusable like a
+    // Razorpay receipt) — the consultation id alone could collide with a
+    // retried booking attempt for the same consultation, so a short random
+    // suffix keeps each createOrder call unique.
+    const cashfreeOrderId = `consult_${consultation._id}_${Date.now().toString(36)}`;
+
     const order = await createOrder({
-      // Doctor.pricePerSession is a whole-unit amount (e.g. rupees); Razorpay
-      // expects the currency's smallest unit (paise for INR).
-      amountMinorUnits: Math.round(doctor.pricePerSession * 100),
+      orderId: cashfreeOrderId,
+      // Doctor.pricePerSession is already a whole-unit amount (e.g. rupees) —
+      // unlike Razorpay, Cashfree's order_amount wants the whole-unit value,
+      // not the currency's smallest unit.
+      amount: doctor.pricePerSession,
       currency: doctor.currency,
-      receipt: String(consultation._id),
+      customer: { id: req.userId, name: user?.name, email: user?.email, phone: user?.phone },
       notes: {
         userId: String(req.userId),
         doctorId: String(doctorId),
@@ -142,7 +156,7 @@ export const createConsultationOrder = async (req, res, next) => {
       },
     });
 
-    consultation.razorpayOrderId = order.id;
+    consultation.cashfreeOrderId = order.order_id;
     await consultation.save();
 
     logger.info('consultation_order_created', {
@@ -150,16 +164,17 @@ export const createConsultationOrder = async (req, res, next) => {
       userId: req.userId,
       doctorId,
       consultationId: consultation._id,
-      orderId: order.id,
+      orderId: order.order_id,
       amount: doctor.pricePerSession,
     });
 
     return sendResponse(res, HTTP_STATUS.CREATED, 'Payment order created', {
       consultationId: consultation._id,
-      orderId: order.id,
-      amount: order.amount,
-      currency: order.currency,
-      keyId: process.env.RAZORPAY_KEY_ID,
+      orderId: order.order_id,
+      amount: doctor.pricePerSession,
+      currency: doctor.currency,
+      paymentSessionId: order.payment_session_id,
+      cashfreeMode: cashfreeMode(),
     });
   } catch (error) {
     logger.error('consultation_order_error', { userId: req.userId, error: error.message });
@@ -167,25 +182,21 @@ export const createConsultationOrder = async (req, res, next) => {
   }
 };
 
-/** POST /api/consultation/verify — Verify a completed Razorpay checkout and,
- * only on a valid signature, activate the Consultation session. */
+/** POST /api/consultation/verify — Verify a completed Cashfree checkout and,
+ * only once Cashfree confirms the order was actually paid, activate the
+ * Consultation session. */
 export const verifyConsultationPayment = async (req, res, next) => {
   try {
-    const { consultationId, razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+    const { consultationId, orderId } = req.body;
 
-    if (
-      !isValidObjectId(consultationId) ||
-      !razorpay_order_id ||
-      !razorpay_payment_id ||
-      !razorpay_signature
-    ) {
+    if (!isValidObjectId(consultationId) || !orderId) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Missing payment verification fields');
     }
 
     const consultation = await Consultation.findOne({
       _id: consultationId,
       userId: req.userId,
-      razorpayOrderId: razorpay_order_id,
+      cashfreeOrderId: orderId,
     });
     if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation order not found');
 
@@ -194,19 +205,27 @@ export const verifyConsultationPayment = async (req, res, next) => {
       return sendResponse(res, HTTP_STATUS.OK, 'Consultation already booked', consultation);
     }
 
-    const isValid = verifySignature({
-      orderId: razorpay_order_id,
-      paymentId: razorpay_payment_id,
-      signature: razorpay_signature,
-    });
+    const cfOrder = await getOrderStatus(orderId);
 
-    if (!isValid) {
+    // 'ACTIVE' means the order is still open — e.g. a UPI collect request
+    // the user hasn't approved in their UPI app yet, which can take up to a
+    // minute. That's "not paid yet", not a failure: a UPI-collect flow
+    // polls this endpoint every few seconds while waiting, and marking the
+    // consultation 'failed' on the first poll would kill a payment that's
+    // still legitimately in flight. Only a terminal Cashfree status
+    // ('EXPIRED'/'TERMINATED'/'TERMINATION_REQUESTED') is a real failure.
+    if (cfOrder.order_status === 'ACTIVE') {
+      return sendResponse(res, HTTP_STATUS.ACCEPTED, 'Payment still pending', { pending: true });
+    }
+
+    if (cfOrder.order_status !== 'PAID') {
       consultation.paymentStatus = 'failed';
       await consultation.save();
       logger.error('consultation_payment_verify_failed', {
         action: 'consultation_payment_verify_failed',
         userId: req.userId,
         consultationId,
+        orderStatus: cfOrder.order_status,
       });
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Payment verification failed');
     }
@@ -223,7 +242,6 @@ export const verifyConsultationPayment = async (req, res, next) => {
         $set: {
           status: 'paid',
           paymentStatus: 'paid',
-          razorpayPaymentId: razorpay_payment_id,
           startedAt: new Date(),
           // Deterministic Jitsi room so patient and doctor land in the same call
           // (mirrors meetingLinkFor() in doctorController).
@@ -258,7 +276,7 @@ export const verifyConsultationPayment = async (req, res, next) => {
       doctorId: consultation.doctorId,
       doctorName: doctor.name,
       amount: consultation.amountPaid,
-      paymentId: razorpay_payment_id,
+      orderId,
     });
 
     await claimed.populate('doctorId');

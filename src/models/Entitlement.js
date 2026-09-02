@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 // One purchase (or admin grant) of paid access — either a whole
 // SubscriptionPlan or a single SubscriptionFeature. `status` lifecycle
 // mirrors Consultation's paymentStatus pattern: 'pending' is created
-// alongside the Razorpay order, then 'active'/'failed' is set by /verify.
+// alongside the Cashfree order, then 'active'/'failed' is set by /verify.
 // A user can hold several active Entitlements at once (e.g. one plan plus
 // one extra à la carte feature bought later) — subscriptionAccess.js unions
 // all of them.
@@ -29,7 +29,7 @@ const entitlementSchema = new mongoose.Schema(
     expiresAt: { type: Date, default: null },
 
     // The amount actually charged (post-coupon, if any) — 0 for a 100%-off
-    // coupon redemption, which skips Razorpay entirely (see
+    // coupon redemption, which skips Cashfree entirely (see
     // subscriptionController.createSubscriptionOrder).
     amount: { type: Number, required: true, min: 0 },
     currency: { type: String, default: 'INR' },
@@ -49,8 +49,7 @@ const entitlementSchema = new mongoose.Schema(
     couponCode: { type: String, trim: true, uppercase: true },
     originalAmount: { type: Number, min: 0 },
 
-    razorpayOrderId: { type: String, trim: true },
-    razorpayPaymentId: { type: String, trim: true },
+    cashfreeOrderId: { type: String, trim: true },
 
     // True for access an admin comped manually rather than a real purchase
     // (support gestures, promos) — kept distinct for revenue reporting.

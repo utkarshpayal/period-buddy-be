@@ -36,9 +36,8 @@ export const hasRedemptionsLeftForUser = async (coupon, userId) => {
 /**
  * The discount `coupon` applies to `amount` (in rupees, same unit as
  * SubscriptionPlan/SubscriptionFeature.price), clamped so the final amount
- * never goes below 0. Rounded to paise (2dp) since that's what Razorpay's
- * minor-unit conversion (`Math.round(amount * 100)`) ultimately needs to be
- * a whole number of.
+ * never goes below 0. Rounded to 2dp, the precision Cashfree's `order_amount`
+ * accepts.
  */
 export const computeDiscount = (coupon, amount) => {
   const raw =

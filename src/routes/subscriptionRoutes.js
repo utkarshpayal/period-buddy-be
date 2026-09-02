@@ -41,7 +41,7 @@ router.post('/coupons/apply', authenticate, subscriptionController.previewCoupon
 
 /**
  * @route   POST /api/subscriptions/order
- * @desc    Create a Razorpay order for a plan or a single feature (optionally
+ * @desc    Create a Cashfree order for a plan or a single feature (optionally
  *          discounted by a couponCode — a 100%-off code activates instantly
  *          with no order/checkout at all)
  * @access  Private
@@ -50,7 +50,7 @@ router.post('/order', authenticate, subscriptionController.createSubscriptionOrd
 
 /**
  * @route   POST /api/subscriptions/verify
- * @desc    Verify a completed Razorpay checkout and activate the purchase
+ * @desc    Verify a completed Cashfree checkout and activate the purchase
  * @access  Private
  */
 router.post('/verify', authenticate, subscriptionController.verifySubscriptionPayment);

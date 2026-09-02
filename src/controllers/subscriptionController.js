@@ -2,10 +2,16 @@ import SubscriptionFeature from '../models/SubscriptionFeature.js';
 import SubscriptionPlan from '../models/SubscriptionPlan.js';
 import Entitlement from '../models/Entitlement.js';
 import Coupon from '../models/Coupon.js';
+import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { isValidObjectId } from '../utils/apiHelpers.js';
-import { createOrder, verifySignature, isPaymentConfigured } from '../utils/razorpayClient.js';
+import {
+  createOrder,
+  getOrderStatus,
+  isPaymentConfigured,
+  cashfreeMode,
+} from '../utils/cashfreeClient.js';
 import {
   getSettings,
   getUnlockedFeatureKeys,
@@ -204,9 +210,9 @@ export const previewCoupon = async (req, res, next) => {
   }
 };
 
-/** POST /api/subscriptions/order — create a Razorpay order + a pending
+/** POST /api/subscriptions/order — create a Cashfree order + a pending
  * Entitlement for either a plan or a single feature, optionally discounted
- * by a coupon. When a coupon brings the price to 0, no Razorpay order is
+ * by a coupon. When a coupon brings the price to 0, no Cashfree order is
  * created at all — the Entitlement is activated immediately and the
  * response carries `free: true` so the app skips the checkout sheet
  * entirely (see PaywallModal.tsx). */
@@ -249,7 +255,7 @@ export const createSubscriptionOrder = async (req, res, next) => {
       : {};
 
     // 100%-off (or a flat coupon >= the price): activate straight away,
-    // Razorpay never enters the picture — there's nothing to pay.
+    // Cashfree never enters the picture — there's nothing to pay.
     if (amount <= 0) {
       const now = new Date();
       const entitlement = await Entitlement.create({
@@ -302,10 +308,17 @@ export const createSubscriptionOrder = async (req, res, next) => {
       billingCycle: item.billingCycle,
     });
 
+    const user = await User.findById(req.userId);
+    // Cashfree order ids must be unique per order — an entitlement can only
+    // ever have one pending order at a time in practice, but a random suffix
+    // keeps a retried purchase attempt from colliding with itself.
+    const cashfreeOrderId = `sub_${entitlement._id}_${Date.now().toString(36)}`;
+
     const order = await createOrder({
-      amountMinorUnits: Math.round(amount * 100),
+      orderId: cashfreeOrderId,
+      amount,
       currency: settings.currency,
-      receipt: String(entitlement._id),
+      customer: { id: req.userId, name: user?.name, email: user?.email, phone: user?.phone },
       notes: {
         ...item.notes,
         userId: String(req.userId),
@@ -314,7 +327,7 @@ export const createSubscriptionOrder = async (req, res, next) => {
       },
     });
 
-    entitlement.razorpayOrderId = order.id;
+    entitlement.cashfreeOrderId = order.order_id;
     await entitlement.save();
 
     logger.info('subscription_order_created', {
@@ -322,7 +335,7 @@ export const createSubscriptionOrder = async (req, res, next) => {
       userId: req.userId,
       source,
       entitlementId: entitlement._id,
-      orderId: order.id,
+      orderId: order.order_id,
       amount,
       couponCode: coupon?.code,
     });
@@ -330,10 +343,11 @@ export const createSubscriptionOrder = async (req, res, next) => {
     return sendResponse(res, HTTP_STATUS.CREATED, 'Payment order created', {
       entitlementId: entitlement._id,
       free: false,
-      orderId: order.id,
-      amount: order.amount,
-      currency: order.currency,
-      keyId: process.env.RAZORPAY_KEY_ID,
+      orderId: order.order_id,
+      amount,
+      currency: settings.currency,
+      paymentSessionId: order.payment_session_id,
+      cashfreeMode: cashfreeMode(),
     });
   } catch (error) {
     logger.error('subscription_order_error', { userId: req.userId, error: error.message });
@@ -341,25 +355,21 @@ export const createSubscriptionOrder = async (req, res, next) => {
   }
 };
 
-/** POST /api/subscriptions/verify — verify a completed Razorpay checkout and,
- * only on a valid signature, activate the Entitlement. */
+/** POST /api/subscriptions/verify — verify a completed Cashfree checkout
+ * and, only once Cashfree confirms the order was actually paid, activate
+ * the Entitlement. */
 export const verifySubscriptionPayment = async (req, res, next) => {
   try {
-    const { entitlementId, razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+    const { entitlementId, orderId } = req.body;
 
-    if (
-      !isValidObjectId(entitlementId) ||
-      !razorpay_order_id ||
-      !razorpay_payment_id ||
-      !razorpay_signature
-    ) {
+    if (!isValidObjectId(entitlementId) || !orderId) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Missing payment verification fields');
     }
 
     const entitlement = await Entitlement.findOne({
       _id: entitlementId,
       user: req.userId,
-      razorpayOrderId: razorpay_order_id,
+      cashfreeOrderId: orderId,
     });
     if (!entitlement) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Purchase order not found');
 
@@ -368,19 +378,27 @@ export const verifySubscriptionPayment = async (req, res, next) => {
       return sendResponse(res, HTTP_STATUS.OK, 'Already active', entitlement);
     }
 
-    const isValid = verifySignature({
-      orderId: razorpay_order_id,
-      paymentId: razorpay_payment_id,
-      signature: razorpay_signature,
-    });
+    const cfOrder = await getOrderStatus(orderId);
 
-    if (!isValid) {
+    // 'ACTIVE' means the order is still open — e.g. a UPI collect request
+    // the user hasn't approved in their UPI app yet, which can take up to a
+    // minute. That's "not paid yet", not a failure: a UPI-collect flow
+    // polls this endpoint every few seconds while waiting, and marking the
+    // entitlement 'failed' on the first poll would kill a payment that's
+    // still legitimately in flight. Only a terminal Cashfree status
+    // ('EXPIRED'/'TERMINATED'/'TERMINATION_REQUESTED') is a real failure.
+    if (cfOrder.order_status === 'ACTIVE') {
+      return sendResponse(res, HTTP_STATUS.ACCEPTED, 'Payment still pending', { pending: true });
+    }
+
+    if (cfOrder.order_status !== 'PAID') {
       entitlement.status = 'failed';
       await entitlement.save();
       logger.error('subscription_payment_verify_failed', {
         action: 'subscription_payment_verify_failed',
         userId: req.userId,
         entitlementId,
+        orderStatus: cfOrder.order_status,
       });
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Payment verification failed');
     }
@@ -398,7 +416,6 @@ export const verifySubscriptionPayment = async (req, res, next) => {
           status: 'active',
           startedAt: now,
           expiresAt,
-          razorpayPaymentId: razorpay_payment_id,
         },
       },
       { new: true },
@@ -421,7 +438,7 @@ export const verifySubscriptionPayment = async (req, res, next) => {
       planId: entitlement.plan,
       amount: entitlement.amount,
       couponCode: entitlement.couponCode,
-      paymentId: razorpay_payment_id,
+      orderId,
     });
 
     return sendResponse(res, HTTP_STATUS.CREATED, 'Purchase activated', claimed || entitlement);

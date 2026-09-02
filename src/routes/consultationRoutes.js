@@ -20,14 +20,14 @@ router.get('/doctors/:id/availability', authenticate, consultationController.get
 
 /**
  * @route   POST /api/consultation/order
- * @desc    Create a Razorpay order for a consultation session
+ * @desc    Create a Cashfree order for a consultation session
  * @access  Private
  */
 router.post('/order', authenticate, consultationController.createConsultationOrder);
 
 /**
  * @route   POST /api/consultation/verify
- * @desc    Verify a completed Razorpay checkout and activate the session
+ * @desc    Verify a completed Cashfree checkout and activate the session
  * @access  Private
  */
 router.post('/verify', authenticate, consultationController.verifyConsultationPayment);
