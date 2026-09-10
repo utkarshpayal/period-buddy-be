@@ -141,6 +141,25 @@ app.get('/health/ready', (req, res) => {
   });
 });
 
+// Cashfree's order_meta.return_url target (cashfreeClient.js#createOrder) —
+// only reached if the app's CashfreeCheckoutModal fails to intercept the
+// navigation client-side first (see its onShouldStartLoadWithRequest). Plain
+// static HTML, not an API response: this is rendered directly in a WebView,
+// and the real payment status is still (re-)confirmed by the app calling
+// verifyPayment, never trusted from this page alone.
+app.get('/api/payments/return', (req, res) => {
+  res
+    .status(200)
+    .type('html')
+    .send(
+      '<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1" />' +
+        '<title>Payment complete</title></head>' +
+        '<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;' +
+        'font-family:-apple-system,Roboto,sans-serif;text-align:center;padding:24px;box-sizing:border-box;">' +
+        '<p>Payment received. You can return to the Nura app now.</p></body></html>',
+    );
+});
+
 /* ──────────────────────────────────────────────────────────
    API Routes
 ────────────────────────────────────────────────────────── */

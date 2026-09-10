@@ -3,6 +3,7 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
 import { createChatCompletion, isAiConfigured } from '../utils/sarvamClient.js';
 import { isSamvaadConfigured, startCheckinCall } from '../utils/samvaadClient.js';
+import { verifyToken } from '../utils/jwt.js';
 import { computeCyclePredictions } from '../utils/cycle.js';
 import { pickDefined } from '../utils/apiHelpers.js';
 import CycleSettings from '../models/CycleSettings.js';
@@ -343,12 +344,12 @@ export const saveCheckinCallSchedule = async (req, res, next) => {
  * webhook, fired after each call attempt completes (see samvaadClient.js's
  * webhook_config). Public/unauthenticated: Sarvam has no way to send our
  * JWT, so this correlates back to a user purely via the
- * `webhook_config.metadata.userId` we attached at call-creation time, which
- * Sarvam echoes back verbatim.
- *
- * KNOWN GAP: Sarvam's docs don't document a webhook signature/HMAC scheme
- * for verifying a request actually came from them — revisit if/when they
- * publish one.
+ * `webhook_config.metadata` we attached at call-creation time, which Sarvam
+ * echoes back verbatim. Since Sarvam documents no webhook signature/HMAC
+ * scheme for verifying a request actually came from them, the raw
+ * `metadata.userId` alone isn't trusted — `metadata.callToken` (a signed
+ * JWT minted per-call by samvaadClient.js's issueWebhookToken) is verified
+ * instead, and userId is taken only from its decoded claim.
  *
  * If the call collected any cycle data (`final_agent_variables`), saves it
  * through the same `upsertCycleLog` the REST endpoint and the in-app voice
@@ -364,7 +365,19 @@ export const checkinCallWebhook = async (req, res) => {
       final_agent_variables: finalVars,
       webhook_config: webhookConfig,
     } = req.body || {};
-    const userId = webhookConfig?.metadata?.userId;
+    let userId;
+    try {
+      const decoded = verifyToken(webhookConfig?.metadata?.callToken);
+      userId = decoded?.userId;
+    } catch (error) {
+      logger.warn('checkin_call_webhook_token_invalid', {
+        action: 'checkin_call_webhook_token_invalid',
+        claimedUserId: webhookConfig?.metadata?.userId,
+        attemptId,
+        error: error.message,
+      });
+      return sendResponse(res, HTTP_STATUS.OK, 'Webhook received');
+    }
 
     logger.info('checkin_call_completed', {
       action: 'checkin_call_completed',

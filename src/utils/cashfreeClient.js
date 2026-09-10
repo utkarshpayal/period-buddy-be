@@ -14,6 +14,23 @@ export const isPaymentConfigured = () =>
 
 export const cashfreeMode = () => CASHFREE_ENV;
 
+// Some payment methods (netbanking, wallets, and UPI apps opened via an
+// intent link) don't resolve inside Cashfree's `_modal` target the way UPI
+// Collect and cards do — Cashfree navigates the *page* itself to
+// order_meta.return_url once the bank/app hands control back, and if that's
+// missing the checkout just hangs on whatever page the redirect landed on.
+// The app's CashfreeCheckoutModal intercepts navigation to this URL via
+// onShouldStartLoadWithRequest before it ever loads, so the content here is
+// only a fallback for the rare case that interception misses it (e.g. a
+// WebView quirk) — hence a plain static page rather than another API route.
+// Strip a trailing slash — a base URL with one would otherwise produce
+// "…//api/payments/return", which Express's router treats as a distinct,
+// non-matching path (it doesn't collapse repeated slashes), silently
+// 404ing the fallback return page.
+const RETURN_URL_BASE =
+  (process.env.CASHFREE_RETURN_URL_BASE || process.env.API_BASE_URL || '').replace(/\/+$/, '') ||
+  undefined;
+
 const authHeaders = () => {
   if (!isPaymentConfigured()) {
     throw new Error(
@@ -50,6 +67,13 @@ export const createOrder = async ({ orderId, amount, currency, customer, notes }
           customer_phone: customer.phone || '9999999999',
         },
         order_note: notes ? JSON.stringify(notes) : undefined,
+        // {order_id} is a Cashfree-recognized placeholder — it substitutes
+        // the real order_id before redirecting. Required for redirect-based
+        // methods even under redirectTarget "_modal"; without it those
+        // methods never signal completion back to the checkout page.
+        order_meta: RETURN_URL_BASE
+          ? { return_url: `${RETURN_URL_BASE}/api/payments/return?order_id={order_id}` }
+          : undefined,
       }),
     });
 

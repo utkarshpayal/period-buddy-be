@@ -31,6 +31,15 @@ const API_BASE_URL = process.env.API_BASE_URL;
 // path is the webhook + agent_variables extraction, not this token.
 const CALL_TOKEN_TTL = process.env.SAMVAAD_CALL_TOKEN_TTL || '30m';
 
+// The webhook correlation token (see webhook_config.metadata below) is
+// intentionally longer-lived than CALL_TOKEN_TTL — that one bounds a token
+// handed to the *agent* for the duration of one call, but Sarvam can retry
+// a no-answer/busy attempt or queue delivery of the completion webhook
+// itself, and a token that expired in the gap would make checkinCallWebhook
+// silently drop otherwise-legitimate cycle data. Still short-lived relative
+// to a normal session token.
+const WEBHOOK_TOKEN_TTL = process.env.SAMVAAD_WEBHOOK_TOKEN_TTL || '6h';
+
 // Sarvam requires E.164 (a leading '+' + country code) for user_phone_number
 // — confirmed by a live 422 "Invalid Parameter" against a stored phone like
 // "8890866167" (no country code). Users commonly type just the bare 10-digit
@@ -111,6 +120,14 @@ async function readJsonOrThrow(response, action) {
 export const issueCallToken = (userId) => generateToken({ userId }, { expiresIn: CALL_TOKEN_TTL });
 
 /**
+ * Mints the token checkinCallWebhook verifies to trust `metadata.userId` —
+ * see WEBHOOK_TOKEN_TTL above for why this is a separate, longer-lived
+ * token from issueCallToken rather than reusing it.
+ */
+export const issueWebhookToken = (userId) =>
+  generateToken({ userId }, { expiresIn: WEBHOOK_TOKEN_TTL });
+
+/**
  * Triggers a single outbound cycle check-in call for one user via Sarvam's
  * Instant Outbound API.
  *
@@ -143,8 +160,14 @@ export const startCheckinCall = async (user) => {
       url: `${API_BASE_URL}/api/voice-agent/checkin-call/webhook`,
       // Echoed back verbatim in the webhook payload — the only way to
       // correlate a call outcome back to this user (Sarvam's attempt_id
-      // isn't ours to look up by).
-      metadata: { userId: String(user.id) },
+      // isn't ours to look up by). userId alone isn't trusted for anything
+      // sensitive though: Sarvam documents no webhook signature/HMAC
+      // scheme, so anyone who could guess/obtain a userId could otherwise
+      // forge a webhook call for them. callToken (issueWebhookToken, the
+      // same signed-JWT pattern as issueCallToken but with its own longer
+      // TTL — see WEBHOOK_TOKEN_TTL) is what checkinCallWebhook actually
+      // verifies against.
+      metadata: { userId: String(user.id), callToken: issueWebhookToken(user.id) },
     },
   };
 
