@@ -443,7 +443,12 @@ export const listContent = async (req, res, next) => {
         const filter = config.buildFilter(req.query);
         if (!filter) return { invalid: true };
 
-        const documents = await config.Model.find(filter).sort(config.sort);
+        // Previously unbounded — every blog/reel/QA/health-issue/wellbeing
+        // document's full body was returned with no cap when `type=all`
+        // (or no `type`), unlike every other list endpoint in this codebase.
+        // Reuses the same `limit` the single-type branch above already
+        // applies, per content type.
+        const documents = await config.Model.find(filter).sort(config.sort).limit(limit);
 
         return {
           type,

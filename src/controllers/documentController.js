@@ -10,6 +10,7 @@ import {
   extractDocumentText,
   getLanguageLabel,
 } from '../utils/sarvamClient.js';
+import { broadcastToRoom } from '../config/websocket.js';
 import logger from '../utils/logger.js';
 
 const MAX_CONTEXT_DOCS = 20;
@@ -75,11 +76,12 @@ export const uploadDocument = async (req, res, next) => {
       folder: `medical-documents/${req.userId}`,
     });
 
-    const { text, status } = await extractDocumentText({
-      buffer: req.file.buffer,
-      mimeType: req.file.mimetype,
-    });
-
+    // Created with extractionStatus 'pending' and the response sent
+    // immediately — Sarvam's doc-digitization job can legitimately take
+    // 45+ seconds (JOB_POLL_TIMEOUT_MS in sarvamClient.js), well past what
+    // a mobile client should have to hold a request open for. Extraction
+    // itself runs after the response, fire-and-forget, and its result is
+    // broadcast over the uploader's `user_<userId>` WebSocket room below.
     const document = await Document.create({
       userId: req.userId,
       title: title.trim(),
@@ -90,8 +92,8 @@ export const uploadDocument = async (req, res, next) => {
       mimeType: req.file.mimetype,
       originalFileName: req.file.originalname,
       fileSize: req.file.size,
-      extractedText: text,
-      extractionStatus: status,
+      extractedText: '',
+      extractionStatus: 'pending',
     });
 
     logger.info('document_uploaded', {
@@ -99,15 +101,61 @@ export const uploadDocument = async (req, res, next) => {
       userId: req.userId,
       documentId: document._id,
       docType,
-      extractionStatus: status,
+      extractionStatus: 'pending',
     });
 
-    return sendResponse(res, HTTP_STATUS.CREATED, 'Document uploaded', { document });
+    sendResponse(res, HTTP_STATUS.CREATED, 'Document uploaded', { document });
+
+    runExtraction(document, req.file.buffer, req.file.mimetype);
   } catch (error) {
     logger.error('document_upload_error', { userId: req.userId, error: error.message });
     next(error);
   }
 };
+
+/**
+ * Fire-and-forget: runs OCR/text extraction for a just-uploaded document and
+ * persists the result, then broadcasts `document_extraction_update` to the
+ * uploader's personal WebSocket room so the app can update without polling.
+ * Must never throw into the caller — this runs after the HTTP response has
+ * already been sent, so any failure here can only be logged, not surfaced
+ * as a request error; a failure still resolves to extractionStatus:'failed'
+ * on the document so the UI isn't left showing 'pending' forever.
+ */
+async function runExtraction(document, buffer, mimeType) {
+  let text = '';
+  let status = 'failed';
+  try {
+    ({ text, status } = await extractDocumentText({ buffer, mimeType }));
+  } catch (error) {
+    logger.error('document_extraction_error', {
+      action: 'document_extraction_error',
+      documentId: document._id,
+      userId: document.userId,
+      error: error.message,
+    });
+  }
+
+  try {
+    document.extractedText = text;
+    document.extractionStatus = status;
+    await document.save();
+  } catch (error) {
+    logger.error('document_extraction_save_error', {
+      action: 'document_extraction_save_error',
+      documentId: document._id,
+      userId: document.userId,
+      error: error.message,
+    });
+    return;
+  }
+
+  broadcastToRoom(`user_${document.userId}`, {
+    type: 'document_extraction_update',
+    documentId: document._id,
+    extractionStatus: status,
+  });
+}
 
 export const listDocuments = async (req, res, next) => {
   try {

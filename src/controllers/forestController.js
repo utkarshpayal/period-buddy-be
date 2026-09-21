@@ -112,24 +112,41 @@ export const logForestCare = async (req, res, next) => {
       );
     }
 
-    const existing = await ForestLog.findOne({ userId: req.userId, dateKey });
-    const tokensEarned = existing ? 0 : 5;
-
-    const log = await ForestLog.findOneAndUpdate(
+    // Whether today's bonus was already awarded is derived from the upsert's
+    // own result (`updatedExisting`), not a prior separate `findOne` — two
+    // concurrent requests for the same (userId, dateKey) both used to read
+    // "not yet logged" before either write landed, so both `$inc`ed the
+    // wallet even though ForestLog's unique index made the upsert itself
+    // land as one document (silently double/triple-crediting tokens with no
+    // error at all). `healthDelta`/`rewardPoints` are only ever set on the
+    // insert branch (`$setOnInsert`) so a concurrent update can't stomp them.
+    const result = await ForestLog.findOneAndUpdate(
       { userId: req.userId, dateKey },
       {
-        careType,
-        note: req.body.note?.trim() || '',
-        healthDelta: existing ? existing.healthDelta : 5,
-        rewardPoints: tokensEarned,
-        duration: req.body.duration !== undefined ? Number(req.body.duration) : undefined,
-        treeType: req.body.treeType?.trim(),
-        completed: req.body.completed !== undefined ? !!req.body.completed : undefined,
+        $set: {
+          careType,
+          note: req.body.note?.trim() || '',
+          duration: req.body.duration !== undefined ? Number(req.body.duration) : undefined,
+          treeType: req.body.treeType?.trim(),
+          completed: req.body.completed !== undefined ? !!req.body.completed : undefined,
+        },
+        $setOnInsert: {
+          healthDelta: 5,
+          rewardPoints: 5,
+        },
       },
-      { new: true, upsert: true, runValidators: true },
+      { new: true, upsert: true, runValidators: true, includeResultMetadata: true },
     );
 
-    if (tokensEarned > 0) {
+    const log = result.value;
+    const existing = Boolean(result.lastErrorObject?.updatedExisting);
+    const tokensEarned = existing ? 0 : 5;
+
+    if (existing) {
+      // Not the request that created today's row — its `rewardPoints` stays
+      // at the value the creating request set (5), reflecting "5 tokens were
+      // earned for today," not "5 tokens were earned by this specific call."
+    } else {
       await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: tokensEarned } });
     }
 

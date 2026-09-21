@@ -413,18 +413,35 @@ this file is missing in that environment, not a bug in the sending code.
 
 ## Scheduled jobs
 
-Two recurring features run as HTTP endpoints meant to be triggered by an
-**external** scheduler, not an in-process timer (`node-cron`, `setInterval`,
-...) — an in-process timer only fires correctly on exactly one running
-instance, so if this backend ever scales to more than one process the same
-job would double-fire. Both endpoints authenticate via a shared-secret
-header instead of a user JWT, since there's no logged-in user making the
-call.
+Two recurring features — recurring check-in calls and period/ovulation/daily
+reminders — need something to tick their scheduler on a cadence. There are
+two ways to drive that tick, and exactly one should be active at a time:
+
+1. **In-process fallback (default, `ENABLE_IN_PROCESS_SCHEDULER=true`)** —
+   `utils/inProcessScheduler.js`, started from `index.js` once the DB
+   connects, runs both jobs via `setInterval` inside this same process (every
+   1 minute for check-in calls, every 1 hour for reminders). Zero extra
+   infrastructure to set up — this is what makes a fresh/local/single-instance
+   deployment's recurring check-in calls and reminders actually fire without
+   any AWS setup. **Only safe for a single running instance** — if this
+   backend is ever scaled horizontally, every instance would independently
+   fire the same call/notification, so this must be disabled first (see below).
+2. **External scheduler (AWS EventBridge Scheduler)** — the two HTTP
+   endpoints below, meant to be triggered by something outside this process
+   so a multi-instance deployment never double-fires. Requires
+   `ENABLE_IN_PROCESS_SCHEDULER=false` (or every instance's in-process
+   fallback *and* the external scheduler will both be ticking, double-firing
+   everything) plus the AWS setup below. Both endpoints authenticate via a
+   shared-secret header instead of a user JWT, since there's no logged-in
+   user making the call.
 
 If reminders/auto check-in calls aren't happening even though a user has
-them enabled, **check this section first** — the application code has no way
-to know whether the scheduler on the AWS side actually exists; it only
-exposes the endpoint and trusts something is calling it.
+them enabled: first confirm `ENABLE_IN_PROCESS_SCHEDULER` isn't set to
+`"false"` with no external scheduler actually configured to replace it — that
+combination means *nothing* is ever ticking either job, which is the most
+common way this silently stops working (the manual "call me now" button
+still works fine in that state, since it's a direct API call, not a
+scheduled one — don't take that as evidence the scheduler itself is fine).
 
 | Job | Endpoint | Header | Env var | Cadence | Code |
 |---|---|---|---|---|---|
@@ -494,8 +511,10 @@ anything happened.
 
 ## Database Indexes
 
-The application creates indexes on:
-- `email` - For faster user lookups during login/signup
+Nearly every `userId`/foreign-key field across models already has an index, many
+compound (e.g. `CommunityPost({userId,isActive})`, `Notification({userId,createdAt})`,
+`CycleLog({userId,dateKey}, unique)`) — not just `email`. See each model file for
+its specific indexes; there are no known missing-index gaps on any hot read path.
 
 ## Future Enhancements
 
@@ -504,8 +523,6 @@ The application creates indexes on:
 - Password reset functionality
 - Two-factor authentication
 - OAuth integration (Google, GitHub)
-- Rate limiting
-- Request logging
 - API documentation with Swagger
 
 ## License

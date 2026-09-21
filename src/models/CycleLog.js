@@ -72,7 +72,7 @@ const cycleLogSchema = new mongoose.Schema(
     sleepHours: { type: Number, min: 0, max: 24 },
     waterIntake: { type: Number, min: 0 }, // ml
     weight: { type: Number, min: 0 }, // kg
-    temperature: { type: Number }, // °C BBT
+    temperature: { type: Number, min: 30, max: 45 }, // °C BBT — generous human-body-temp range
     stressLevel: { type: Number, min: 1, max: 10 },
     medication: [{ type: String, trim: true }],
     digestion: {

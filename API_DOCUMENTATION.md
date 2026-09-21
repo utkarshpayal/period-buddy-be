@@ -35,7 +35,7 @@ Standard error wrapper:
 
 | Frontend feature | Backend routes |
 | --- | --- |
-| Auth, onboarding, profile | `/api/auth/*`, `/api/logout` |
+| Auth, onboarding, profile | `/api/auth/*` |
 | Home dashboard | `/api/auth/dashboard` |
 | Period tracker | `/api/cycle/*` |
 | Smart predictions | `/api/cycle/predictions`, `/api/cycle/stats` |
@@ -170,7 +170,7 @@ Response:
 { "success": true, "statusCode": 200, "message": "Password changed successfully", "data": null }
 ```
 
-### POST `/api/auth/logout` or POST `/api/logout`
+### POST `/api/auth/logout`
 
 Response:
 

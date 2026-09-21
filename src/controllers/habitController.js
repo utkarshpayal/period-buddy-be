@@ -152,28 +152,62 @@ export const toggleHabit = async (req, res, next) => {
 
     let tokensAwarded = 0;
     if (alreadyDone) {
-      // Uncomplete
-      habit.completedDates = habit.completedDates.filter((d) => d !== todayKey);
-      habit.streak = calculateStreak(habit.completedDates);
-      tokensAwarded = -(habit.rewardPoints || 30);
-      const user = await User.findById(req.userId);
-      if (user) {
-        user.walletBalance = Math.max(0, (user.walletBalance || 0) + tokensAwarded);
-        await user.save();
+      // Uncomplete. The wallet decrement is gated on the *result* of the
+      // delete, not the prior `alreadyDone` read — two concurrent toggles
+      // both reading alreadyDone=true would otherwise both decrement, but
+      // only the request whose delete actually removed the row (deletedCount
+      // 1) gets to touch the wallet; the other's delete is a no-op (already
+      // gone) and it skips the decrement entirely.
+      const { deletedCount } = await HabitCompletion.deleteOne({
+        habitId: habit._id,
+        dateKey: todayKey,
+      });
+      if (deletedCount > 0) {
+        habit.completedDates = habit.completedDates.filter((d) => d !== todayKey);
+        habit.streak = calculateStreak(habit.completedDates);
+        tokensAwarded = -(habit.rewardPoints || 30);
+        const updatedUser = await User.findByIdAndUpdate(
+          req.userId,
+          { $inc: { walletBalance: tokensAwarded } },
+          { new: true },
+        );
+        // Preserve the previous non-negative floor without reintroducing a
+        // read-then-write race: clamp only if the atomic $inc pushed it
+        // below 0, in a second, separately-atomic update.
+        if (updatedUser && updatedUser.walletBalance < 0) {
+          await User.updateOne({ _id: req.userId }, { $set: { walletBalance: 0 } });
+        }
       }
-      await HabitCompletion.deleteOne({ habitId: habit._id, dateKey: todayKey });
     } else {
-      // Complete
+      // Complete. HabitCompletion's unique (habitId, dateKey) index is the
+      // atomic gate: only the first of two concurrent "complete" requests
+      // for the same day successfully creates the row and earns tokens — the
+      // second hits E11000 and is treated as a no-op instead of also
+      // crediting the wallet (the previous read-then-$inc pattern let both
+      // through, since the completedDates.includes(todayKey) check above and
+      // the wallet $inc were never part of the same atomic operation).
+      try {
+        await HabitCompletion.create({
+          habitId: habit._id,
+          userId: req.userId,
+          dateKey: todayKey,
+          rewardPoints: habit.rewardPoints || 30,
+        });
+      } catch (error) {
+        if (error?.code === 11000) {
+          return sendResponse(res, HTTP_STATUS.OK, 'Habit toggled', {
+            id: habit._id,
+            completed: true,
+            streak: habit.streak,
+            tokensAwarded: 0,
+          });
+        }
+        throw error;
+      }
       habit.completedDates.push(todayKey);
       habit.streak = calculateStreak(habit.completedDates);
       tokensAwarded = habit.rewardPoints || 30;
       await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: tokensAwarded } });
-      await HabitCompletion.create({
-        habitId: habit._id,
-        userId: req.userId,
-        dateKey: todayKey,
-        rewardPoints: habit.rewardPoints || 30,
-      });
     }
 
     await habit.save();

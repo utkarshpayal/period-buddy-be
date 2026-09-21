@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import User from './User.js';
 import { sendPushNotification } from '../utils/fcm.js';
+import logger from '../utils/logger.js';
 
 /** Notification — in-app notification records. */
 const notificationSchema = new mongoose.Schema(
@@ -55,7 +56,12 @@ notificationSchema.post('save', async function (doc) {
       });
     }
   } catch (error) {
-    console.error('Failed to send push notification on notification save:', error);
+    logger.error('notification_push_send_failed', {
+      action: 'notification_push_send_failed',
+      notificationId: String(doc._id),
+      userId: String(doc.userId),
+      error: error.message,
+    });
   }
 });
 

@@ -111,26 +111,47 @@ export const unsubscribeNewsletterViaLink = async (req, res) => {
       .send(unsubscribePage('Missing email', 'This unsubscribe link is missing an email address.'));
   }
 
-  const subscription = await Newsletter.findOneAndUpdate(
-    { email },
-    { isActive: false, unsubscribedAt: new Date() },
-    { new: true },
-  );
-
-  if (!subscription) {
-    // Not found isn't a real error here — most likely already unsubscribed,
-    // or was never subscribed. Either way, the reader's *intent* ("stop
-    // emailing me") is satisfied, so this reads as success, not an error page.
-    return res.send(
-      unsubscribePage("You're unsubscribed", `${email} won't receive further emails from Nura.`),
+  try {
+    const subscription = await Newsletter.findOneAndUpdate(
+      { email },
+      { isActive: false, unsubscribedAt: new Date() },
+      { new: true },
     );
+
+    if (!subscription) {
+      // Not found isn't a real error here — most likely already unsubscribed,
+      // or was never subscribed. Either way, the reader's *intent* ("stop
+      // emailing me") is satisfied, so this reads as success, not an error page.
+      return res.send(
+        unsubscribePage("You're unsubscribed", `${email} won't receive further emails from Nura.`),
+      );
+    }
+
+    logger.info('newsletter_unsubscribed', {
+      action: 'newsletter_unsubscribed',
+      email,
+      via: 'link',
+    });
+
+    return res.send(
+      unsubscribePage("You're unsubscribed", `${email} has been removed from the Nura newsletter.`),
+    );
+  } catch (error) {
+    logger.error('newsletter_unsubscribe_link_failed', {
+      action: 'newsletter_unsubscribe_link_failed',
+      email,
+      error: error.message,
+    });
+
+    return res
+      .status(HTTP_STATUS.INTERNAL_SERVER_ERROR)
+      .send(
+        unsubscribePage(
+          'Something went wrong',
+          "We couldn't process your unsubscribe request right now. Please try again in a few minutes.",
+        ),
+      );
   }
-
-  logger.info('newsletter_unsubscribed', { action: 'newsletter_unsubscribed', email, via: 'link' });
-
-  return res.send(
-    unsubscribePage("You're unsubscribed", `${email} has been removed from the Nura newsletter.`),
-  );
 };
 
 /** GET /api/newsletter — Admin: list subscribers */

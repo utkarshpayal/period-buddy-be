@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import { apiLimiter, rateLimitEnabled } from './src/middleware/rateLimiters.js';
 import { connectDB, disconnectDB } from './src/config/database.js';
 import { seedDatabase } from './src/utils/seeder.js';
+import { startInProcessScheduler, stopInProcessScheduler } from './src/utils/inProcessScheduler.js';
 import { errorHandler, notFound } from './src/middleware/errorHandler.js';
 import httpLogger from './src/utils/httpLogger.js';
 import logger from './src/utils/logger.js';
@@ -64,6 +65,7 @@ if (process.env.NODE_ENV === 'production') {
 ────────────────────────────────────────────────────────── */
 connectDB().then(() => {
   seedDatabase();
+  startInProcessScheduler();
 });
 
 /* ──────────────────────────────────────────────────────────
@@ -262,6 +264,7 @@ const gracefulShutdown = async (signal) => {
   forceTimer.unref();
 
   try {
+    stopInProcessScheduler();
     // Stop accepting new WS connections and close existing ones.
     if (wss) {
       for (const client of wss.clients) {

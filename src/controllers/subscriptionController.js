@@ -21,6 +21,7 @@ import {
   resolveCoupon,
   hasRedemptionsLeftForUser,
   computeDiscount,
+  redeemCoupon,
 } from '../utils/couponAccess.js';
 import logger from '../utils/logger.js';
 
@@ -155,12 +156,20 @@ export const getMySubscription = async (req, res, next) => {
   }
 };
 
+// No pagination params on this endpoint's contract (the mobile "My
+// Subscription" purchase-history list isn't paginated client-side either),
+// so this is a flat cap rather than page/limit query params — comfortably
+// above any real user's lifetime purchase count, just bounding the
+// unbounded `.find()` that previously had no limit at all.
+const HISTORY_HARD_CAP = 200;
+
 /** GET /api/subscriptions/history — every past entitlement (any status), newest first. */
 export const getHistory = async (req, res, next) => {
   try {
     const history = await Entitlement.find({ user: req.userId })
       .populate('plan')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .limit(HISTORY_HARD_CAP);
     return sendResponse(res, HTTP_STATUS.OK, 'Purchase history fetched', history);
   } catch (error) {
     next(error);
@@ -257,6 +266,22 @@ export const createSubscriptionOrder = async (req, res, next) => {
     // 100%-off (or a flat coupon >= the price): activate straight away,
     // Cashfree never enters the picture — there's nothing to pay.
     if (amount <= 0) {
+      // Redeem atomically *before* creating the Entitlement — applyCouponToAmount's
+      // earlier check is only advisory (read-then-act), so a concurrent redemption
+      // could have exhausted the coupon in between. Re-validating here, and only
+      // creating the Entitlement once the atomic redemption actually succeeds,
+      // avoids both the double-credit race and an orphaned Entitlement.
+      if (coupon) {
+        const redeemed = await redeemCoupon(coupon._id, req.userId, coupon.perUserLimit);
+        if (!redeemed) {
+          return sendError(
+            res,
+            HTTP_STATUS.BAD_REQUEST,
+            "You've already used this coupon the maximum number of times",
+          );
+        }
+      }
+
       const now = new Date();
       const entitlement = await Entitlement.create({
         user: req.userId,
@@ -269,10 +294,6 @@ export const createSubscriptionOrder = async (req, res, next) => {
         startedAt: now,
         expiresAt: computeExpiryFromCycle(item.billingCycle, now),
       });
-
-      if (coupon) {
-        await Coupon.updateOne({ _id: coupon._id }, { $inc: { redeemedCount: 1 } });
-      }
 
       logger.info('subscription_free_redemption', {
         action: 'subscription_free_redemption',
@@ -314,18 +335,38 @@ export const createSubscriptionOrder = async (req, res, next) => {
     // keeps a retried purchase attempt from colliding with itself.
     const cashfreeOrderId = `sub_${entitlement._id}_${Date.now().toString(36)}`;
 
-    const order = await createOrder({
-      orderId: cashfreeOrderId,
-      amount,
-      currency: settings.currency,
-      customer: { id: req.userId, name: user?.name, email: user?.email, phone: user?.phone },
-      notes: {
-        ...item.notes,
-        userId: String(req.userId),
-        entitlementId: String(entitlement._id),
-        couponCode: coupon?.code,
-      },
-    });
+    let order;
+    try {
+      order = await createOrder({
+        orderId: cashfreeOrderId,
+        amount,
+        currency: settings.currency,
+        customer: { id: req.userId, name: user?.name, email: user?.email, phone: user?.phone },
+        notes: {
+          ...item.notes,
+          userId: String(req.userId),
+          entitlementId: String(entitlement._id),
+          couponCode: coupon?.code,
+        },
+      });
+    } catch (error) {
+      // Cashfree down/timeout after the Entitlement was already persisted —
+      // clean it up rather than leaving a permanently 'pending' row with no
+      // cashfreeOrderId (DB clutter and a support dead-end: "I tried to pay
+      // and nothing happened").
+      await Entitlement.deleteOne({ _id: entitlement._id });
+      logger.error('subscription_order_create_failed', {
+        action: 'subscription_order_create_failed',
+        userId: req.userId,
+        entitlementId: entitlement._id,
+        error: error.message,
+      });
+      return sendError(
+        res,
+        HTTP_STATUS.SERVICE_UNAVAILABLE,
+        'Could not start payment right now — please try again shortly',
+      );
+    }
 
     entitlement.cashfreeOrderId = order.order_id;
     await entitlement.save();
@@ -424,9 +465,26 @@ export const verifySubscriptionPayment = async (req, res, next) => {
     // Only counts once — findOneAndUpdate above only matches on the first
     // of any concurrent /verify calls, so a retried/duplicate call (which
     // lands on the `entitlement.status === 'active'` early return instead)
-    // never double-increments this.
+    // never double-increments this. Uses the same atomic redeemCoupon guard
+    // as the free-unlock branch above so two *separate* pending Entitlements
+    // sharing one coupon (each independently passing its own per-entitlement
+    // claim guard) can't jointly over-redeem it. Payment already cleared via
+    // Cashfree by this point, so a `null` here (limit somehow exceeded by
+    // the time verify ran) only means the accounting undercounts — the
+    // entitlement still activates rather than leaving a paid user locked out.
     if (claimed && entitlement.coupon) {
-      await Coupon.updateOne({ _id: entitlement.coupon }, { $inc: { redeemedCount: 1 } });
+      const couponDoc = await Coupon.findById(entitlement.coupon).select('perUserLimit');
+      const redeemed =
+        couponDoc &&
+        (await redeemCoupon(entitlement.coupon, entitlement.user, couponDoc.perUserLimit));
+      if (!redeemed) {
+        logger.warn('subscription_coupon_redeem_limit_race', {
+          action: 'subscription_coupon_redeem_limit_race',
+          userId: req.userId,
+          entitlementId: entitlement._id,
+          couponId: entitlement.coupon,
+        });
+      }
     }
 
     logger.info('subscription_purchased', {

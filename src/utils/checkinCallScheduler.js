@@ -57,11 +57,21 @@ export const runCheckinCallSchedulerTick = async () => {
       );
       if (dateToDateKey(targetDate) !== localDateKey) continue; // not the scheduled day yet
 
+      // Claim the "fired today" guard atomically, as part of the same
+      // operation that decides whether to fire — this tick runs every
+      // minute, and a slow outbound call spanning a minute boundary (or two
+      // overlapping ticks) could otherwise both pass the plain in-memory
+      // check above before either persisted the guard, placing the same
+      // call twice. Only the request whose `findOneAndUpdate` actually
+      // matches (guard wasn't already set to today) proceeds to call.
+      const claimed = await CycleSettings.findOneAndUpdate(
+        { userId: settings.userId, checkinCallLastFiredDateKey: { $ne: localDateKey } },
+        { $set: { checkinCallLastFiredDateKey: localDateKey } },
+      );
+      if (!claimed) continue; // another concurrent tick already claimed today
+
       await runCheckinCallForUser(settings.userId);
       fired += 1;
-
-      settings.checkinCallLastFiredDateKey = localDateKey;
-      await settings.save();
     } catch (error) {
       // One user's failure (no phone, a transient Sarvam error, etc.)
       // shouldn't stop the rest of this tick from processing.

@@ -67,23 +67,35 @@ export const runDailyNotificationTick = async () => {
     try {
       const logs = await CycleLog.find({ userId: settings.userId }).sort({ dateKey: 1 });
       const predictions = computeCyclePredictions(settings, logs);
-      let dirty = false;
 
+      // Each guard below is claimed atomically (the guard field's own
+      // `$ne` check lives in the same `findOneAndUpdate` filter as the
+      // write that sets it), rather than checked in-memory and persisted
+      // together via one `settings.save()` at the end — a retried/
+      // concurrent tick invocation could otherwise read the same stale
+      // guard value for two overlapping runs and create duplicate
+      // notifications/pushes before either persisted it.
       if (
         settings.remindersEnabled &&
-        predictions.nextPeriodDaysAway === (settings.reminderDaysBefore ?? 2) &&
-        settings.lastPeriodReminderCycleKey !== predictions.nextPeriodDateKey
+        predictions.nextPeriodDaysAway === (settings.reminderDaysBefore ?? 2)
       ) {
-        await Notification.create({
-          userId: settings.userId,
-          type: 'period_reminder',
-          title: 'Your period is coming up',
-          body: `Your period is expected around ${predictions.nextPeriodDate} — want to get ahead of it?`,
-          data: { nextPeriodDateKey: predictions.nextPeriodDateKey },
-        });
-        settings.lastPeriodReminderCycleKey = predictions.nextPeriodDateKey;
-        periodRemindersSent += 1;
-        dirty = true;
+        const claimed = await CycleSettings.findOneAndUpdate(
+          {
+            userId: settings.userId,
+            lastPeriodReminderCycleKey: { $ne: predictions.nextPeriodDateKey },
+          },
+          { $set: { lastPeriodReminderCycleKey: predictions.nextPeriodDateKey } },
+        );
+        if (claimed) {
+          await Notification.create({
+            userId: settings.userId,
+            type: 'period_reminder',
+            title: 'Your period is coming up',
+            body: `Your period is expected around ${predictions.nextPeriodDate} — want to get ahead of it?`,
+            data: { nextPeriodDateKey: predictions.nextPeriodDateKey },
+          });
+          periodRemindersSent += 1;
+        }
       }
 
       // Fires the day the fertile window *opens* (a few days ahead of
@@ -92,41 +104,45 @@ export const runDailyNotificationTick = async () => {
       if (
         (settings.ovulationReminder || settings.fertilityReminder) &&
         predictions.ovulationReliable &&
-        todayKey === dateToDateKey(predictions.fertileWindowStartISO) &&
-        settings.lastOvulationReminderCycleKey !== predictions.ovulationDateKey
+        todayKey === dateToDateKey(predictions.fertileWindowStartISO)
       ) {
-        await Notification.create({
-          userId: settings.userId,
-          type: 'ovulation_reminder',
-          title: 'Your fertile window is starting',
-          body: `Ovulation is expected around ${predictions.ovulationDate}.`,
-          data: { ovulationDateKey: predictions.ovulationDateKey },
-        });
-        settings.lastOvulationReminderCycleKey = predictions.ovulationDateKey;
-        ovulationRemindersSent += 1;
-        dirty = true;
+        const claimed = await CycleSettings.findOneAndUpdate(
+          {
+            userId: settings.userId,
+            lastOvulationReminderCycleKey: { $ne: predictions.ovulationDateKey },
+          },
+          { $set: { lastOvulationReminderCycleKey: predictions.ovulationDateKey } },
+        );
+        if (claimed) {
+          await Notification.create({
+            userId: settings.userId,
+            type: 'ovulation_reminder',
+            title: 'Your fertile window is starting',
+            body: `Ovulation is expected around ${predictions.ovulationDate}.`,
+            data: { ovulationDateKey: predictions.ovulationDateKey },
+          });
+          ovulationRemindersSent += 1;
+        }
       }
 
-      if (
-        settings.remindersEnabled &&
-        settings.lastDailyNudgeDateKey !== todayKey &&
-        !logs.some((log) => log.dateKey === todayKey)
-      ) {
-        const message =
-          DAILY_NUDGE_MESSAGES[Math.floor(Math.random() * DAILY_NUDGE_MESSAGES.length)];
-        await Notification.create({
-          userId: settings.userId,
-          type: 'system',
-          title: message.title,
-          body: message.body,
-          data: { kind: 'daily_nudge' },
-        });
-        settings.lastDailyNudgeDateKey = todayKey;
-        dailyNudgesSent += 1;
-        dirty = true;
+      if (settings.remindersEnabled && !logs.some((log) => log.dateKey === todayKey)) {
+        const claimed = await CycleSettings.findOneAndUpdate(
+          { userId: settings.userId, lastDailyNudgeDateKey: { $ne: todayKey } },
+          { $set: { lastDailyNudgeDateKey: todayKey } },
+        );
+        if (claimed) {
+          const message =
+            DAILY_NUDGE_MESSAGES[Math.floor(Math.random() * DAILY_NUDGE_MESSAGES.length)];
+          await Notification.create({
+            userId: settings.userId,
+            type: 'system',
+            title: message.title,
+            body: message.body,
+            data: { kind: 'daily_nudge' },
+          });
+          dailyNudgesSent += 1;
+        }
       }
-
-      if (dirty) await settings.save();
     } catch (error) {
       // One user's failure shouldn't stop the rest of this tick.
       logger.error('daily_notification_tick_error', {

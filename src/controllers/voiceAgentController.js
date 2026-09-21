@@ -390,7 +390,15 @@ export const checkinCallWebhook = async (req, res) => {
 
     if (userId && finalVars && typeof finalVars === 'object') {
       const payload = Object.fromEntries(
-        Object.entries(finalVars).filter(([key]) => CYCLE_LOG_FIELDS.includes(key)),
+        Object.entries(finalVars).filter(
+          // Exclude 'dateKey' explicitly, even though it's in CYCLE_LOG_FIELDS
+          // for the /converse action-confirm path above — a webhook must never
+          // let the voice session's own variables pick which day it writes to
+          // (a hallucinated/misheard date from STT would silently overwrite an
+          // unrelated day's log); the day this call happened is always
+          // `todayDateKey()` below, never taken from `finalVars`.
+          ([key]) => CYCLE_LOG_FIELDS.includes(key) && key !== 'dateKey',
+        ),
       );
       // Only bother saving if the agent actually extracted something beyond
       // the context (user_name/expected_period_date/...) we seeded it with.

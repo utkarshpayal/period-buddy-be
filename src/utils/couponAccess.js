@@ -1,4 +1,5 @@
 import Coupon from '../models/Coupon.js';
+import CouponRedemption from '../models/CouponRedemption.js';
 import Entitlement from '../models/Entitlement.js';
 
 /**
@@ -31,6 +32,71 @@ export const hasRedemptionsLeftForUser = async (coupon, userId) => {
     status: 'active',
   });
   return usedByUser < coupon.perUserLimit;
+};
+
+/**
+ * Atomically increments a per-(coupon, user) counter, but only if it's still
+ * under `perUserLimit` — a single-document `$inc` on the unique
+ * (coupon, user) `CouponRedemption` row, which MongoDB serializes, so two
+ * concurrent redemptions by the same user can't both read "under the limit"
+ * (unlike `hasRedemptionsLeftForUser`'s `countDocuments`-then-act, which has
+ * a race window). Returns true and leaves the counter incremented on
+ * success; on failure, compensates by decrementing back to the pre-call
+ * value and returns false. A brand-new (coupon, user) pair racing its very
+ * first upsert can throw E11000 on the unique index — retried once, which
+ * then finds the just-inserted row and increments normally.
+ */
+const incrementPerUserRedemption = async (couponId, userId, perUserLimit, _retried = false) => {
+  if (!userId) return true;
+  let row;
+  try {
+    row = await CouponRedemption.findOneAndUpdate(
+      { coupon: couponId, user: userId },
+      { $inc: { count: 1 } },
+      { new: true, upsert: true },
+    );
+  } catch (error) {
+    if (error?.code === 11000 && !_retried) {
+      return incrementPerUserRedemption(couponId, userId, perUserLimit, true);
+    }
+    throw error;
+  }
+  if (row.count > perUserLimit) {
+    await CouponRedemption.updateOne({ _id: row._id }, { $inc: { count: -1 } });
+    return false;
+  }
+  return true;
+};
+
+/**
+ * Atomically increments `coupon.redeemedCount`, but only if it's still under
+ * `maxRedemptions` — the increment and the limit check happen as one
+ * database operation, so two concurrent redemptions of a coupon on its last
+ * remaining use can't both succeed (unlike a separate read-then-`$inc`,
+ * which has a race window). Also atomically enforces `perUserLimit` via
+ * `incrementPerUserRedemption` above, compensating the other counter if
+ * either guard rejects the redemption. Returns the updated coupon on
+ * success, or `null` if either limit was already reached. Callers must
+ * treat `null` as "this redemption did not happen" — do not
+ * activate/credit anything on a `null` return.
+ */
+export const redeemCoupon = async (couponId, userId, perUserLimit) => {
+  const perUserOk = await incrementPerUserRedemption(couponId, userId, perUserLimit);
+  if (!perUserOk) return null;
+
+  const coupon = await Coupon.findOneAndUpdate(
+    {
+      _id: couponId,
+      $or: [{ maxRedemptions: null }, { $expr: { $lt: ['$redeemedCount', '$maxRedemptions'] } }],
+    },
+    { $inc: { redeemedCount: 1 } },
+    { new: true },
+  );
+
+  if (!coupon && userId) {
+    await CouponRedemption.updateOne({ coupon: couponId, user: userId }, { $inc: { count: -1 } });
+  }
+  return coupon;
 };
 
 /**

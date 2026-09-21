@@ -15,13 +15,22 @@ import {
   handleValidationErrors,
 } from '../schemas/authSchema.js';
 import { authenticate } from '../middleware/authMiddleware.js';
-import { authLimiter, rateLimitEnabled, noopLimiter } from '../middleware/rateLimiters.js';
+import {
+  authLimiter,
+  otpEmailLimiter,
+  rateLimitEnabled,
+  noopLimiter,
+} from '../middleware/rateLimiters.js';
 
 const router = express.Router();
 
 // Strict brute-force guard on unauthenticated, sensitive endpoints. No-op when
 // rate limiting is disabled (dev) so local flows aren't throttled.
 const sensitiveLimiter = rateLimitEnabled ? authLimiter : noopLimiter;
+// Email-scoped OTP guard, independent of the IP-keyed limiter above — see
+// otpEmailLimiter's own comment for why verify-otp/resend-otp need this in
+// addition to sensitiveLimiter.
+const otpLimiter = rateLimitEnabled ? otpEmailLimiter : noopLimiter;
 
 /**
  * @route   POST /api/auth/signup
@@ -45,6 +54,7 @@ router.post(
 router.post(
   '/verify-otp',
   sensitiveLimiter,
+  otpLimiter,
   validateVerifyOtp,
   handleValidationErrors,
   authController.verifyOtp,
@@ -58,6 +68,7 @@ router.post(
 router.post(
   '/resend-otp',
   sensitiveLimiter,
+  otpLimiter,
   validateResendOtp,
   handleValidationErrors,
   authController.resendOtp,

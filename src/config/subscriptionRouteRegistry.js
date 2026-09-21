@@ -20,9 +20,12 @@ export const FEATURE_ROUTES = [
   { key: 'ai_assistant', method: 'POST', path: /^\/api\/questions\/sessions$/ },
   { key: 'ai_assistant', method: 'POST', path: /^\/api\/questions\/sessions\/[^/]+\/messages$/ },
 
-  // Medical document vault — uploading and chatting about documents.
+  // Medical document vault — uploading, chatting about, and summarizing
+  // documents. `summarize` was missing an entry entirely (a permanent free
+  // bypass for anyone with an existing uploaded document), unlike upload/chat.
   { key: 'document_chat', method: 'POST', path: /^\/api\/documents$/ },
   { key: 'document_chat', method: 'POST', path: /^\/api\/documents\/chat$/ },
+  { key: 'document_chat', method: 'POST', path: /^\/api\/documents\/summarize$/ },
 
   // PCOS/endometriosis/fibroid/thyroid symptom checker.
   { key: 'symptom_checker', method: 'POST', path: /^\/api\/screening\/assess$/ },

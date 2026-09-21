@@ -141,20 +141,39 @@ export const createConsultationOrder = async (req, res, next) => {
     // suffix keeps each createOrder call unique.
     const cashfreeOrderId = `consult_${consultation._id}_${Date.now().toString(36)}`;
 
-    const order = await createOrder({
-      orderId: cashfreeOrderId,
-      // Doctor.pricePerSession is already a whole-unit amount (e.g. rupees) —
-      // unlike Razorpay, Cashfree's order_amount wants the whole-unit value,
-      // not the currency's smallest unit.
-      amount: doctor.pricePerSession,
-      currency: doctor.currency,
-      customer: { id: req.userId, name: user?.name, email: user?.email, phone: user?.phone },
-      notes: {
-        userId: String(req.userId),
-        doctorId: String(doctorId),
-        consultationId: String(consultation._id),
-      },
-    });
+    let order;
+    try {
+      order = await createOrder({
+        orderId: cashfreeOrderId,
+        // Doctor.pricePerSession is already a whole-unit amount (e.g. rupees) —
+        // unlike Razorpay, Cashfree's order_amount wants the whole-unit value,
+        // not the currency's smallest unit.
+        amount: doctor.pricePerSession,
+        currency: doctor.currency,
+        customer: { id: req.userId, name: user?.name, email: user?.email, phone: user?.phone },
+        notes: {
+          userId: String(req.userId),
+          doctorId: String(doctorId),
+          consultationId: String(consultation._id),
+        },
+      });
+    } catch (error) {
+      // Cashfree down/timeout after the Consultation was already persisted —
+      // clean it up rather than leaving a permanently 'pending' row with no
+      // cashfreeOrderId (same fix as subscriptionController.createSubscriptionOrder).
+      await Consultation.deleteOne({ _id: consultation._id });
+      logger.error('consultation_order_create_failed', {
+        action: 'consultation_order_create_failed',
+        userId: req.userId,
+        consultationId: consultation._id,
+        error: error.message,
+      });
+      return sendError(
+        res,
+        HTTP_STATUS.SERVICE_UNAVAILABLE,
+        'Could not start payment right now — please try again shortly',
+      );
+    }
 
     consultation.cashfreeOrderId = order.order_id;
     await consultation.save();

@@ -15,6 +15,10 @@ import {
 
 const ANONYMOUS_USER = { firstName: 'Anonymous', lastName: '', profilePicture: null };
 
+// A post is auto-hidden (isActive: false) once this many distinct users have
+// reported it — see reportPost below. No real admin review queue exists yet.
+const COMMUNITY_REPORT_AUTO_HIDE_THRESHOLD = 5;
+
 /**
  * Resolve author for a post or comment:
  * - If isAnonymous AND the requester is NOT the author → mask with ANONYMOUS_USER
@@ -290,20 +294,42 @@ export const toggleLike = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid post id');
     }
 
-    const post = await CommunityPost.findOne({ _id: req.params.id, isActive: true });
+    const post = await CommunityPost.findOne({ _id: req.params.id, isActive: true }).select(
+      'userId likedBy likeCount',
+    );
     if (!post) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Post not found');
 
-    const alreadyLiked = post.likedBy.some((id) => String(id) === String(req.userId));
-    if (alreadyLiked) {
-      post.likedBy.pull(req.userId);
-      // `likes` is a virtual alias for `likeCount` (see Community.js) — only touch
-      // the real field here, otherwise the virtual setter double-applies the delta.
-      post.likeCount = Math.max(0, post.likeCount - 1);
-    } else {
-      post.likedBy.push(req.userId);
-      post.likeCount += 1;
+    if (String(post.userId) === String(req.userId)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, "You can't like your own post");
     }
-    await post.save();
+
+    const alreadyLiked = post.likedBy.some((id) => String(id) === String(req.userId));
+
+    // Atomic $addToSet/$pull + $inc, filtered on the current membership —
+    // the previous read-`likedBy`-then-mutate-in-JS-then-`.save()` pattern
+    // was a lost-update race: two concurrent likes on the same post could
+    // both read the pre-like array, so the second `.save()` would overwrite
+    // the first's `likeCount` increment, desyncing `likeCount` from
+    // `likedBy.length`. The filter's own membership check also means a
+    // request that loses the race (post already (un)liked by the time this
+    // one lands) simply matches nothing instead of double-applying the delta.
+    const updated = alreadyLiked
+      ? await CommunityPost.findOneAndUpdate(
+          { _id: post._id, likedBy: req.userId },
+          { $pull: { likedBy: req.userId }, $inc: { likeCount: -1 } },
+          { new: true },
+        )
+      : await CommunityPost.findOneAndUpdate(
+          { _id: post._id, likedBy: { $ne: req.userId } },
+          { $addToSet: { likedBy: req.userId }, $inc: { likeCount: 1 } },
+          { new: true },
+        );
+
+    // `updated` is null only if a concurrent request already applied the
+    // same toggle direction first — fall back to the post's now-current
+    // state rather than erroring, since the user's intent ("liked" /
+    // "unliked") was already satisfied by that other request.
+    post.likeCount = updated ? updated.likeCount : post.likeCount;
 
     if (!alreadyLiked && String(post.userId) !== String(req.userId)) {
       try {
@@ -485,6 +511,19 @@ export const reportPost = async (req, res, next) => {
       });
       await user.save();
       post.reportCount = (post.reportCount || 0) + 1;
+      // No admin review queue exists for community reports yet (reportCount
+      // was previously increment-only, read by nothing) — auto-hiding past a
+      // threshold is the pragmatic stopgap so a heavily-reported post can't
+      // accumulate unlimited reports and stay visible indefinitely with zero
+      // moderation action ever taken.
+      if (post.reportCount >= COMMUNITY_REPORT_AUTO_HIDE_THRESHOLD && post.isActive) {
+        post.isActive = false;
+        logger.warn('community_post_auto_hidden', {
+          action: 'community_post_auto_hidden',
+          postId: post._id,
+          reportCount: post.reportCount,
+        });
+      }
       await post.save();
     }
 
