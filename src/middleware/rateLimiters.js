@@ -1,4 +1,4 @@
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
 /**
  * Centralized rate limiters.
@@ -70,7 +70,9 @@ export const otpEmailLimiter = rateLimit({
   skipSuccessfulRequests: true,
   keyGenerator: (req) => {
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : null;
-    return email || req.ip;
+    // ipKeyGenerator collapses IPv6 addresses to their /56 subnet so a client
+    // can't dodge the limit by rotating through its own IPv6 range.
+    return email || ipKeyGenerator(req.ip);
   },
   message: {
     success: false,
