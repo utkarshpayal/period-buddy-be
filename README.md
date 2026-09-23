@@ -394,22 +394,25 @@ pm2 start index.js --name "period-buddy-be"
 ## Push notifications (Firebase Admin / FCM)
 
 `src/utils/fcm.js` sends every push through Firebase Admin, which needs a
-service account key at `src/utils/firebase-service-account.json` (gitignored
-— never commit it). **Without that file, push sending is silently a no-op**:
-`sendPushNotification` logs `fcm_send_mock` with the message it would have
-sent and returns, instead of throwing — so in-app `Notification` docs still
-get created and show up in `app/(app)/notifications.tsx` fine, but nothing
-ever reaches a device. If push notifications (existing ones — partner
-connect, buddy messages — or the new reminders below) aren't arriving on a
-real phone, check the server logs for `fcm_init_warning` first; that means
-this file is missing in that environment, not a bug in the sending code.
+service account key from **either** the `FIREBASE_SERVICE_ACCOUNT_JSON` env
+var (the key file's JSON, raw or base64-encoded — preferred on hosts where
+secrets are env vars) **or** the file `src/utils/firebase-service-account.json`
+(gitignored — never commit it). The env var wins if both are set. **Without
+either, push sending is silently a no-op**: `sendPushNotification` logs
+`fcm_send_mock` with the message it would have sent and returns, instead of
+throwing — so in-app `Notification` docs still get created and show up in
+`app/(app)/notifications.tsx` fine, but nothing ever reaches a device. If push
+notifications aren't arriving on a real phone, check the server's startup logs
+first: `fcm_initialized | ... (project X, from Y)` means it's configured (and
+X must be the same Firebase project as the app's `google-services.json`);
+`fcm_init_warning` means it isn't, not a bug in the sending code.
 
 1. Firebase Console → Project Settings → Service Accounts → **Generate new
    private key** (for the same Firebase project the mobile app's
    `google-services.json`/`GoogleService-Info.plist` belong to).
-2. Save the downloaded JSON as `src/utils/firebase-service-account.json` on
-   the server (or inject it as a file at that path in your deploy pipeline —
-   same pattern as any other secret file, not an env var here).
+2. Either set `FIREBASE_SERVICE_ACCOUNT_JSON` on the host (e.g. the output of
+   `base64 -w0 key.json`), or save the file as
+   `src/utils/firebase-service-account.json` on the server. Restart the server.
 
 ## Scheduled jobs
 

@@ -45,7 +45,7 @@ It 402s with a `FEATURE_LOCKED` body carrying the feature's price and any plan t
 
 **Background/startup**: `utils/seeder.js` runs once after `connectDB()` resolves in `index.js` to seed initial data.
 
-**Domain-specific integrations** live under `src/utils/`: `fcm.js` (Firebase push, uses `firebase-service-account.json`), `s3.js` (AWS S3 uploads, also used alongside Cloudinary for media), `cashfreeClient.js` (payments), `sarvamClient.js` (speech-to-text/TTS, backs `speechRoutes`), `googleAuth.js` (Google OAuth login), `mailer.js`/`otp.js` (email + OTP flows), `careSuggestionsAi.js`/`caringEngine.js`/`reportContext.js` (AI-driven care/report logic for cycle & wellbeing features), `cycle.js` (period cycle calculation logic).
+**Domain-specific integrations** live under `src/utils/`: `fcm.js` (Firebase push, service account from `FIREBASE_SERVICE_ACCOUNT_JSON` env — raw or base64 JSON — or else `firebase-service-account.json`), `s3.js` (AWS S3 uploads, also used alongside Cloudinary for media), `cashfreeClient.js` (payments), `sarvamClient.js` (speech-to-text/TTS, backs `speechRoutes`), `googleAuth.js` (Google OAuth login), `mailer.js`/`otp.js` (email + OTP flows), `careSuggestionsAi.js`/`caringEngine.js`/`reportContext.js` (AI-driven care/report logic for cycle & wellbeing features), `cycle.js` (period cycle calculation logic).
 
 **Logging**: `winston` logger (`utils/logger.js`) is the standard — always log via `logger.info/error/warn` with an `action` field and structured context (see existing calls), not `console.log`. HTTP access logs go through `morgan` piped into winston (`utils/httpLogger.js`).
 

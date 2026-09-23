@@ -9,18 +9,49 @@ const __dirname = path.dirname(__filename);
 
 let isFcmInitialized = false;
 
-try {
-  // Check if firebase-service-account.json exists
-  const serviceAccountPath = path.join(__dirname, 'firebase-service-account.json');
+// The service account can come from either:
+//   1. FIREBASE_SERVICE_ACCOUNT_JSON — the key file's JSON contents, raw or
+//      base64-encoded (easiest on hosts where secrets are env vars), or
+//   2. src/utils/firebase-service-account.json (gitignored) on disk.
+// The env var wins when both are present.
+const loadServiceAccount = () => {
+  const fromEnv = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
+  if (fromEnv) {
+    const raw = fromEnv.startsWith('{') ? fromEnv : Buffer.from(fromEnv, 'base64').toString('utf8');
+    const parsed = JSON.parse(raw);
+    // Env-var UIs often store the key's newlines as literal "\n".
+    if (typeof parsed.private_key === 'string') {
+      parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+    }
+    return { serviceAccount: parsed, source: 'FIREBASE_SERVICE_ACCOUNT_JSON' };
+  }
 
+  const serviceAccountPath = path.join(__dirname, 'firebase-service-account.json');
   if (fs.existsSync(serviceAccountPath)) {
-    const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+    return {
+      serviceAccount: JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8')),
+      source: 'src/utils/firebase-service-account.json',
+    };
+  }
+
+  return null;
+};
+
+try {
+  const loaded = loadServiceAccount();
+
+  if (!loaded) {
+    logger.warn(
+      'fcm_init_warning | Firebase Admin SDK not initialized: neither FIREBASE_SERVICE_ACCOUNT_JSON nor src/utils/firebase-service-account.json is set. Push notifications will be logged only.',
+    );
+  } else {
+    const { serviceAccount, source } = loaded;
     const requiredFields = ['project_id', 'client_email', 'private_key'];
     const missingFields = requiredFields.filter((field) => !serviceAccount[field]);
 
     if (missingFields.length > 0) {
       logger.warn(
-        'fcm_init_warning | firebase-service-account.json is missing required field(s): ' +
+        `fcm_init_warning | Firebase service account (${source}) is missing required field(s): ` +
           `${missingFields.join(', ')}. Push notifications will be logged only.`,
       );
     } else {
@@ -28,12 +59,10 @@ try {
         credential: admin.credential.cert(serviceAccount),
       });
       isFcmInitialized = true;
-      logger.info('fcm_initialized | Firebase Admin SDK initialized successfully');
+      logger.info(
+        `fcm_initialized | Firebase Admin SDK initialized successfully (project ${serviceAccount.project_id}, from ${source})`,
+      );
     }
-  } else {
-    logger.warn(
-      'fcm_init_warning | Firebase Admin SDK not initialized: src/utils/firebase-service-account.json not found. Push notifications will be logged only.',
-    );
   }
 } catch (error) {
   logger.error('fcm_init_error | Failed to initialize Firebase Admin SDK', {
