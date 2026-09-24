@@ -36,6 +36,10 @@ export const AUDIT_ACTIONS = {
   COUPON_CREATED: 'coupon.created',
   COUPON_UPDATED: 'coupon.updated',
   COUPON_DELETED: 'coupon.deleted',
+  PUSH_BROADCAST_CREATED: 'push_broadcast.created',
+  PUSH_BROADCAST_CANCELLED: 'push_broadcast.cancelled',
+  PUSH_BROADCAST_RETRIED: 'push_broadcast.retried',
+  PUSH_TEST_SENT: 'push_test.sent',
 };
 
 /**

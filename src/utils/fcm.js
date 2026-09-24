@@ -70,6 +70,50 @@ try {
   });
 }
 
+// FCM error codes meaning the token will never work again (app uninstalled,
+// token rotated, or malformed) — callers should clear it from the user.
+const DEAD_TOKEN_CODES = new Set([
+  'messaging/registration-token-not-registered',
+  'messaging/invalid-registration-token',
+  'messaging/invalid-argument',
+]);
+
+// Max messages per sendEach() call, enforced by FCM.
+export const FCM_MAX_BATCH_SIZE = 500;
+
+export const isFcmReady = () => isFcmInitialized;
+
+const buildMessage = (token, { title, body, data }) => ({
+  token,
+  notification: {
+    title,
+    body,
+  },
+  // Custom sound bundled by the client (see expo-notifications plugin
+  // config in app.json + the Android notification channel default in
+  // lib/notifications.ts). Android references the raw resource name
+  // without its extension; iOS/APNs needs the exact bundled filename.
+  android: {
+    notification: {
+      sound: 'notification',
+      channelId: 'default',
+    },
+  },
+  apns: {
+    payload: {
+      aps: {
+        sound: 'notification.wav',
+      },
+    },
+  },
+  data: data
+    ? Object.entries(data).reduce((acc, [key, val]) => {
+        acc[key] = String(val); // FCM data fields must be strings
+        return acc;
+      }, {})
+    : {},
+});
+
 /**
  * Sends a push notification to a specific FCM token
  * @param {string} token - The FCM registration token of the device
@@ -89,38 +133,7 @@ export const sendPushNotification = async (token, { title, body, data }) => {
   }
 
   try {
-    const message = {
-      token,
-      notification: {
-        title,
-        body,
-      },
-      // Custom sound bundled by the client (see expo-notifications plugin
-      // config in app.json + the Android notification channel default in
-      // lib/notifications.ts). Android references the raw resource name
-      // without its extension; iOS/APNs needs the exact bundled filename.
-      android: {
-        notification: {
-          sound: 'notification',
-          channelId: 'default',
-        },
-      },
-      apns: {
-        payload: {
-          aps: {
-            sound: 'notification.wav',
-          },
-        },
-      },
-      data: data
-        ? Object.entries(data).reduce((acc, [key, val]) => {
-            acc[key] = String(val); // FCM data fields must be strings
-            return acc;
-          }, {})
-        : {},
-    };
-
-    const response = await admin.messaging().send(message);
+    const response = await admin.messaging().send(buildMessage(token, { title, body, data }));
     logger.info('fcm_send_success', { messageId: response, token });
     return response;
   } catch (error) {
@@ -129,4 +142,36 @@ export const sendPushNotification = async (token, { title, body, data }) => {
       error: error.message,
     });
   }
+};
+
+/**
+ * Sends the same notification to up to FCM_MAX_BATCH_SIZE tokens in a single
+ * FCM round trip (sendEach). Never throws for per-token failures — those are
+ * reported back so the caller can count them and prune dead tokens. Throws
+ * only if FCM isn't configured or the whole request fails (network/auth), so
+ * the caller can retry the batch.
+ *
+ * @param {string[]} tokens
+ * @param {object} payload - { title, body, data }
+ * @returns {Promise<{ successCount: number, failureCount: number, deadTokens: string[] }>}
+ */
+export const sendPushBatch = async (tokens, payload) => {
+  if (!isFcmInitialized) throw new Error('FCM is not configured');
+  if (tokens.length === 0) return { successCount: 0, failureCount: 0, deadTokens: [] };
+  if (tokens.length > FCM_MAX_BATCH_SIZE) {
+    throw new Error(`sendPushBatch accepts at most ${FCM_MAX_BATCH_SIZE} tokens`);
+  }
+
+  const response = await admin.messaging().sendEach(tokens.map((t) => buildMessage(t, payload)));
+
+  const deadTokens = [];
+  response.responses.forEach((r, i) => {
+    if (!r.success && DEAD_TOKEN_CODES.has(r.error?.code)) deadTokens.push(tokens[i]);
+  });
+
+  return {
+    successCount: response.successCount,
+    failureCount: response.failureCount,
+    deadTokens,
+  };
 };
