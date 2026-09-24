@@ -7,7 +7,7 @@ const __dirname = path.dirname(__filename);
 
 // Read the snapshot of 234 routes
 const routesSnapshot = JSON.parse(
-  fs.readFileSync(path.resolve(__dirname, '../config/allRoutesSnapshot.json'), 'utf8')
+  fs.readFileSync(path.resolve(__dirname, '../config/allRoutesSnapshot.json'), 'utf8'),
 );
 
 // Helper to convert Express path to OpenAPI path (:id -> {id})
@@ -24,41 +24,175 @@ function extractPathParams(p) {
 
 // Tag metadata map with nice descriptions
 const TAGS_METADATA = [
-  { name: 'System & Health', description: 'API health checks, liveness probes, readiness probes, and webhooks' },
-  { name: 'Authentication', description: 'User registration, OTP verification, login, Google OAuth, onboarding, password management, profile, account deletion, and FCM notifications' },
-  { name: 'Cycle Tracking', description: 'Menstrual cycle logging, smart cycle predictions, cycle history, and symptom forecasting' },
-  { name: 'Habits & Wellness', description: 'Daily wellness habits, completion tracking, habit streak gamification, and token rewards' },
-  { name: 'Wellness Forest', description: 'Gamified digital forest reflecting overall menstrual & daily care consistency with tier progression' },
-  { name: 'Consultations', description: 'Patient-side gynecologist booking, Cashfree payments, real-time consultation messaging, and status management' },
-  { name: 'Doctor Portal', description: 'Clinical management portal: doctor onboarding, patient records, consultation messages, WebRTC video calling, prescriptions, earnings, availability slots, and clinical video reels' },
-  { name: 'Partner Sync', description: 'Cycle syncing for romantic partners: invite codes, granular privacy toggles, shared cycle status, partner alerts, and direct messaging' },
-  { name: 'Anonymous Period Buddy', description: 'Peer-to-peer anonymous cycle buddy matching based on phase compatibility and anonymous in-app chat' },
-  { name: 'Email Nominations', description: 'Refer friends & loved ones to Period Buddy with personalized invitations and acceptance tracking' },
-  { name: 'Q&A Knowledge Base', description: 'Curated clinical Q&A encyclopedia and interactive chat sessions with smart semantic retrieval' },
-  { name: 'Sarvam Voice Agent', description: 'Voice-based menstrual care companion powered by Sarvam AI: conversational cycle logging, check-in call scheduling, webhooks, and scheduler ticks' },
-  { name: 'Community Feed', description: 'Moderated peer community: anonymous posts, category filters, likes, bookmarks, comments, reporting, and poll voting' },
-  { name: 'Blogs & Articles', description: 'Doctor-verified women health editorial articles, reading feeds, multi-lingual translations, likes, bookmarks, and view tracking' },
-  { name: 'Video Reels', description: 'Short-form educational medical reels by verified doctors, poll voting, creator follow toggles, and view tracking' },
-  { name: 'Health Encyclopedia', description: 'Clinical guide to conditions like PCOS/PCOD, endometriosis, fibroids, hormonal imbalances, and treatment guides' },
-  { name: 'Wellbeing & Intimacy', description: 'Hygiene advice, intimacy guides, card games (Spark & Positions decks), and view tracking' },
-  { name: 'Unified Content Studio', description: 'Universal content management system (CMS) for blogs, reels, Q&A, health guides, and media uploads' },
-  { name: 'Government Schemes', description: 'Catalogue of Indian central and state welfare benefits, menstrual hygiene schemes, and eligibility evaluations' },
-  { name: 'Scheme Applications', description: 'Self-service and admin-managed application processing for government welfare schemes' },
-  { name: 'Subscriptions & Paywall', description: 'Pricing plans, modular feature unlocks, Cashfree payment gateway integration, coupon discounts, and entitlements' },
-  { name: 'Admin Subscriptions', description: 'Super Admin paywall controls: subscription plans, feature gating, dynamic pricing, and coupon codes' },
-  { name: 'Super Admin', description: 'Platform analytics, user directory, account status moderation, and platform-wide controls' },
-  { name: 'Document Vault & OCR', description: 'Medical document vault with OCR text extraction, clinical document summaries, and interactive document chat' },
-  { name: 'Clinical Reports', description: 'Comprehensive medical and cycle report generation with doctor consultation summaries' },
-  { name: 'Speech Services', description: 'Multilingual speech-to-text transcription and text-to-speech audio synthesis via Sarvam AI' },
-  { name: 'Health Screening', description: 'Clinical screening assessments (PCOS, cycle irregularities) with automated risk evaluation' },
-  { name: 'Daily Insights', description: 'Personalized daily biological insights, phase tips, nutrition suggestions, and wellness tips' },
-  { name: 'Notifications', description: 'Push notification dispatcher, daily cron triggers, and scheduled reminders' },
-  { name: 'Marketing & Newsletter', description: 'Public newsletter subscription, unsubscribe workflows, and subscriber management' },
-  { name: 'Contact Inquiries', description: 'Public contact & feedback form submission and admin inquiry management' },
-  { name: 'File Uploads', description: 'Multi-purpose secure asset uploads to AWS S3 & Cloudinary with MIME type validation' },
-  { name: 'Audit Trail', description: 'Administrative compliance audit logs tracking high-privilege operations' },
-  { name: 'Company Assets', description: 'Organizational document repository with folder organization and public share links' },
-  { name: 'Company Folders', description: 'Directory hierarchy for company documents and internal assets' },
+  {
+    name: 'System & Health',
+    description: 'API health checks, liveness probes, readiness probes, and webhooks',
+  },
+  {
+    name: 'Authentication',
+    description:
+      'User registration, OTP verification, login, Google OAuth, onboarding, password management, profile, account deletion, and FCM notifications',
+  },
+  {
+    name: 'Cycle Tracking',
+    description:
+      'Menstrual cycle logging, smart cycle predictions, cycle history, and symptom forecasting',
+  },
+  {
+    name: 'Habits & Wellness',
+    description:
+      'Daily wellness habits, completion tracking, habit streak gamification, and token rewards',
+  },
+  {
+    name: 'Wellness Forest',
+    description:
+      'Gamified digital forest reflecting overall menstrual & daily care consistency with tier progression',
+  },
+  {
+    name: 'Consultations',
+    description:
+      'Patient-side gynecologist booking, Cashfree payments, real-time consultation messaging, and status management',
+  },
+  {
+    name: 'Doctor Portal',
+    description:
+      'Clinical management portal: doctor onboarding, patient records, consultation messages, WebRTC video calling, prescriptions, earnings, availability slots, and clinical video reels',
+  },
+  {
+    name: 'Partner Sync',
+    description:
+      'Cycle syncing for romantic partners: invite codes, granular privacy toggles, shared cycle status, partner alerts, and direct messaging',
+  },
+  {
+    name: 'Anonymous Period Buddy',
+    description:
+      'Peer-to-peer anonymous cycle buddy matching based on phase compatibility and anonymous in-app chat',
+  },
+  {
+    name: 'Email Nominations',
+    description:
+      'Refer friends & loved ones to Period Buddy with personalized invitations and acceptance tracking',
+  },
+  {
+    name: 'Q&A Knowledge Base',
+    description:
+      'Curated clinical Q&A encyclopedia and interactive chat sessions with smart semantic retrieval',
+  },
+  {
+    name: 'Sarvam Voice Agent',
+    description:
+      'Voice-based menstrual care companion powered by Sarvam AI: conversational cycle logging, check-in call scheduling, webhooks, and scheduler ticks',
+  },
+  {
+    name: 'Community Feed',
+    description:
+      'Moderated peer community: anonymous posts, category filters, likes, bookmarks, comments, reporting, and poll voting',
+  },
+  {
+    name: 'Blogs & Articles',
+    description:
+      'Doctor-verified women health editorial articles, reading feeds, multi-lingual translations, likes, bookmarks, and view tracking',
+  },
+  {
+    name: 'Video Reels',
+    description:
+      'Short-form educational medical reels by verified doctors, poll voting, creator follow toggles, and view tracking',
+  },
+  {
+    name: 'Health Encyclopedia',
+    description:
+      'Clinical guide to conditions like PCOS/PCOD, endometriosis, fibroids, hormonal imbalances, and treatment guides',
+  },
+  {
+    name: 'Wellbeing & Intimacy',
+    description:
+      'Hygiene advice, intimacy guides, card games (Spark & Positions decks), and view tracking',
+  },
+  {
+    name: 'Unified Content Studio',
+    description:
+      'Universal content management system (CMS) for blogs, reels, Q&A, health guides, and media uploads',
+  },
+  {
+    name: 'Government Schemes',
+    description:
+      'Catalogue of Indian central and state welfare benefits, menstrual hygiene schemes, and eligibility evaluations',
+  },
+  {
+    name: 'Scheme Applications',
+    description:
+      'Self-service and admin-managed application processing for government welfare schemes',
+  },
+  {
+    name: 'Subscriptions & Paywall',
+    description:
+      'Pricing plans, modular feature unlocks, Cashfree payment gateway integration, coupon discounts, and entitlements',
+  },
+  {
+    name: 'Admin Subscriptions',
+    description:
+      'Super Admin paywall controls: subscription plans, feature gating, dynamic pricing, and coupon codes',
+  },
+  {
+    name: 'Super Admin',
+    description:
+      'Platform analytics, user directory, account status moderation, and platform-wide controls',
+  },
+  {
+    name: 'Document Vault & OCR',
+    description:
+      'Medical document vault with OCR text extraction, clinical document summaries, and interactive document chat',
+  },
+  {
+    name: 'Clinical Reports',
+    description:
+      'Comprehensive medical and cycle report generation with doctor consultation summaries',
+  },
+  {
+    name: 'Speech Services',
+    description:
+      'Multilingual speech-to-text transcription and text-to-speech audio synthesis via Sarvam AI',
+  },
+  {
+    name: 'Health Screening',
+    description:
+      'Clinical screening assessments (PCOS, cycle irregularities) with automated risk evaluation',
+  },
+  {
+    name: 'Daily Insights',
+    description:
+      'Personalized daily biological insights, phase tips, nutrition suggestions, and wellness tips',
+  },
+  {
+    name: 'Notifications',
+    description: 'Push notification dispatcher, daily cron triggers, and scheduled reminders',
+  },
+  {
+    name: 'Marketing & Newsletter',
+    description: 'Public newsletter subscription, unsubscribe workflows, and subscriber management',
+  },
+  {
+    name: 'Contact Inquiries',
+    description: 'Public contact & feedback form submission and admin inquiry management',
+  },
+  {
+    name: 'File Uploads',
+    description:
+      'Multi-purpose secure asset uploads to AWS S3 & Cloudinary with MIME type validation',
+  },
+  {
+    name: 'Audit Trail',
+    description: 'Administrative compliance audit logs tracking high-privilege operations',
+  },
+  {
+    name: 'Company Assets',
+    description:
+      'Organizational document repository with folder organization and public share links',
+  },
+  {
+    name: 'Company Folders',
+    description: 'Directory hierarchy for company documents and internal assets',
+  },
 ];
 
 function determineTag(r) {
@@ -110,7 +244,8 @@ function determineSecurity(r) {
 
   // Explicit public endpoints
   if (p.startsWith('/health') || p === '/api/payments/return') return [];
-  if (p === '/api/auth/signup' || p === '/api/auth/verify-otp' || p === '/api/auth/resend-otp') return [];
+  if (p === '/api/auth/signup' || p === '/api/auth/verify-otp' || p === '/api/auth/resend-otp')
+    return [];
   if (p === '/api/auth/login' || p === '/api/auth/google') return [];
   if (p.startsWith('/api/auth/account/delete')) return [];
   if (p === '/api/doctor/set-password') return [];
@@ -121,13 +256,19 @@ function determineSecurity(r) {
 
   // Public GET endpoints for content
   if (m === 'GET') {
-    if (p === '/api/blogs' || p === '/api/blogs/feed' || p.match(/^\/api\/blogs\/[^/]+$/)) return [];
+    if (p === '/api/blogs' || p === '/api/blogs/feed' || p.match(/^\/api\/blogs\/[^/]+$/))
+      return [];
     if (p === '/api/reels' || p.match(/^\/api\/reels\/[^/]+$/)) return [];
     if (p === '/api/questions' || p.match(/^\/api\/questions\/[^/]+$/)) {
       if (!p.includes('/sessions')) return [];
     }
     if (p === '/api/health-issues' || p.match(/^\/api\/health-issues\/[^/]+$/)) return [];
-    if (p === '/api/wellbeing' || p === '/api/wellbeing/games' || p.match(/^\/api\/wellbeing\/[^/]+$/)) return [];
+    if (
+      p === '/api/wellbeing' ||
+      p === '/api/wellbeing/games' ||
+      p.match(/^\/api\/wellbeing\/[^/]+$/)
+    )
+      return [];
   }
   if (p === '/api/questions/ask' && m === 'POST') return [];
 
@@ -163,32 +304,89 @@ function generateEndpointSpec(r) {
       r.path.includes('/consultations') ||
       r.path.includes('/logs') ||
       r.path.includes('/history') ||
-      ['/api/blogs', '/api/blogs/feed', '/api/community', '/api/questions', '/api/reels', '/api/schemes', '/api/content', '/api/documents'].includes(r.path)
+      [
+        '/api/blogs',
+        '/api/blogs/feed',
+        '/api/community',
+        '/api/questions',
+        '/api/reels',
+        '/api/schemes',
+        '/api/content',
+        '/api/documents',
+      ].includes(r.path)
     ) {
       parameters.push(
-        { name: 'page', in: 'query', schema: { type: 'integer', default: 1 }, description: 'Page number for pagination' },
-        { name: 'limit', in: 'query', schema: { type: 'integer', default: 10 }, description: 'Number of items per page' }
+        {
+          name: 'page',
+          in: 'query',
+          schema: { type: 'integer', default: 1 },
+          description: 'Page number for pagination',
+        },
+        {
+          name: 'limit',
+          in: 'query',
+          schema: { type: 'integer', default: 10 },
+          description: 'Number of items per page',
+        },
       );
     }
 
-    if (r.path.includes('/search') || ['/api/blogs', '/api/blogs/feed', '/api/community', '/api/questions', '/api/reels', '/api/schemes', '/api/content', '/api/buddies/matches', '/api/consultation/doctors'].includes(r.path)) {
-      parameters.push({ name: 'search', in: 'query', schema: { type: 'string' }, description: 'Search keyword' });
+    if (
+      r.path.includes('/search') ||
+      [
+        '/api/blogs',
+        '/api/blogs/feed',
+        '/api/community',
+        '/api/questions',
+        '/api/reels',
+        '/api/schemes',
+        '/api/content',
+        '/api/buddies/matches',
+        '/api/consultation/doctors',
+      ].includes(r.path)
+    ) {
+      parameters.push({
+        name: 'search',
+        in: 'query',
+        schema: { type: 'string' },
+        description: 'Search keyword',
+      });
     }
 
     if (r.path === '/api/cycle/logs' || r.path === '/api/forest/logs') {
-      parameters.push({ name: 'month', in: 'query', schema: { type: 'string', example: '2026-07' }, description: 'Year and month filter in YYYY-MM format' });
+      parameters.push({
+        name: 'month',
+        in: 'query',
+        schema: { type: 'string', example: '2026-07' },
+        description: 'Year and month filter in YYYY-MM format',
+      });
     }
 
     if (r.path === '/api/community') {
-      parameters.push({ name: 'category', in: 'query', schema: { type: 'string' }, description: 'Community category (e.g. general, success_story, tips)' });
+      parameters.push({
+        name: 'category',
+        in: 'query',
+        schema: { type: 'string' },
+        description: 'Community category (e.g. general, success_story, tips)',
+      });
     }
 
     if (r.path === '/api/wellbeing') {
-      parameters.push({ name: 'type', in: 'query', schema: { type: 'string', enum: ['hygiene', 'sexual_wellbeing'] }, description: 'Filter wellbeing resources by type' });
+      parameters.push({
+        name: 'type',
+        in: 'query',
+        schema: { type: 'string', enum: ['hygiene', 'sexual_wellbeing'] },
+        description: 'Filter wellbeing resources by type',
+      });
     }
 
     if (r.path === '/api/wellbeing/games') {
-      parameters.push({ name: 'deck', in: 'query', schema: { type: 'string', enum: ['spark', 'positions'] }, description: 'Card game deck name' });
+      parameters.push({
+        name: 'deck',
+        in: 'query',
+        schema: { type: 'string', enum: ['spark', 'positions'] },
+        description: 'Card game deck name',
+      });
     }
   }
 
@@ -200,10 +398,10 @@ function generateEndpointSpec(r) {
     .replace(/-/g, ' ');
 
   const summary = `${r.method} ${r.path}`;
-  let description = `${r.method.toUpperCase()} request to ${r.path}. Belongs to ${tag}.`;
+  const description = `${r.method.toUpperCase()} request to ${r.path}. Belongs to ${tag}.`;
 
   const responses = {
-    '200': {
+    200: {
       description: 'Successful operation',
       content: {
         'application/json': {
@@ -400,7 +598,12 @@ function getSamplePayload(p, method) {
     };
   }
   if (p === '/api/habits') {
-    return { title: 'Drink 8 Glasses of Water', icon: 'water-outline', color: '#06b6d4', tokens: 30 };
+    return {
+      title: 'Drink 8 Glasses of Water',
+      icon: 'water-outline',
+      color: '#06b6d4',
+      tokens: 30,
+    };
   }
   if (p === '/api/forest/care') {
     return { dateKey: '2026-07-15', careType: 'water', note: 'Staying hydrated and balanced' };
@@ -421,7 +624,12 @@ function getSamplePayload(p, method) {
     return { inviteCode: 'NURA-ABC123' };
   }
   if (p === '/api/partner/permissions') {
-    return { shareCyclePhase: true, shareSymptoms: true, shareIntimacyLog: false, shareAlerts: true };
+    return {
+      shareCyclePhase: true,
+      shareSymptoms: true,
+      shareIntimacyLog: false,
+      shareAlerts: true,
+    };
   }
   if (p === '/api/partner/message') {
     return { text: 'How are you feeling today?' };
@@ -430,7 +638,11 @@ function getSamplePayload(p, method) {
     return { text: 'Are you experiencing fatigue today as well?' };
   }
   if (p === '/api/nominations') {
-    return { nomineeEmail: 'friend@example.com', nomineeName: 'Priya', message: 'Join me on Nura Care!' };
+    return {
+      nomineeEmail: 'friend@example.com',
+      nomineeName: 'Priya',
+      message: 'Join me on Nura Care!',
+    };
   }
   if (p.includes('/nominations') && p.includes('/respond')) {
     return { status: 'accepted' };
@@ -442,13 +654,24 @@ function getSamplePayload(p, method) {
     return { content: 'Can stress delay my period?' };
   }
   if (p === '/api/voice-agent/converse') {
-    return { transcript: 'I want to log my period today', language: 'en-IN', pendingAction: null, confirmed: false };
+    return {
+      transcript: 'I want to log my period today',
+      language: 'en-IN',
+      pendingAction: null,
+      confirmed: false,
+    };
   }
   if (p === '/api/voice-agent/checkin-call') {
     return { phoneNumber: '+919876543210', preferredTime: '18:00' };
   }
   if (p === '/api/community') {
-    return { title: 'First month tracking with Nura', content: 'It helped me predict my cramps in advance!', category: 'success_story', tags: ['tracking'], isAnonymous: true };
+    return {
+      title: 'First month tracking with Nura',
+      content: 'It helped me predict my cramps in advance!',
+      category: 'success_story',
+      tags: ['tracking'],
+      isAnonymous: true,
+    };
   }
   if (p.includes('/community') && p.includes('/comment')) {
     return { content: 'Thank you for sharing your experience!', isAnonymous: false };
@@ -469,16 +692,33 @@ function getSamplePayload(p, method) {
     return { inviteToken: 'tok_abc123', password: 'DoctorSecurePass123!' };
   }
   if (p === '/api/doctor/invite') {
-    return { email: 'doctor@example.com', firstName: 'Dr. Anita', lastName: 'Sharma', specialty: 'Gynecologist', licenseNumber: 'MCI-12345' };
+    return {
+      email: 'doctor@example.com',
+      firstName: 'Dr. Anita',
+      lastName: 'Sharma',
+      specialty: 'Gynecologist',
+      licenseNumber: 'MCI-12345',
+    };
   }
   if (p === '/api/contact') {
-    return { name: 'Sunita Rao', email: 'sunita@example.com', subject: 'Product Inquiry', message: 'I love this app, wanted to ask about family plans.' };
+    return {
+      name: 'Sunita Rao',
+      email: 'sunita@example.com',
+      subject: 'Product Inquiry',
+      message: 'I love this app, wanted to ask about family plans.',
+    };
   }
   if (p === '/api/newsletter/subscribe') {
     return { email: 'subscriber@example.com' };
   }
   if (p === '/api/screening/assess') {
-    return { assessmentType: 'pcos_risk', answers: [{ questionId: 'q1', answer: 'irregular' }, { questionId: 'q2', answer: 'yes' }] };
+    return {
+      assessmentType: 'pcos_risk',
+      answers: [
+        { questionId: 'q1', answer: 'irregular' },
+        { questionId: 'q2', answer: 'yes' },
+      ],
+    };
   }
   if (p === '/api/speech/synthesize') {
     return { text: 'Your next cycle is predicted in 5 days.', language: 'en-IN' };
@@ -549,7 +789,8 @@ To execute protected endpoints in this Swagger UI:
           type: 'http',
           scheme: 'bearer',
           bearerFormat: 'JWT',
-          description: 'Provide your JWT bearer token (e.g., Bearer eyJhbGciOi...) to authorize requests.',
+          description:
+            'Provide your JWT bearer token (e.g., Bearer eyJhbGciOi...) to authorize requests.',
         },
       },
       schemas: {
