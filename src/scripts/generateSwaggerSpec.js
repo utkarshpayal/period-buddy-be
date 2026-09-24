@@ -1,14 +1,113 @@
+// Loaded first so modules pulled in by the routers see the same env as the
+// server (otherwise e.g. utils/jwt.js logs a spurious missing-secret error).
+import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
+import { FEATURE_ROUTES } from '../config/subscriptionRouteRegistry.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const ROOT_DIR = path.resolve(__dirname, '../..');
+const ROUTES_DIR = path.resolve(ROOT_DIR, 'src/routes');
 
-// Read the snapshot of 234 routes
-const routesSnapshot = JSON.parse(
-  fs.readFileSync(path.resolve(__dirname, '../config/allRoutesSnapshot.json'), 'utf8'),
-);
+// Routes registered directly on `app` in index.js rather than in a router
+// file, so router introspection can't see them.
+const APP_LEVEL_ROUTES = [
+  { method: 'GET', path: '/health', group: 'Health', middleware: [] },
+  { method: 'GET', path: '/health/ready', group: 'Health', middleware: [] },
+  { method: 'GET', path: '/api/payments/return', group: 'Payments', middleware: [] },
+  { method: 'POST', path: '/api/logout', group: 'Auth', middleware: ['authenticate'] },
+];
+
+// Authenticated by a shared `x-scheduler-secret` header rather than a JWT
+// (see checkinCallScheduler.js / dailyNotificationScheduler.js).
+const SCHEDULER_SECRET_ROUTES = new Set([
+  'POST /api/voice-agent/checkin-call/scheduler-tick',
+  'POST /api/notifications/daily-tick',
+]);
+
+/**
+ * Walk the real Express routers mounted in index.js, so the spec can never
+ * drift from the code (the old hand-maintained snapshot silently missed new
+ * routes). Returns one entry per method+path with the names of the
+ * middleware in front of its handler, which drive auth/validation docs.
+ */
+async function collectRoutes() {
+  const indexSrc = fs.readFileSync(path.resolve(ROOT_DIR, 'index.js'), 'utf8');
+  const imports = Object.fromEntries(
+    [...indexSrc.matchAll(/import (\w+) from '\.\/src\/routes\/(\w+)\.js'/g)].map((m) => [
+      m[1],
+      m[2],
+    ]),
+  );
+  const mounts = [...indexSrc.matchAll(/app\.use\(\s*'(\/api[^']*)',\s*(\w+)\s*\)/g)]
+    .filter((m) => imports[m[2]])
+    .map((m) => ({ prefix: m[1], file: imports[m[2]] }));
+
+  const routes = [...APP_LEVEL_ROUTES];
+
+  const walk = (router, prefix, group, inherited) => {
+    const routerMiddleware = [...inherited];
+    for (const layer of router.stack) {
+      if (layer.route) {
+        const names = layer.route.stack.map((s) => s.handle.name);
+        const middleware = [...routerMiddleware, ...names.slice(0, -1)];
+        const subPath = layer.route.path === '/' ? '' : layer.route.path;
+        for (const method of Object.keys(layer.route.methods)) {
+          routes.push({ method: method.toUpperCase(), path: prefix + subPath, group, middleware });
+        }
+      } else if (layer.handle?.stack) {
+        // Nested router: Express 4 doesn't keep its mount path in a readable
+        // form, so this assumes nested routers are mounted without a prefix.
+        walk(layer.handle, prefix, group, routerMiddleware);
+      } else {
+        routerMiddleware.push(layer.handle.name);
+      }
+    }
+  };
+
+  for (const { prefix, file } of mounts) {
+    const mod = await import(pathToFileURL(path.resolve(ROUTES_DIR, `${file}.js`)).href);
+    walk(mod.default, prefix, file.replace(/Routes$/, ''), []);
+  }
+
+  return routes;
+}
+
+/**
+ * Pull the `@route METHOD /path` / `@desc` / `@access` JSDoc blocks that
+ * already sit above most route definitions, keyed by "METHOD /path".
+ */
+function collectRouteDocs() {
+  const docs = new Map();
+  for (const file of fs.readdirSync(ROUTES_DIR)) {
+    if (!file.endsWith('.js')) continue;
+    const src = fs.readFileSync(path.resolve(ROUTES_DIR, file), 'utf8');
+    for (const [, block] of src.matchAll(/\/\*\*([\s\S]*?)\*\//g)) {
+      const text = block
+        .split('\n')
+        .map((line) => line.replace(/^\s*\*\s?/, ''))
+        .join('\n');
+      const route = text.match(/@route\s+(GET|POST|PUT|PATCH|DELETE)\s+(\S+)/i);
+      if (!route) continue;
+      const desc = text.match(/@desc\s+([\s\S]*?)(?=\n\s*@|$)/);
+      const access = text.match(/@access\s+(.+)/);
+      docs.set(`${route[1].toUpperCase()} ${route[2]}`, {
+        desc: desc ? desc[1].replace(/\s+/g, ' ').trim() : '',
+        access: access ? access[1].trim() : '',
+      });
+    }
+  }
+  return docs;
+}
+
+function findFeatureKey(r) {
+  // Registry regexes match concrete request paths, so fill params with a
+  // placeholder segment before testing.
+  const samplePath = r.path.replace(/:[^/]+/g, 'x');
+  return FEATURE_ROUTES.find((f) => f.method === r.method && f.path.test(samplePath))?.key;
+}
 
 // Helper to convert Express path to OpenAPI path (:id -> {id})
 function toOpenApiPath(p) {
@@ -235,52 +334,33 @@ function determineTag(r) {
   if (g === 'audit') return 'Audit Trail';
   if (g === 'companyAsset') return 'Company Assets';
   if (g === 'companyFolder') return 'Company Folders';
+  console.warn(`No tag mapping for route group "${g}" (${r.method} ${r.path}) — add one`);
   return 'System & Health';
 }
 
+// Derived from the middleware actually attached to the route, so a route
+// becoming public/private is reflected on the next regenerate.
 function determineSecurity(r) {
-  const p = r.path;
-  const m = r.method;
-
-  // Explicit public endpoints
-  if (p.startsWith('/health') || p === '/api/payments/return') return [];
-  if (p === '/api/auth/signup' || p === '/api/auth/verify-otp' || p === '/api/auth/resend-otp')
-    return [];
-  if (p === '/api/auth/login' || p === '/api/auth/google') return [];
-  if (p.startsWith('/api/auth/account/delete')) return [];
-  if (p === '/api/doctor/set-password') return [];
-  if (p === '/api/subscriptions/plans' || p === '/api/subscriptions/features') return [];
-  if (p === '/api/newsletter/subscribe' || p.startsWith('/api/newsletter/unsubscribe')) return [];
-  if (p === '/api/contact' && m === 'POST') return [];
-  if (p === '/api/company-assets/public') return [];
-
-  // Public GET endpoints for content
-  if (m === 'GET') {
-    if (p === '/api/blogs' || p === '/api/blogs/feed' || p.match(/^\/api\/blogs\/[^/]+$/))
-      return [];
-    if (p === '/api/reels' || p.match(/^\/api\/reels\/[^/]+$/)) return [];
-    if (p === '/api/questions' || p.match(/^\/api\/questions\/[^/]+$/)) {
-      if (!p.includes('/sessions')) return [];
-    }
-    if (p === '/api/health-issues' || p.match(/^\/api\/health-issues\/[^/]+$/)) return [];
-    if (
-      p === '/api/wellbeing' ||
-      p === '/api/wellbeing/games' ||
-      p.match(/^\/api\/wellbeing\/[^/]+$/)
-    )
-      return [];
-  }
-  if (p === '/api/questions/ask' && m === 'POST') return [];
-
-  // Default is protected
-  return [{ bearerAuth: [] }];
+  if (SCHEDULER_SECRET_ROUTES.has(`${r.method} ${r.path}`)) return [{ schedulerSecret: [] }];
+  if (r.middleware.includes('authenticate')) return [{ bearerAuth: [] }];
+  // `{}` = anonymous allowed; a token, if sent, personalises the response.
+  if (r.middleware.includes('optionalAuth')) return [{}, { bearerAuth: [] }];
+  return [];
 }
 
-function generateEndpointSpec(r) {
+const errorResponse = (description, schema = 'StandardErrorResponse') => ({
+  description,
+  content: { 'application/json': { schema: { $ref: `#/components/schemas/${schema}` } } },
+});
+
+function generateEndpointSpec(r, routeDocs) {
   const openPath = toOpenApiPath(r.path);
   const pathParams = extractPathParams(r.path);
   const tag = determineTag(r);
   const security = determineSecurity(r);
+  const requiresJwt = security.length > 0 && security.every((s) => s.bearerAuth);
+  const featureKey = findFeatureKey(r);
+  const doc = routeDocs.get(`${r.method} ${r.path}`);
   const m = r.method.toLowerCase();
 
   const parameters = [];
@@ -390,15 +470,21 @@ function generateEndpointSpec(r) {
     }
   }
 
-  // Build summary & description
-  const cleanAction = r.path
-    .replace('/api/', '')
-    .replace(/\//g, ' ')
-    .replace(/:/g, '')
-    .replace(/-/g, ' ');
-
-  const summary = `${r.method} ${r.path}`;
-  const description = `${r.method.toUpperCase()} request to ${r.path}. Belongs to ${tag}.`;
+  // Summary/description come from the route file's JSDoc where present.
+  const summary = doc?.desc ? doc.desc.split(/(?<=[.;])\s|\s—\s|\s\(/)[0] : undefined;
+  const notes = [];
+  if (doc?.desc) notes.push(doc.desc);
+  if (doc?.access) notes.push(`**Access:** ${doc.access}`);
+  if (r.path.startsWith('/api/admin')) notes.push('Requires the `admin` role.');
+  if (security.some((s) => s.schedulerSecret)) {
+    notes.push('Called by the external scheduler with the `x-scheduler-secret` header.');
+  }
+  if (featureKey) {
+    notes.push(
+      `**Paywalled** by subscription feature \`${featureKey}\` — returns 402 \`FEATURE_LOCKED\` when the user lacks access.`,
+    );
+  }
+  const description = notes.length > 0 ? notes.join('\n\n') : undefined;
 
   const responses = {
     200: {
@@ -426,34 +512,35 @@ function generateEndpointSpec(r) {
     };
   }
 
-  if (security.length > 0) {
-    responses['401'] = {
-      description: 'Unauthorized - Missing or invalid JWT Bearer token',
-      content: {
-        'application/json': {
-          schema: { $ref: '#/components/schemas/StandardErrorResponse' },
-        },
-      },
-    };
-    responses['403'] = {
-      description: 'Forbidden - Insufficient permissions / role restriction',
-      content: {
-        'application/json': {
-          schema: { $ref: '#/components/schemas/StandardErrorResponse' },
-        },
-      },
-    };
+  if (requiresJwt) {
+    responses['401'] = errorResponse('Unauthorized - Missing or invalid JWT Bearer token');
+    responses['403'] = errorResponse('Forbidden - Insufficient permissions / role restriction');
+  } else if (security.some((s) => s.schedulerSecret)) {
+    responses['401'] = errorResponse('Missing or invalid `x-scheduler-secret` header');
+  }
+
+  if (featureKey) {
+    responses['402'] = errorResponse(
+      'Premium feature locked for this user. Body carries the feature price and any plan that unlocks it.',
+      'FeatureLockedResponse',
+    );
+  }
+
+  if (pathParams.length > 0) {
+    responses['404'] = errorResponse('Resource not found');
   }
 
   if (['POST', 'PUT', 'PATCH'].includes(r.method)) {
-    responses['400'] = {
-      description: 'Validation failed or malformed request payload',
-      content: {
-        'application/json': {
-          schema: { $ref: '#/components/schemas/ValidationErrorResponse' },
-        },
-      },
-    };
+    responses['400'] = errorResponse('Malformed request payload or invalid values');
+  }
+
+  // express-validator chains (authSchema/marketingSchema) respond 422.
+  if (r.middleware.includes('handleValidationErrors')) {
+    responses['422'] = errorResponse('Request validation failed', 'ValidationErrorResponse');
+  }
+
+  if (r.path.startsWith('/api/')) {
+    responses['429'] = errorResponse('Too many requests - rate limit exceeded');
   }
 
   const operation = {
@@ -463,21 +550,13 @@ function generateEndpointSpec(r) {
     operationId: `${r.method.toLowerCase()}_${r.path.replace(/[^a-zA-Z0-9]/g, '_')}`,
     parameters: parameters.length > 0 ? parameters : undefined,
     responses,
+    // Always explicit: `[]` marks the route as public in Swagger UI.
+    security,
   };
-
-  if (security.length > 0) {
-    operation.security = security;
-  }
 
   // Request Body for state mutations
   if (['POST', 'PUT', 'PATCH'].includes(r.method)) {
-    // Check if it's a file upload route
-    if (
-      r.path.includes('/upload') ||
-      r.path === '/api/speech/transcribe' ||
-      r.path === '/api/company-assets' ||
-      r.path === '/api/documents'
-    ) {
+    if (r.middleware.includes('multerMiddleware')) {
       operation.requestBody = {
         required: true,
         content: {
@@ -504,14 +583,13 @@ function generateEndpointSpec(r) {
         },
       };
     } else {
+      const example = getSamplePayload(r.path);
       operation.requestBody = {
-        required: true,
+        // Only claim a required body where we actually know its shape.
+        required: Boolean(example),
         content: {
           'application/json': {
-            schema: {
-              type: 'object',
-              example: getSamplePayload(r.path, r.method),
-            },
+            schema: example ? { type: 'object', example } : { type: 'object' },
           },
         },
       };
@@ -521,7 +599,7 @@ function generateEndpointSpec(r) {
   return { openPath, method: m, operation };
 }
 
-function getSamplePayload(p, method) {
+function getSamplePayload(p) {
   if (p === '/api/auth/signup') {
     return {
       firstName: 'Jane',
@@ -723,14 +801,16 @@ function getSamplePayload(p, method) {
   if (p === '/api/speech/synthesize') {
     return { text: 'Your next cycle is predicted in 5 days.', language: 'en-IN' };
   }
-  return { notes: 'Request payload' };
+  return undefined;
 }
 
 async function build() {
+  const routes = await collectRoutes();
+  const routeDocs = collectRouteDocs();
   const pathsObj = {};
 
-  for (const r of routesSnapshot) {
-    const { openPath, method, operation } = generateEndpointSpec(r);
+  for (const r of routes) {
+    const { openPath, method, operation } = generateEndpointSpec(r, routeDocs);
 
     if (!pathsObj[openPath]) {
       pathsObj[openPath] = {};
@@ -738,59 +818,59 @@ async function build() {
     pathsObj[openPath][method] = operation;
   }
 
+  const totalOperations = Object.values(pathsObj).reduce(
+    (n, ops) => n + Object.keys(ops).length,
+    0,
+  );
+  const usedTags = new Set(
+    Object.values(pathsObj).flatMap((ops) => Object.values(ops).map((op) => op.tags[0])),
+  );
+
   const spec = {
     openapi: '3.0.3',
     info: {
-      title: 'Period Buddy / NURA CARE API',
+      title: 'Nura Care API',
       version: '2.0.0',
-      description: `
-## Comprehensive REST API Documentation for Period Buddy & NURA CARE Backend
+      description: `REST API for the Nura Care mobile app, Content Studio, and Doctor Portal.
 
-Welcome to the official interactive OpenAPI 3.0 documentation for the **Period Buddy (NURA CARE)** backend service.
-This backend powers the mobile applications (iOS/Android), the Content Studio web administration portal, the Clinician & Doctor care portal, and partner integrations.
+**Authentication** — Sign in with \`POST /api/auth/login\`, then click **Authorize** and paste the \`token\` from the response. Endpoints without a lock icon are public.
 
-### Key Highlights & Architecture
-- **234 Production Endpoints** spanning 35 core functional modules
-- **Role-Based Access Control**: Public, Authenticated User (\`user\`), Clinician (\`doctor\`), and Super Admin (\`admin\`)
-- **Authentication**: JWT Bearer Tokens with strict bcrypt hashing, rate limiting, and OTP verification
-- **Real-Time Features**: WebSockets for consultation messaging and partner synchronizations
-- **AI Integrations**: Sarvam AI Voice Agent (multilingual voice conversational cycle logging), Gemini AI health insights, and OCR document processing
-- **Payments**: Cashfree Payment Gateway order generation, verification, and coupon engine
-
-### Authentication Guide
-To execute protected endpoints in this Swagger UI:
-1. Call \`POST /api/auth/login\` or \`POST /api/auth/signup\` + \`POST /api/auth/verify-otp\`.
-2. Copy the \`token\` string from the response.
-3. Click the **Authorize 🔓** button at the top right, and paste your JWT token into the **BearerAuth** dialog.
-      `,
+**Errors** — All errors return \`{ success, statusCode, message }\`. Paywalled endpoints return \`402 FEATURE_LOCKED\`.`,
       contact: {
         name: 'Nura Care Engineering Team',
-        email: 'support@thenura.com',
-        url: 'https://thenura.com',
+        email: 'hello@thenura.care',
+        url: 'https://thenura.care',
       },
       license: {
         name: 'Proprietary',
       },
     },
+    // Relative server first so "Try it out" hits whichever host is serving
+    // the docs, instead of defaulting to localhost on a deployed instance.
     servers: [
+      {
+        url: '/',
+        description: 'Current host',
+      },
       {
         url: 'http://localhost:5000',
         description: 'Local Development Server',
       },
-      {
-        url: '/',
-        description: 'Current Environment Relative Server',
-      },
     ],
-    tags: TAGS_METADATA,
+    tags: TAGS_METADATA.filter((t) => usedTags.has(t.name)),
     components: {
       securitySchemes: {
         bearerAuth: {
           type: 'http',
           scheme: 'bearer',
           bearerFormat: 'JWT',
-          description:
-            'Provide your JWT bearer token (e.g., Bearer eyJhbGciOi...) to authorize requests.',
+          description: 'Paste the JWT from the login response (without the "Bearer " prefix).',
+        },
+        schedulerSecret: {
+          type: 'apiKey',
+          in: 'header',
+          name: 'x-scheduler-secret',
+          description: 'Shared secret for the external cron/scheduler tick endpoints.',
         },
       },
       schemas: {
@@ -813,11 +893,45 @@ To execute protected endpoints in this Swagger UI:
           },
           required: ['success', 'statusCode', 'message'],
         },
+        FeatureLockedResponse: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean', example: false },
+            statusCode: { type: 'integer', example: 402 },
+            message: { type: 'string', example: 'AI Assistant is a premium feature' },
+            code: { type: 'string', example: 'FEATURE_LOCKED' },
+            feature: {
+              type: 'object',
+              properties: {
+                key: { type: 'string', example: 'ai_assistant' },
+                name: { type: 'string', example: 'AI Assistant' },
+                description: { type: 'string' },
+                price: { type: 'number', example: 99 },
+                billingCycle: { type: 'string', example: 'monthly' },
+              },
+            },
+            plans: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  _id: { type: 'string' },
+                  name: { type: 'string' },
+                  slug: { type: 'string' },
+                  price: { type: 'number' },
+                  billingCycle: { type: 'string' },
+                  badge: { type: 'string' },
+                },
+              },
+            },
+          },
+          required: ['success', 'statusCode', 'message', 'code', 'feature', 'plans'],
+        },
         ValidationErrorResponse: {
           type: 'object',
           properties: {
             success: { type: 'boolean', example: false },
-            statusCode: { type: 'integer', example: 400 },
+            statusCode: { type: 'integer', example: 422 },
             message: { type: 'string', example: 'Validation failed' },
             errors: {
               type: 'array',
@@ -841,14 +955,16 @@ To execute protected endpoints in this Swagger UI:
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, JSON.stringify(spec, null, 2));
 
-  let totalOperations = 0;
-  for (const p of Object.values(pathsObj)) {
-    totalOperations += Object.keys(p).length;
-  }
-
   console.log(`OpenAPI specification written successfully!`);
   console.log(`Total unique paths: ${Object.keys(pathsObj).length}`);
   console.log(`Total endpoints (operations) documented: ${totalOperations}`);
 }
 
-build();
+// Importing the routers pulls in controllers/models/clients that may hold
+// open handles, so exit explicitly once the file is written.
+build()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
