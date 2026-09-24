@@ -43,8 +43,10 @@ notificationSchema.index({ userId: 1, isRead: 1, createdAt: -1 });
 
 notificationSchema.post('save', async function (doc) {
   try {
-    const user = await User.findById(doc.userId).select('notificationToken');
-    if (user && user.notificationToken) {
+    const user = await User.findById(doc.userId).select('notificationToken notificationsEnabled');
+    // notificationsEnabled is the app's Profile → Notifications toggle. The
+    // in-app row is still saved; only the device push is skipped.
+    if (user && user.notificationToken && user.notificationsEnabled !== false) {
       await sendPushNotification(user.notificationToken, {
         title: doc.title,
         body: doc.body,

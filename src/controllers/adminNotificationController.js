@@ -14,6 +14,7 @@ import {
 import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
 import { isFcmReady, sendPushNotification } from '../utils/fcm.js';
 import { buildAudienceFilter, enqueueBroadcast, laneFor } from '../utils/pushBroadcastWorker.js';
+import { parseNotificationRoute } from '../utils/notificationRoute.js';
 
 const TITLE_MAX = 100;
 const BODY_MAX = 500;
@@ -54,7 +55,11 @@ const countAudience = async (audience, userIds) => {
   const filter = buildAudienceFilter(audience, userIds);
   const [totalUsers, totalWithToken] = await Promise.all([
     User.countDocuments(filter),
-    User.countDocuments({ ...filter, notificationToken: { $nin: [null, ''] } }),
+    User.countDocuments({
+      ...filter,
+      notificationToken: { $nin: [null, ''] },
+      notificationsEnabled: { $ne: false },
+    }),
   ]);
   return { totalUsers, totalWithToken };
 };
@@ -96,15 +101,19 @@ export const searchRecipients = async (req, res, next) => {
       ...buildAudienceFilter('all'),
       $or: [{ firstName: rx }, { lastName: rx }, { email: rx }, { phone: rx }],
     })
-      .select('firstName lastName email phone role profilePicture notificationToken')
+      .select(
+        'firstName lastName email phone role profilePicture notificationToken notificationsEnabled',
+      )
       .sort({ createdAt: -1 })
       .limit(20)
       .lean();
 
     return sendResponse(res, HTTP_STATUS.OK, 'Recipients fetched', {
-      users: users.map(({ notificationToken, ...u }) => ({
+      users: users.map(({ notificationToken, notificationsEnabled, ...u }) => ({
         ...u,
-        hasDevice: Boolean(notificationToken),
+        // "Can receive a push": has a registered device and hasn't turned
+        // notifications off in the app.
+        hasDevice: Boolean(notificationToken) && notificationsEnabled !== false,
       })),
     });
   } catch (error) {
@@ -129,10 +138,13 @@ export const sendTestNotification = async (req, res, next) => {
       );
     }
 
+    const parsedRoute = parseNotificationRoute(req.body.route);
+    if (parsedRoute.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, parsedRoute.error);
+
     const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     if (!email) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Email is required');
 
-    const user = await User.findOne({ email }).select('_id notificationToken');
+    const user = await User.findOne({ email }).select('_id notificationToken notificationsEnabled');
     if (!user) return sendError(res, HTTP_STATUS.NOT_FOUND, 'No user with that email');
     if (!user.notificationToken) {
       return sendError(
@@ -141,11 +153,22 @@ export const sendTestNotification = async (req, res, next) => {
         'That user has no registered device — they need to log in on the app first',
       );
     }
+    if (user.notificationsEnabled === false) {
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        'That user has turned notifications off in the app (Profile → Notifications)',
+      );
+    }
 
     const messageId = await sendPushNotification(user.notificationToken, {
       title: msg.title,
       body: msg.body,
-      data: { type: 'system', test: 'true' },
+      data: {
+        type: 'system',
+        test: 'true',
+        ...(parsedRoute.route && { route: parsedRoute.route }),
+      },
     });
     if (!messageId) {
       return sendError(res, HTTP_STATUS.BAD_GATEWAY, 'Firebase rejected the notification');
@@ -169,7 +192,8 @@ export const sendTestNotification = async (req, res, next) => {
  * POST /api/admin/notifications/broadcasts — queue a push to every user in
  * the audience. Returns 202 immediately; the worker sends in batches in the
  * background and the admin polls GET /broadcasts/:id for progress.
- * Body: { title, body, audience?, saveToInbox? }
+ * Body: { title, body, audience?, userIds?, saveToInbox?, route? } — `route` is an
+ * optional in-app path (e.g. "/tracker") the notification opens when tapped.
  */
 export const createBroadcast = async (req, res, next) => {
   try {
@@ -184,6 +208,10 @@ export const createBroadcast = async (req, res, next) => {
     }
 
     const audience = parseAudience(req.body.audience);
+
+    // Optional in-app screen the notification opens when tapped.
+    const parsedRoute = parseNotificationRoute(req.body.route);
+    if (parsedRoute.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, parsedRoute.error);
 
     let userIds;
     let recipientPreview;
@@ -223,6 +251,7 @@ export const createBroadcast = async (req, res, next) => {
       audience,
       userIds,
       recipientPreview,
+      data: parsedRoute.route ? { route: parsedRoute.route } : undefined,
       saveToInbox: req.body.saveToInbox !== false,
       ...counts,
       createdBy: req.userId,

@@ -125,7 +125,7 @@ const processBroadcast = async (id) => {
       })
         .sort({ _id: 1 })
         .limit(BATCH_SIZE)
-        .select('_id notificationToken')
+        .select('_id notificationToken notificationsEnabled')
         .lean();
 
       if (users.length === 0) {
@@ -157,7 +157,16 @@ const processBroadcast = async (id) => {
       }
 
       // Dedupe: one device can be registered on multiple accounts.
-      const tokens = [...new Set(users.map((u) => u.notificationToken).filter(Boolean))];
+      // Users who turned notifications off in the app still get the inbox row
+      // above, just no device push.
+      const tokens = [
+        ...new Set(
+          users
+            .filter((u) => u.notificationsEnabled !== false)
+            .map((u) => u.notificationToken)
+            .filter(Boolean),
+        ),
+      ];
       const result = await sendWithRetry(tokens, payload, id);
 
       if (result.deadTokens.length > 0) {

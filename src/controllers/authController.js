@@ -487,8 +487,10 @@ export const changePassword = async (req, res, next) => {
  */
 export const logout = async (req, res, next) => {
   try {
-    // In a real application, you might want to implement token blacklisting
-    // For now, just return success message
+    // In a real application, you might want to implement token blacklisting.
+    // Drop this device's push token so a logged-out phone stops receiving
+    // this account's notifications (period reminders, partner updates, ...).
+    await User.updateOne({ _id: req.userId }, { $unset: { notificationToken: 1 } });
     return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.LOGOUT_SUCCESS);
   } catch (error) {
     next(error);
@@ -591,10 +593,19 @@ export const getDashboardSummary = async (req, res, next) => {
 
 export const updateFcmToken = async (req, res, next) => {
   try {
-    const { token } = req.body;
+    const token = typeof req.body.token === 'string' ? req.body.token.trim() : '';
     if (!token) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Token is required');
     }
+
+    // A device token belongs to one install. If another account previously
+    // signed in on this phone (and was never logged out server-side, e.g. a
+    // session that just expired), it would otherwise keep receiving that
+    // account's pushes here.
+    await User.updateMany(
+      { _id: { $ne: req.userId }, notificationToken: token },
+      { $unset: { notificationToken: 1 } },
+    );
 
     const user = await User.findByIdAndUpdate(
       req.userId,
