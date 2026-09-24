@@ -2,12 +2,20 @@ import swaggerUi from 'swagger-ui-express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import logger from '../utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const openApiSpecPath = path.resolve(__dirname, 'openApiSpec.json');
 const swaggerDocument = JSON.parse(fs.readFileSync(openApiSpecPath, 'utf8'));
+
+// The spec maps every admin/internal endpoint, so it's off in production
+// unless explicitly opted in with SWAGGER_ENABLED=true.
+const swaggerEnabled =
+  process.env.SWAGGER_ENABLED !== undefined
+    ? process.env.SWAGGER_ENABLED === 'true'
+    : process.env.NODE_ENV !== 'production';
 
 const customCss = `
   .swagger-ui .topbar {
@@ -21,11 +29,6 @@ const customCss = `
     font-size: 1.15rem;
     display: flex;
     align-items: center;
-  }
-  .swagger-ui .topbar .topbar-wrapper a::before {
-    content: "🌸 ";
-    margin-right: 6px;
-    font-size: 1.3rem;
   }
   .swagger-ui .info {
     margin: 25px 0;
@@ -65,7 +68,7 @@ const customCss = `
 `;
 
 const swaggerOptions = {
-  customSiteTitle: 'Period Buddy / NURA CARE API Docs',
+  customSiteTitle: 'Nura Care API Docs',
   customCss,
   customfavIcon: 'https://thenura.com/favicon.ico',
   swaggerOptions: {
@@ -80,14 +83,22 @@ const swaggerOptions = {
 
 /**
  * Configure and attach Swagger UI documentation endpoints to the Express app.
+ * The spec is a generated file — run `npm run swagger:generate` after
+ * adding/changing routes.
  *
  * @param {import('express').Application} app
  */
 export function setupSwagger(app) {
+  if (!swaggerEnabled) {
+    logger.info('swagger_disabled | Swagger UI off (set SWAGGER_ENABLED=true to enable)', {
+      action: 'swagger_disabled',
+    });
+    return;
+  }
+
   // Raw OpenAPI specification JSON endpoint for Postman / external import
   app.get('/api-docs.json', (req, res) => {
-    res.setHeader('Content-Type', 'application/json');
-    res.send(swaggerDocument);
+    res.json(swaggerDocument);
   });
 
   // Interactive Swagger UI documentation
