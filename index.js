@@ -52,6 +52,7 @@ import companyFolderRoutes from './src/routes/companyFolderRoutes.js';
 import adminRoutes from './src/routes/adminRoutes.js';
 import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
 import adminSubscriptionRoutes from './src/routes/adminSubscriptionRoutes.js';
+import { setupSwagger } from './src/docs/swagger.js';
 
 const app = express();
 
@@ -163,6 +164,11 @@ app.get('/api/payments/return', (req, res) => {
         '<p>Payment received. You can return to the Nura app now.</p></body></html>',
     );
 });
+
+/* ──────────────────────────────────────────────────────────
+   Swagger API Documentation
+────────────────────────────────────────────────────────── */
+setupSwagger(app);
 
 /* ──────────────────────────────────────────────────────────
    API Routes

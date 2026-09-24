@@ -11,6 +11,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "node --test src/**/__tests__/*.test.js",
+    "swagger:generate": "node src/scripts/generateSwaggerSpec.js",
     "prepare": "if [ \"$NODE_ENV\" != \"production\" ]; then husky; fi"
   },
   "keywords": [],
@@ -41,6 +42,7 @@
     "resend": "^6.17.2",
     "sharp": "^0.35.3",
     "slugify": "^1.6.9",
+    "swagger-ui-express": "^5.0.1",
     "winston": "^3.19.0",
     "ws": "^8.21.0"
   },
