@@ -38,6 +38,20 @@ import speechRoutes from './src/routes/speechRoutes.js';
 import screeningRoutes from './src/routes/screeningRoutes.js';
 import insightRoutes from './src/routes/insightRoutes.js';
 import voiceAgentRoutes from './src/routes/voiceAgentRoutes.js';
+<<<<<<< HEAD
+=======
+import notificationRoutes from './src/routes/notificationRoutes.js';
+import doctorRoutes from './src/routes/doctorRoutes.js';
+import schemeRoutes from './src/routes/schemeRoutes.js';
+import schemeApplicationRoutes from './src/routes/schemeApplicationRoutes.js';
+import auditRoutes from './src/routes/auditRoutes.js';
+import companyAssetRoutes from './src/routes/companyAssetRoutes.js';
+import companyFolderRoutes from './src/routes/companyFolderRoutes.js';
+import adminRoutes from './src/routes/adminRoutes.js';
+import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
+import adminSubscriptionRoutes from './src/routes/adminSubscriptionRoutes.js';
+import { setupSwagger } from './src/docs/swagger.js';
+>>>>>>> f0bae4a (chore: backup current main code)
 
 const app = express();
 
@@ -91,6 +105,11 @@ app.get('/health', (req, res) => {
     environment: process.env.NODE_ENV || 'development',
   });
 });
+
+/* ──────────────────────────────────────────────────────────
+   Swagger API Documentation
+────────────────────────────────────────────────────────── */
+setupSwagger(app);
 
 /* ──────────────────────────────────────────────────────────
    API Routes

@@ -10,8 +10,14 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+<<<<<<< HEAD
     "test": "echo \"Error: no test specified\" && exit 1",
     "prepare": "husky"
+=======
+    "test": "node --test src/**/__tests__/*.test.js",
+    "swagger:generate": "node src/scripts/generateSwaggerSpec.js",
+    "prepare": "node -e \"if (process.env.NODE_ENV !== 'production') { try { import('child_process').then(cp => cp.execSync('npx husky', { stdio: 'inherit' })); } catch (e) {} }\""
+>>>>>>> f0bae4a (chore: backup current main code)
   },
   "keywords": [],
   "author": "",
@@ -41,6 +47,7 @@
     "resend": "^6.17.2",
     "sharp": "^0.35.3",
     "slugify": "^1.6.9",
+    "swagger-ui-express": "^5.0.1",
     "winston": "^3.19.0",
     "ws": "^8.21.0"
   },
