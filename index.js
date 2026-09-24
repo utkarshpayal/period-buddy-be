@@ -38,6 +38,7 @@ import speechRoutes from './src/routes/speechRoutes.js';
 import screeningRoutes from './src/routes/screeningRoutes.js';
 import insightRoutes from './src/routes/insightRoutes.js';
 import voiceAgentRoutes from './src/routes/voiceAgentRoutes.js';
+import { setupSwagger } from './src/docs/swagger.js';
 
 const app = express();
 
@@ -91,6 +92,11 @@ app.get('/health', (req, res) => {
     environment: process.env.NODE_ENV || 'development',
   });
 });
+
+/* ──────────────────────────────────────────────────────────
+   Swagger API Documentation
+────────────────────────────────────────────────────────── */
+setupSwagger(app);
 
 /* ──────────────────────────────────────────────────────────
    API Routes
