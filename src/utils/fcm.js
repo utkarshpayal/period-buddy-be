@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import logger from './logger.js';
+import User from '../models/User.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,8 +76,24 @@ try {
 const DEAD_TOKEN_CODES = new Set([
   'messaging/registration-token-not-registered',
   'messaging/invalid-registration-token',
-  'messaging/invalid-argument',
 ]);
+
+// 'messaging/invalid-argument' is ambiguous: FCM's HTTP v1 API returns it both
+// for a malformed token *and* for a malformed message. Only treat it as a dead
+// token when the error actually blames the token — otherwise one bad payload
+// would wipe the token of every recipient it was sent to.
+const isDeadTokenError = (error) =>
+  Boolean(error) &&
+  (DEAD_TOKEN_CODES.has(error.code) ||
+    (error.code === 'messaging/invalid-argument' &&
+      /registration token/i.test(error.message || '')));
+
+// Must match the Android notification channel the app creates
+// (The-Nura-App/lib/notifications.ts → ANDROID_CHANNEL_ID). A notification
+// shown by the system while the app is killed/backgrounded uses this id; if
+// it doesn't exist on the device, Android drops to a low-importance fallback
+// channel (no heads-up banner).
+export const ANDROID_CHANNEL_ID = 'default';
 
 // Max messages per sendEach() call, enforced by FCM.
 export const FCM_MAX_BATCH_SIZE = 500;
@@ -94,9 +111,12 @@ const buildMessage = (token, { title, body, data }) => ({
   // lib/notifications.ts). Android references the raw resource name
   // without its extension; iOS/APNs needs the exact bundled filename.
   android: {
+    // High priority so Doze/app-standby don't defer delivery and the banner
+    // shows as heads-up.
+    priority: 'high',
     notification: {
       sound: 'notification',
-      channelId: 'default',
+      channelId: ANDROID_CHANNEL_ID,
     },
   },
   apns: {
@@ -108,7 +128,10 @@ const buildMessage = (token, { title, body, data }) => ({
   },
   data: data
     ? Object.entries(data).reduce((acc, [key, val]) => {
-        acc[key] = String(val); // FCM data fields must be strings
+        if (val === undefined || val === null) return acc;
+        // FCM data fields must be strings; objects would otherwise arrive as
+        // "[object Object]".
+        acc[key] = typeof val === 'object' ? JSON.stringify(val) : String(val);
         return acc;
       }, {})
     : {},
@@ -139,8 +162,17 @@ export const sendPushNotification = async (token, { title, body, data }) => {
   } catch (error) {
     logger.error('fcm_send_error | Failed to send push notification', {
       token,
+      code: error.code,
       error: error.message,
     });
+    // Uninstalled app / rotated token: drop it so we stop sending to it and
+    // the admin "has device" counts stay honest.
+    if (isDeadTokenError(error)) {
+      await User.updateMany(
+        { notificationToken: token },
+        { $unset: { notificationToken: 1 } },
+      ).catch(() => {});
+    }
   }
 };
 
@@ -166,7 +198,7 @@ export const sendPushBatch = async (tokens, payload) => {
 
   const deadTokens = [];
   response.responses.forEach((r, i) => {
-    if (!r.success && DEAD_TOKEN_CODES.has(r.error?.code)) deadTokens.push(tokens[i]);
+    if (!r.success && isDeadTokenError(r.error)) deadTokens.push(tokens[i]);
   });
 
   return {

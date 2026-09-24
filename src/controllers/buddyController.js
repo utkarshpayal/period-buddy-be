@@ -8,6 +8,7 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { escapeRegex, isValidObjectId } from '../utils/apiHelpers.js';
 import { scoreBuddyCompatibility } from '../utils/buddyMatching.js';
 import { broadcastToRoom } from '../config/websocket.js';
+import logger from '../utils/logger.js';
 
 /**
  * Buddy pairing — one canonical BuddyMatch document per pairing (see the model).
@@ -285,7 +286,22 @@ export const nominateBuddy = async (req, res, next) => {
     });
 
     const members = memberPair(req.userId, candidate._id);
+    const pairKey = pairKeyOf(req.userId, candidate._id);
     const roomKey = crypto.randomUUID();
+
+    // `pairKey` is unique across ALL statuses, so a leftover non-active row for
+    // this exact pair (e.g. the 'ended' rows migrateBuddyPairs.js writes for
+    // pairings that had already ended under the old model) would otherwise
+    // block this pair from ever reconnecting. Both members were just verified
+    // to have no active pairing, so any row for this pair is stale.
+    const stale = await BuddyMatch.find({ pairKey, status: { $ne: 'active' } })
+      .select('_id')
+      .lean();
+    if (stale.length) {
+      const staleIds = stale.map((s) => s._id);
+      await BuddyMessage.deleteMany({ matchId: { $in: staleIds } });
+      await BuddyMatch.deleteMany({ _id: { $in: staleIds } });
+    }
     const welcomeText =
       'Hey period buddy. Our cycle windows look close this month. How are you feeling today?';
 
@@ -309,12 +325,44 @@ export const nominateBuddy = async (req, res, next) => {
         ],
       });
     } catch (err) {
-      // Unique index race: the pair got created by a concurrent request.
       if (err?.code === 11000) {
+        const dupFields = Object.keys(err.keyPattern || err.keyValue || {});
+
+        if (dupFields.includes('pairKey')) {
+          // Genuine race: both members nominated each other concurrently and
+          // the other request won. That's the pairing they both wanted —
+          // return it instead of an error.
+          const existing = await BuddyMatch.findOne({ pairKey, status: 'active' });
+          if (existing) {
+            const card = await projectMatchForUser(existing, req.userId);
+            return sendResponse(res, HTTP_STATUS.OK, 'Buddy nominated', {
+              match: card,
+              tokensAwarded: 0,
+            });
+          }
+          return sendError(
+            res,
+            HTTP_STATUS.CONFLICT,
+            'This buddy just connected with someone else — try another match',
+          );
+        }
+
+        // Any other duplicate key is NOT "buddy already connected" — it's a
+        // leftover index from the old per-user schema (e.g.
+        // userId_1_matchKey_1_status_1, which indexes every new pairing as
+        // all-null and rejects all but the first). Log it loudly so it's
+        // diagnosable instead of masquerading as a busy buddy; fix by running
+        // src/scripts/migrateBuddyPairs.js (drops stale indexes).
+        logger.error('buddy_nominate_stale_index', {
+          action: 'buddy_nominate_stale_index',
+          userId: String(req.userId),
+          keyPattern: err.keyPattern,
+          index: err.message,
+        });
         return sendError(
           res,
-          HTTP_STATUS.CONFLICT,
-          'This buddy just connected with someone else — try another match',
+          HTTP_STATUS.INTERNAL_SERVER_ERROR,
+          "We couldn't connect you with this buddy right now. Please try again later.",
         );
       }
       throw err;
