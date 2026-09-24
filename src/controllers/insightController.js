@@ -185,7 +185,13 @@ export const getDailyInsights = async (req, res, next) => {
     if (pregnancyMode) {
       template = { ...PREGNANCY_TEMPLATE };
     } else if (settings) {
-      phase = computeCyclePredictions(settings).currentPhase;
+      // Anchor on the user's actual logged period history, not just the
+      // configured lastPeriodStartDate — without this, the phase shown here
+      // can drift out of sync with the tracker screen (getPredictions,
+      // which does pass logs) whenever a real logged period postdates the
+      // originally configured date.
+      const logs = await CycleLog.find({ userId: req.userId }).sort({ dateKey: 1 });
+      phase = computeCyclePredictions(settings, logs).currentPhase;
       template = { ...(PHASE_TEMPLATES[phase] || PHASE_TEMPLATES.follicular) };
       template.moodInsight = latestLog?.mood
         ? MOOD_INSIGHTS[latestLog.mood] || MOOD_INSIGHTS.neutral

@@ -7,6 +7,7 @@ import logger from '../utils/logger.js';
 import { createPartnerNotification } from './partnerController.js';
 import {
   dateFromDateKey,
+  normalizeBoolean,
   normalizeStringArray,
   pickDefined,
   validateDateKey,
@@ -16,13 +17,29 @@ import {
   buildCycleAnalytics,
   calculateTrackingStreak,
   computeCyclePredictions,
-  diffDays,
-  getCyclePhase,
 } from '../utils/cycle.js';
 
 /* ──────────────────────────────────────────────
    Controllers
 ────────────────────────────────────────────── */
+
+// The Samvaad voice agent sends "not_discussed" (a string) for any topic the
+// caller skipped, rather than omitting the field, and sends its numeric
+// fields (sleepHours/waterIntake/weight/temperature/stressLevel) as strings.
+// Strip the placeholder and coerce numerics here so a skipped topic never
+// hits Mongoose as an invalid enum value / cast target and fails the whole
+// day's log.
+const NOT_DISCUSSED = 'not_discussed';
+
+const sanitizeEnumField = (value) =>
+  typeof value === 'string' && value.trim().toLowerCase() === NOT_DISCUSSED ? undefined : value;
+
+const sanitizeNumberField = (value) => {
+  const stripped = sanitizeEnumField(value);
+  if (stripped === undefined || stripped === null || stripped === '') return undefined;
+  const num = Number(stripped);
+  return Number.isFinite(num) ? num : undefined;
+};
 
 /**
  * Shared upsert used by both the REST endpoint (saveCycleLog) and the voice
@@ -46,10 +63,23 @@ export const upsertCycleLog = async (userId, payload) => {
     stressLevel,
     medication,
     digestion,
+    digestions,
     skin,
+    skins,
     discharge,
     exercise,
+    moods,
+    timezoneOffsetMinutes,
   } = payload;
+
+  // The client's local "today" — day logs are keyed by local date, so the
+  // streak must anchor to the user's local date, not server UTC. `timezone
+  // OffsetMinutes` is Date.prototype.getTimezoneOffset() from the client
+  // (UTC−local, e.g. −330 for IST). Falls back to UTC when absent.
+  const tzOffset = Number(timezoneOffsetMinutes);
+  const clientTodayKey = Number.isFinite(tzOffset)
+    ? new Date(Date.now() - tzOffset * 60000).toISOString().slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
 
   if (!dateKey || !validateDateKey(dateKey)) {
     throw Object.assign(new Error('dateKey is required (YYYY-MM-DD)'), {
@@ -59,48 +89,70 @@ export const upsertCycleLog = async (userId, payload) => {
 
   const date = dateFromDateKey(dateKey);
   const settings = await CycleSettings.findOne({ userId });
-  // Offset (in days) from the tracked cycle start; can be negative for dates
-  // logged before lastPeriodStartDate (e.g. backfilled history).
-  const cycleLength = settings?.cycleLength || 28;
-  const offset = settings ? diffDays(date, settings.lastPeriodStartDate) : undefined;
-  // Wrap with a true modulo (not JS's remainder, which keeps the sign of the
-  // dividend) so dates before the tracked start land on the correct day of the
-  // *previous* cycle instead of all collapsing onto cycleDay 1 / "period".
-  const normalizedCycleDay =
-    offset !== undefined ? (((offset % cycleLength) + cycleLength) % cycleLength) + 1 : undefined;
-  const phase = normalizedCycleDay
-    ? getCyclePhase(normalizedCycleDay, settings?.periodLength || 5, cycleLength)
-    : undefined;
+
+  // The streak calc further down needs its own bounded-window log fetch
+  // (see its comment below); pulled up here and reused for cycleDay/phase
+  // too, so this stays one query instead of two.
+  const streakWindowStart = new Date();
+  streakWindowStart.setDate(streakWindowStart.getDate() - 730);
+  const recentLogs = await CycleLog.find({
+    userId,
+    dateKey: { $gte: streakWindowStart.toISOString().slice(0, 10) },
+  })
+    .select('dateKey flow date')
+    .lean();
+
+  // cycleDay/phase are derived through the same episode-based anchor
+  // getPredictions/insights/partner-view use (computeCyclePredictions,
+  // anchored at this log's own date via `options.today`), instead of a raw
+  // offset from the user-configured, only-user-edited
+  // CycleSettings.lastPeriodStartDate — which drifts out of sync from a
+  // user's real logged periods over time (see fixes.md 1.4: insightController
+  // and partnerController already had to make this same switch).
+  const predictionsAtDate = settings
+    ? computeCyclePredictions(settings, recentLogs, { today: date })
+    : null;
+  const normalizedCycleDay = predictionsAtDate?.currentCycleDay;
+  const phase = predictionsAtDate?.currentPhase;
 
   const isNewLog = !(await CycleLog.findOne({ userId, dateKey }));
   const tokensEarned = isNewLog ? 5 : 1;
   const update = pickDefined(
     {
       date,
-      flow,
-      mood,
-      energy,
+      flow: sanitizeEnumField(flow),
+      mood: sanitizeEnumField(mood),
+      moods: moods !== undefined ? normalizeStringArray(moods) : undefined,
+      energy: sanitizeEnumField(energy),
       symptoms: normalizeStringArray(symptoms),
       note: note?.trim(),
-      isIntimate: typeof isIntimate === 'boolean' ? isIntimate : undefined,
+      isIntimate:
+        typeof isIntimate === 'boolean'
+          ? isIntimate
+          : sanitizeEnumField(isIntimate) !== undefined
+            ? normalizeBoolean(isIntimate)
+            : undefined,
       cycleDay: normalizedCycleDay,
       phase,
       rewardPoints: tokensEarned,
-      sleepHours,
-      waterIntake,
-      weight,
-      temperature,
-      stressLevel,
+      sleepHours: sanitizeNumberField(sleepHours),
+      waterIntake: sanitizeNumberField(waterIntake),
+      weight: sanitizeNumberField(weight),
+      temperature: sanitizeNumberField(temperature),
+      stressLevel: sanitizeNumberField(stressLevel),
       medication: medication !== undefined ? normalizeStringArray(medication) : undefined,
-      digestion,
-      skin,
-      discharge,
+      digestion: sanitizeEnumField(digestion),
+      digestions: digestions !== undefined ? normalizeStringArray(digestions) : undefined,
+      skin: sanitizeEnumField(skin),
+      skins: skins !== undefined ? normalizeStringArray(skins) : undefined,
+      discharge: sanitizeEnumField(discharge),
       exercise: exercise !== undefined ? normalizeStringArray(exercise) : undefined,
     },
     [
       'date',
       'flow',
       'mood',
+      'moods',
       'energy',
       'symptoms',
       'note',
@@ -115,25 +167,83 @@ export const upsertCycleLog = async (userId, payload) => {
       'stressLevel',
       'medication',
       'digestion',
+      'digestions',
       'skin',
+      'skins',
       'discharge',
       'exercise',
     ],
   );
 
-  const cycleLog = await CycleLog.findOneAndUpdate({ userId, dateKey }, update, {
-    new: true,
-    upsert: true,
-    runValidators: true,
-  });
-
-  // Update user token count and tracking streak
-  const userUpdates = {};
-  if (isNewLog) {
-    userUpdates.$inc = { walletBalance: tokensEarned };
+  // `wasNewlyCreated` is derived from the upsert's own result
+  // (`updatedExisting`), not the earlier `isNewLog` pre-read — two
+  // concurrent requests for the same (userId, dateKey) both used to read
+  // "no log yet" before either write landed, so both credited the "new log"
+  // bonus even though CycleLog's unique (userId, dateKey) constraint made
+  // the upsert itself land as one document. The wallet `$inc` below is
+  // gated on this atomic result; `rewardPoints` stored on the document
+  // itself is cosmetic (per-request display value) and unaffected.
+  let result;
+  try {
+    result = await CycleLog.findOneAndUpdate({ userId, dateKey }, update, {
+      new: true,
+      upsert: true,
+      runValidators: true,
+      includeResultMetadata: true,
+    });
+  } catch (error) {
+    // `runValidators` validates the whole merged update in one atomic op —
+    // one out-of-range field (e.g. a garbled voice-logged temperature/
+    // stressLevel) would otherwise discard the *entire* day's log, including
+    // every other valid field in the same request. Drop just the field(s)
+    // Mongoose flagged and retry once, rather than losing the whole update.
+    if (error?.name === 'ValidationError' && error.errors) {
+      const invalidPaths = Object.keys(error.errors);
+      const retryUpdate = { ...update };
+      invalidPaths.forEach((path) => delete retryUpdate[path]);
+      logger.warn('cycle_log_field_dropped', {
+        action: 'cycle_log_field_dropped',
+        userId,
+        dateKey,
+        invalidPaths,
+      });
+      result = await CycleLog.findOneAndUpdate({ userId, dateKey }, retryUpdate, {
+        new: true,
+        upsert: true,
+        runValidators: true,
+        includeResultMetadata: true,
+      });
+    } else {
+      throw error;
+    }
   }
-  const allUserLogs = await CycleLog.find({ userId });
-  const currentStreak = calculateTrackingStreak(allUserLogs);
+  const cycleLog = result.value;
+  const wasNewlyCreated = !result.lastErrorObject?.updatedExisting;
+
+  // Update user token count and tracking streak. Wallet credit only ever
+  // applies to the request that actually created the log (matches the
+  // pre-existing behavior of only rewarding brand-new logs, not edits to an
+  // existing day) — just gated on the atomic result instead of the earlier
+  // pre-read, so two concurrent requests for the same new day can't both
+  // credit the "new log" bonus.
+  const userUpdates = {};
+  if (wasNewlyCreated) {
+    userUpdates.$inc = { walletBalance: 5 };
+  }
+  // The streak only walks back *consecutive* days from today, so it never needs
+  // more than a bounded recent window — and it only reads `dateKey`. Re-fetched
+  // here (rather than reusing the pre-write `recentLogs` above) since it must
+  // reflect the log just written above, and pulls just that field as lean
+  // objects to stay cheap on this hot write path.
+  const postWriteStreakWindowStart = new Date();
+  postWriteStreakWindowStart.setDate(postWriteStreakWindowStart.getDate() - 730);
+  const postWriteRecentLogs = await CycleLog.find({
+    userId,
+    dateKey: { $gte: postWriteStreakWindowStart.toISOString().slice(0, 10) },
+  })
+    .select('dateKey')
+    .lean();
+  const currentStreak = calculateTrackingStreak(postWriteRecentLogs, clientTodayKey);
   userUpdates.$set = { streakCount: currentStreak };
 
   await User.findByIdAndUpdate(userId, userUpdates);
@@ -147,17 +257,22 @@ export const upsertCycleLog = async (userId, payload) => {
     `${name} updated their cycle log for ${dateKey}.`,
   );
 
+  // Report the atomic result to the caller/logs, not the pre-read guess —
+  // a request that thought it was creating the log but lost the race
+  // actually only earned the smaller "update" bonus.
+  const reportedTokensEarned = wasNewlyCreated ? 5 : 1;
+
   logger.info('cycle_log_saved', {
     action: 'cycle_log_saved',
     userId,
     dateKey,
     flow,
     phase,
-    isNewLog,
-    tokensEarned,
+    isNewLog: wasNewlyCreated,
+    tokensEarned: reportedTokensEarned,
   });
 
-  return { cycleLog, tokensEarned, isNewLog, phase };
+  return { cycleLog, tokensEarned: reportedTokensEarned, isNewLog: wasNewlyCreated, phase };
 };
 
 /** POST /api/cycle/log — Upsert a day's cycle log */
@@ -246,6 +361,7 @@ export const saveCycleSettings = async (req, res, next) => {
       fertilityReminder,
       pregnancyMode,
       trackingGoal,
+      trackingGoals,
     } = req.body;
 
     if (!lastPeriodStartDate) {
@@ -259,9 +375,9 @@ export const saveCycleSettings = async (req, res, next) => {
     }
     if (
       reminderDaysBefore !== undefined &&
-      (Number(reminderDaysBefore) < 0 || Number(reminderDaysBefore) > 14)
+      (Number(reminderDaysBefore) < 0 || Number(reminderDaysBefore) > 10)
     ) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'reminderDaysBefore must be between 0 and 14');
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'reminderDaysBefore must be between 0 and 10');
     }
 
     const updates = pickDefined(
@@ -275,6 +391,8 @@ export const saveCycleSettings = async (req, res, next) => {
         fertilityReminder,
         pregnancyMode,
         trackingGoal,
+        trackingGoals:
+          trackingGoals !== undefined ? normalizeStringArray(trackingGoals) : undefined,
       },
       [
         'lastPeriodStartDate',
@@ -286,6 +404,7 @@ export const saveCycleSettings = async (req, res, next) => {
         'fertilityReminder',
         'pregnancyMode',
         'trackingGoal',
+        'trackingGoals',
       ],
     );
 
@@ -327,8 +446,11 @@ export const getPredictions = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Please set up your cycle settings first');
     }
 
-    const predictions = computeCyclePredictions(settings);
     const logs = await CycleLog.find({ userId: req.userId }).sort({ dateKey: 1 });
+    // Pass the full log history so the prediction is anchored on the user's
+    // actual logged periods (and their real cycle-length variability), not a
+    // fixed configured cycle length.
+    const predictions = computeCyclePredictions(settings, logs);
     const analyticsData = buildCycleAnalytics(logs, settings).map((item) => ({
       month: new Date(`${item.month}-01T00:00:00.000Z`).toLocaleDateString('en-US', {
         month: 'short',
@@ -402,27 +524,35 @@ export const getSymptomPredictions = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Please set up your cycle settings first');
     }
 
-    const cycleLength = settings.cycleLength || 28;
-    const periodLength = settings.periodLength || 5;
-    const nextCycleStart = computeCyclePredictions(settings).nextPeriodDateKey;
+    // All logs (not just symptom ones) are needed so computeCyclePredictions
+    // can derive real period episodes for the anchor below — narrowing the
+    // query to `symptoms`-bearing logs only would silently exclude period-
+    // flow logs from episode detection, corrupting the very anchor this fix
+    // exists to use.
+    const allLogs = await CycleLog.find({ userId: req.userId }).sort({ dateKey: 1 });
+    const nextCycleStart = computeCyclePredictions(settings, allLogs).nextPeriodDateKey;
 
-    const logs = await CycleLog.find({
-      userId: req.userId,
-      symptoms: { $exists: true, $ne: [] },
-    }).sort({ dateKey: 1 });
+    const logs = allLogs.filter((log) => log.symptoms && log.symptoms.length > 0);
 
     // Bucket every symptom occurrence by (symptom, phase), and track which
-    // distinct historical cycle (index relative to lastPeriodStartDate) each
-    // occurrence belongs to, so repeat logs within the same cycle only count once.
+    // distinct historical cycle each occurrence belongs to (keyed by that
+    // cycle's actual period-start date, from the same episode-based anchor
+    // getPredictions/insights use — not a raw offset from the
+    // user-configured lastPeriodStartDate, which drifts out of sync from
+    // real logged periods over time — see fixes.md 1.4) so repeat logs
+    // within the same cycle only count once.
     const bucketKey = (symptom, phase) => `${symptom}::${phase}`;
     const occurrenceCycles = new Map(); // bucketKey -> Set(cycleIndex)
     const allCycleIndexes = new Set();
 
     logs.forEach((log) => {
-      const offset = diffDays(log.date, settings.lastPeriodStartDate);
-      const cycleIndex = Math.floor(offset / cycleLength);
-      const cycleDay = (((offset % cycleLength) + cycleLength) % cycleLength) + 1;
-      const phase = getCyclePhase(cycleDay, periodLength, cycleLength);
+      const { currentPeriodStartDateISO, currentPhase } = computeCyclePredictions(
+        settings,
+        allLogs,
+        { today: log.date },
+      );
+      const cycleIndex = currentPeriodStartDateISO;
+      const phase = currentPhase;
 
       allCycleIndexes.add(cycleIndex);
 

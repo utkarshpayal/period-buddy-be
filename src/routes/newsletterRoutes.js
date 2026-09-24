@@ -25,6 +25,15 @@ router.post(
 router.post('/unsubscribe', marketingController.unsubscribeNewsletter);
 
 /**
+ * @route   GET /api/newsletter/unsubscribe
+ * @desc    One-click unsubscribe for the plain `<a href>` link in emails —
+ *          a mail client can't fire the POST above, so this exists purely
+ *          to make that link actually work, and returns a small HTML page.
+ * @access  Public
+ */
+router.get('/unsubscribe', marketingController.unsubscribeNewsletterViaLink);
+
+/**
  * @route   GET /api/newsletter
  * @desc    Admin: list active subscribers
  * @access  Admin

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import mongoose from 'mongoose';
 
 export const DATE_KEY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -86,4 +87,16 @@ export const createHttpError = (message, statusCode = 500) => {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
+};
+
+// crypto.timingSafeEqual throws on mismatched lengths rather than just
+// returning false, so length-check first (a length leak is standard/
+// acceptable for a shared secret) before the constant-time byte compare.
+// Shared by every external-scheduler tick endpoint (checkinCallScheduler.js,
+// dailyNotificationScheduler.js, ...) that authenticates via a header secret
+// instead of a user JWT.
+export const timingSafeEqualStrings = (a, b) => {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
 };

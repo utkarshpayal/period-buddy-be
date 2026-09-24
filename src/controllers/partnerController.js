@@ -250,7 +250,11 @@ export const getPartnerSharedData = async (req, res, next) => {
     if (perms.shareCyclePhase || perms.shareAlerts) {
       const settings = await CycleSettings.findOne({ userId: myProfile.partnerId });
       if (settings) {
-        predictions = computeCyclePredictions(settings);
+        // Anchor on the owner's actual logged period history, not just the
+        // configured lastPeriodStartDate, so the phase shown to the partner
+        // matches what the owner's own tracker screen shows.
+        const logs = await CycleLog.find({ userId: myProfile.partnerId }).sort({ dateKey: 1 });
+        predictions = computeCyclePredictions(settings, logs);
       }
     }
 
@@ -375,7 +379,11 @@ export const getMessages = async (req, res, next) => {
     const profile = await Partner.findOne({ userId: req.userId });
     if (!profile) return sendResponse(res, HTTP_STATUS.OK, 'Messages', []);
 
-    const messages = await PartnerMessage.find({ partnerId: profile._id }).sort({ sentAt: 1 });
+    // Cap to the most recent 300 messages (newest-first, then restored to
+    // chronological order) to bound the payload on long conversations.
+    const messages = (
+      await PartnerMessage.find({ partnerId: profile._id }).sort({ sentAt: -1 }).limit(300)
+    ).reverse();
 
     if (messages.length === 0 && profile.messages && profile.messages.length > 0) {
       return sendResponse(res, HTTP_STATUS.OK, 'Messages', profile.messages);

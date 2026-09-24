@@ -74,6 +74,8 @@ const userSchema = new mongoose.Schema(
     // Locale / notification
     timezone: { type: String, trim: true },
     country: { type: String, trim: true },
+    // State/UT — used to personalize state government schemes (e.g. Rajasthan).
+    state: { type: String, trim: true },
     language: { type: String, trim: true, default: 'en' },
     notificationToken: { type: String, trim: true },
 
@@ -85,8 +87,21 @@ const userSchema = new mongoose.Schema(
     },
     subscriptionExpiry: { type: Date },
 
+    // Doctor invite flow — a gynecologist invited from the admin panel gets a
+    // one-time set-password link. Hashed like OTPs; never returned in responses.
+    inviteTokenHash: { type: String, select: false },
+    inviteTokenExpiresAt: { type: Date, select: false },
+    mustSetPassword: { type: Boolean, default: false },
+
     // Soft delete
     deletedAt: { type: Date, default: null },
+
+    // Self-service account deletion (marketing site "delete my data" page).
+    // Hashed like password/OTP elsewhere — never returned in API responses.
+    selfDeleteOtpHash: { type: String, select: false },
+    selfDeleteOtpExpiresAt: { type: Date, select: false },
+    selfDeleteOtpAttempts: { type: Number, default: 0, select: false },
+    selfDeleteLastSentAt: { type: Date, select: false },
 
     // Community feed — saved posts and self-reported posts (used by communityController)
     savedCommunityPosts: [{ type: mongoose.Schema.Types.ObjectId, ref: 'CommunityPost' }],

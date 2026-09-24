@@ -19,7 +19,10 @@ const upload = multer({
 router.use(authenticate);
 
 // Registered ahead of the /:id route so "chat"/"summarize" are never
-// swallowed as a document id.
+// swallowed as a document id. Upload + chat are gated behind
+// 'document_chat' via the global feature-route registry
+// (config/subscriptionRouteRegistry.js) — free until an admin marks it
+// premium; browsing/deleting documents you already uploaded stays free.
 router.get('/chat', documentController.getChatHistory);
 router.post('/chat', documentController.sendChatMessage);
 router.post('/summarize', documentController.summarizeDocuments);

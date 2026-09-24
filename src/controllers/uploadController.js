@@ -2,6 +2,7 @@ import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants/errorMessages.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { uploadBufferToS3 } from '../utils/s3.js';
+import { assertAllowedUpload } from '../utils/fileValidation.js';
 
 /**
  * Generic authenticated file upload — used for profile pictures and any
@@ -12,6 +13,12 @@ export const uploadFile = async (req, res, next) => {
   try {
     if (!req.file) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.NO_FILE_UPLOADED);
+    }
+
+    try {
+      assertAllowedUpload(req.file.buffer, ['image', 'video', 'audio']);
+    } catch (validationError) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, validationError.message);
     }
 
     const folder = (req.body.folder || 'uploads').replace(/[^a-zA-Z0-9_-]/g, '');
@@ -41,6 +48,12 @@ export const uploadContentMedia = async (req, res, next) => {
   try {
     if (!req.file) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.NO_FILE_UPLOADED);
+    }
+
+    try {
+      assertAllowedUpload(req.file.buffer, ['image', 'video', 'audio']);
+    } catch (validationError) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, validationError.message);
     }
 
     const requestedFolder = (req.body.folder || '').replace(/[^a-zA-Z0-9_-]/g, '');

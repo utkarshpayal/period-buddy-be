@@ -2,6 +2,16 @@ import mongoose from 'mongoose';
 
 const doctorSchema = new mongoose.Schema(
   {
+    // Login account backing this doctor profile. Set when a gynecologist is
+    // invited from the admin panel; consultations resolve a logged-in doctor
+    // User back to their Doctor profile through this link.
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      index: true,
+    },
+    email: { type: String, trim: true, lowercase: true, index: true },
+
     name: { type: String, required: true, trim: true },
     specialty: { type: String, required: true, trim: true },
     rating: { type: Number, default: 4.5, min: 1, max: 5 },

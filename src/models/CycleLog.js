@@ -1,5 +1,33 @@
 import mongoose from 'mongoose';
 
+// Shared by `mood` and `moods` below so the two enums can't drift apart.
+// `emotional`/`tired`/`neutral` are kept for backward-compat with older logs
+// even though the app's log modal no longer offers them as chips — their
+// closest replacements are `moodSwings`/`lowEnergy`/`apathetic`. The rest
+// (frisky, moodSwings, depressed, guilty, obsessive, lowEnergy, apathetic,
+// confused, selfCritical) were added alongside period-buddy's expanded
+// day-log modal (see period-buddy/components/DayDetailsModal.tsx).
+const MOOD_VALUES = [
+  'happy',
+  'calm',
+  'emotional',
+  'tired',
+  'sad',
+  'anxious',
+  'irritable',
+  'neutral',
+  'energetic',
+  'frisky',
+  'moodSwings',
+  'depressed',
+  'guilty',
+  'obsessive',
+  'lowEnergy',
+  'apathetic',
+  'confused',
+  'selfCritical',
+];
+
 const cycleLogSchema = new mongoose.Schema(
   {
     userId: {
@@ -17,18 +45,17 @@ const cycleLogSchema = new mongoose.Schema(
     },
     mood: {
       type: String,
-      enum: [
-        'happy',
-        'calm',
-        'emotional',
-        'tired',
-        'sad',
-        'anxious',
-        'irritable',
-        'neutral',
-        'energetic',
-      ],
+      enum: MOOD_VALUES,
     },
+    // Multi-select counterpart to `mood` — a day can carry several moods. The
+    // scalar `mood` stays populated with the primary (first) value for
+    // backward-compat; `moods` holds the full set.
+    moods: [
+      {
+        type: String,
+        enum: MOOD_VALUES,
+      },
+    ],
     energy: { type: String, enum: ['low', 'medium', 'steady', 'high'] },
     symptoms: [{ type: String, trim: true }],
     note: { type: String, trim: true, maxlength: 1000, default: '' },
@@ -45,17 +72,31 @@ const cycleLogSchema = new mongoose.Schema(
     sleepHours: { type: Number, min: 0, max: 24 },
     waterIntake: { type: Number, min: 0 }, // ml
     weight: { type: Number, min: 0 }, // kg
-    temperature: { type: Number }, // °C BBT
+    temperature: { type: Number, min: 30, max: 45 }, // °C BBT — generous human-body-temp range
     stressLevel: { type: Number, min: 1, max: 10 },
     medication: [{ type: String, trim: true }],
     digestion: {
       type: String,
       enum: ['normal', 'constipated', 'diarrhea', 'bloated'],
     },
+    // Multi-select counterpart to `digestion` (see `moods` above).
+    digestions: [
+      {
+        type: String,
+        enum: ['normal', 'constipated', 'diarrhea', 'bloated'],
+      },
+    ],
     skin: {
       type: String,
       enum: ['clear', 'oily', 'dry', 'acne'],
     },
+    // Multi-select counterpart to `skin` (see `moods` above).
+    skins: [
+      {
+        type: String,
+        enum: ['clear', 'oily', 'dry', 'acne'],
+      },
+    ],
     discharge: {
       type: String,
       enum: ['none', 'sticky', 'creamy', 'watery', 'egg-white'],

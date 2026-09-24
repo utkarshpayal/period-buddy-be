@@ -196,6 +196,37 @@ export const validateDeleteAccount = [
   body('password').notEmpty().withMessage('Password is required'),
 ];
 
+// Self-service deletion (marketing site "delete my data" page) — unauthenticated,
+// so identity is proven purely by possession of the email inbox via OTP.
+export const validateRequestSelfDeletion = [
+  body('email')
+    .trim()
+    .notEmpty()
+    .withMessage('Email is required')
+    .isEmail()
+    .withMessage(ERROR_MESSAGES.INVALID_EMAIL)
+    .normalizeEmail({ gmail_remove_dots: false }),
+];
+
+export const validateConfirmSelfDeletion = [
+  body('email')
+    .trim()
+    .notEmpty()
+    .withMessage('Email is required')
+    .isEmail()
+    .withMessage(ERROR_MESSAGES.INVALID_EMAIL)
+    .normalizeEmail({ gmail_remove_dots: false }),
+
+  body('code')
+    .trim()
+    .notEmpty()
+    .withMessage('Confirmation code is required')
+    .isLength({ min: 6, max: 6 })
+    .withMessage('Confirmation code must be 6 digits')
+    .isNumeric()
+    .withMessage('Confirmation code must be numeric'),
+];
+
 export const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {

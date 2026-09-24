@@ -31,8 +31,7 @@ const consultationSchema = new mongoose.Schema(
     prescription: { type: String, trim: true },
     feedback: { type: String, trim: true },
 
-    razorpayOrderId: { type: String, index: true },
-    razorpayPaymentId: { type: String },
+    cashfreeOrderId: { type: String, index: true },
 
     startedAt: { type: Date },
     completedAt: { type: Date },

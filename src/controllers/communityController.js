@@ -15,6 +15,10 @@ import {
 
 const ANONYMOUS_USER = { firstName: 'Anonymous', lastName: '', profilePicture: null };
 
+// A post is auto-hidden (isActive: false) once this many distinct users have
+// reported it — see reportPost below. No real admin review queue exists yet.
+const COMMUNITY_REPORT_AUTO_HIDE_THRESHOLD = 5;
+
 /**
  * Resolve author for a post or comment:
  * - If isAnonymous AND the requester is NOT the author → mask with ANONYMOUS_USER
@@ -28,10 +32,41 @@ const resolveAuthor = (authorObj, authorId, requestingUserId) => {
   return ANONYMOUS_USER;
 };
 
-const serializePost = (post, user, requestingUserId) => {
+/**
+ * Shape a post's poll for the client: expose option vote counts + total, plus
+ * the requester's own selections (myVote), and hide the raw per-user pollVotes.
+ * Returns undefined when the post has no poll.
+ */
+const serializePoll = (object, requestingUserId) => {
+  if (!object.poll || !Array.isArray(object.poll.options) || object.poll.options.length === 0) {
+    return undefined;
+  }
+  const options = object.poll.options.map((option) => ({
+    optionId: option.optionId,
+    topic: option.topic,
+    votes: option.votes || 0,
+  }));
+  const totalVotes = options.reduce((sum, option) => sum + option.votes, 0);
+  const myEntry = (object.pollVotes || []).find(
+    (vote) => String(vote.userId) === String(requestingUserId),
+  );
+  return {
+    question: object.poll.question,
+    allowMultiple: !!object.poll.allowMultiple,
+    options,
+    totalVotes,
+    myVote: myEntry ? myEntry.optionIds : [],
+  };
+};
+
+const serializePost = (post, user, requestingUserId, { includeComments = true } = {}) => {
   const object = post.toObject ? post.toObject() : post;
   const likedBy = object.likedBy || [];
   const savedPosts = user?.savedCommunityPosts || [];
+  // Prefer the denormalized commentCount (maintained on add/delete) so the feed
+  // can drop the comments array entirely; fall back to the embedded length when
+  // the full array is present (e.g. GET /:id).
+  const totalCommentCount = object.commentCount ?? (object.comments || []).length;
 
   // Resolve post author
   const postAuthorId = object.userId?._id ?? object.userId;
@@ -46,38 +81,43 @@ const serializePost = (post, user, requestingUserId) => {
     resolvedPostUser = isPostOwn ? { ...(rawUser || {}), isOwn: true } : rawUser;
   }
 
-  // Resolve each comment's author
-  const comments = (object.comments || []).map((comment) => {
-    const commentAuthorId = comment.userId?._id ?? comment.userId;
-    const isCommentOwn = String(commentAuthorId) === String(requestingUserId);
+  // Resolve each comment's author. Skipped entirely for the feed, where the
+  // bodies aren't rendered — only the count is.
+  const comments = !includeComments
+    ? []
+    : (object.comments || []).map((comment) => {
+        const commentAuthorId = comment.userId?._id ?? comment.userId;
+        const isCommentOwn = String(commentAuthorId) === String(requestingUserId);
 
-    let resolvedCommentUser;
-    if (comment.isAnonymous) {
-      // Anonymous comment: mask for others, reveal (with isOwn) for the author
-      resolvedCommentUser = isCommentOwn
-        ? {
-            ...((comment.userId?.toObject ? comment.userId.toObject() : comment.userId) || {}),
-            isOwn: true,
-          }
-        : ANONYMOUS_USER;
-    } else {
-      // Non-anonymous comment: show real user, but still attach isOwn for the author
-      const rawUser = comment.userId?.toObject ? comment.userId.toObject() : comment.userId;
-      resolvedCommentUser = isCommentOwn ? { ...(rawUser || {}), isOwn: true } : rawUser;
-    }
+        let resolvedCommentUser;
+        if (comment.isAnonymous) {
+          // Anonymous comment: mask for others, reveal (with isOwn) for the author
+          resolvedCommentUser = isCommentOwn
+            ? {
+                ...((comment.userId?.toObject ? comment.userId.toObject() : comment.userId) || {}),
+                isOwn: true,
+              }
+            : ANONYMOUS_USER;
+        } else {
+          // Non-anonymous comment: show real user, but still attach isOwn for the author
+          const rawUser = comment.userId?.toObject ? comment.userId.toObject() : comment.userId;
+          resolvedCommentUser = isCommentOwn ? { ...(rawUser || {}), isOwn: true } : rawUser;
+        }
 
-    return { ...comment, id: comment._id, userId: resolvedCommentUser };
-  });
+        return { ...comment, id: comment._id, userId: resolvedCommentUser };
+      });
 
   return {
     ...object,
     id: object._id,
     userId: resolvedPostUser,
     comments,
-    commentsCount: comments.length,
+    commentsCount: totalCommentCount,
     likedByMe: likedBy.some((id) => String(id) === String(user?._id)),
     savedByMe: savedPosts.some((id) => String(id) === String(object._id)),
     likedBy: undefined,
+    poll: serializePoll(object, requestingUserId),
+    pollVotes: undefined,
   };
 };
 
@@ -96,18 +136,22 @@ export const getPosts = async (req, res, next) => {
       ];
 
     const [posts, total, user] = await Promise.all([
+      // Feed excludes comment bodies for payload/scale (a viral post could
+      // embed thousands); only the count is shown here. Full comments load via
+      // GET /:id when a user opens the comments sheet. `comments` is still
+      // selected so the count is accurate, but its authors aren't populated.
       CommunityPost.find(filter)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(Number(limit))
-        .populate('userId', 'firstName lastName profilePicture')
-        .populate('comments.userId', 'firstName lastName profilePicture'),
+        .select('-comments')
+        .populate('userId', 'firstName lastName profilePicture'),
       CommunityPost.countDocuments(filter),
       User.findById(req.userId).select('savedCommunityPosts reportedCommunityPosts'),
     ]);
 
     return sendResponse(res, HTTP_STATUS.OK, 'Posts fetched', {
-      posts: posts.map((post) => serializePost(post, user, req.userId)),
+      posts: posts.map((post) => serializePost(post, user, req.userId, { includeComments: false })),
       pagination: buildPagination({ page, limit, total }),
     });
   } catch (error) {
@@ -129,12 +173,52 @@ const normalizeAttachments = (attachments) => {
     }));
 };
 
+const POLL_MIN_OPTIONS = 2;
+const POLL_MAX_OPTIONS = 6;
+
+/**
+ * Validate and normalize a poll payload from createPost.
+ * Accepts `{ question?, allowMultiple?, options: string[] }` and assigns stable
+ * optionIds (option_1..option_n). Returns { poll } on success, { error } on a
+ * validation failure, or {} when no poll was supplied.
+ */
+const normalizePoll = (poll) => {
+  if (poll === undefined || poll === null) return {};
+
+  const rawOptions = Array.isArray(poll.options) ? poll.options : [];
+  const topics = rawOptions
+    .map((option) => (typeof option === 'string' ? option : option?.topic))
+    .map((topic) => (typeof topic === 'string' ? topic.trim() : ''))
+    .filter(Boolean);
+
+  if (topics.length < POLL_MIN_OPTIONS || topics.length > POLL_MAX_OPTIONS) {
+    return { error: `A poll needs between ${POLL_MIN_OPTIONS} and ${POLL_MAX_OPTIONS} options` };
+  }
+
+  return {
+    poll: {
+      question: typeof poll.question === 'string' ? poll.question.trim() : undefined,
+      allowMultiple: normalizeBoolean(poll.allowMultiple, false),
+      options: topics.map((topic, index) => ({
+        optionId: `option_${index + 1}`,
+        topic,
+        votes: 0,
+      })),
+    },
+  };
+};
+
 export const createPost = async (req, res, next) => {
   try {
-    const { title, content, category, tags, isAnonymous, attachments } = req.body;
+    const { title, content, category, tags, isAnonymous, attachments, poll } = req.body;
 
     if (!content?.trim()) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Post content is required');
+    }
+
+    const { poll: normalizedPoll, error: pollError } = normalizePoll(poll);
+    if (pollError) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, pollError);
     }
 
     const created = await CommunityPost.create({
@@ -145,6 +229,7 @@ export const createPost = async (req, res, next) => {
       tags: normalizeStringArray(tags),
       isAnonymous: normalizeBoolean(isAnonymous, true),
       attachments: normalizeAttachments(attachments),
+      ...(normalizedPoll ? { poll: normalizedPoll } : {}),
     });
 
     logger.info('community_post_created', {
@@ -209,20 +294,42 @@ export const toggleLike = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid post id');
     }
 
-    const post = await CommunityPost.findOne({ _id: req.params.id, isActive: true });
+    const post = await CommunityPost.findOne({ _id: req.params.id, isActive: true }).select(
+      'userId likedBy likeCount',
+    );
     if (!post) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Post not found');
 
-    const alreadyLiked = post.likedBy.some((id) => String(id) === String(req.userId));
-    if (alreadyLiked) {
-      post.likedBy.pull(req.userId);
-      // `likes` is a virtual alias for `likeCount` (see Community.js) — only touch
-      // the real field here, otherwise the virtual setter double-applies the delta.
-      post.likeCount = Math.max(0, post.likeCount - 1);
-    } else {
-      post.likedBy.push(req.userId);
-      post.likeCount += 1;
+    if (String(post.userId) === String(req.userId)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, "You can't like your own post");
     }
-    await post.save();
+
+    const alreadyLiked = post.likedBy.some((id) => String(id) === String(req.userId));
+
+    // Atomic $addToSet/$pull + $inc, filtered on the current membership —
+    // the previous read-`likedBy`-then-mutate-in-JS-then-`.save()` pattern
+    // was a lost-update race: two concurrent likes on the same post could
+    // both read the pre-like array, so the second `.save()` would overwrite
+    // the first's `likeCount` increment, desyncing `likeCount` from
+    // `likedBy.length`. The filter's own membership check also means a
+    // request that loses the race (post already (un)liked by the time this
+    // one lands) simply matches nothing instead of double-applying the delta.
+    const updated = alreadyLiked
+      ? await CommunityPost.findOneAndUpdate(
+          { _id: post._id, likedBy: req.userId },
+          { $pull: { likedBy: req.userId }, $inc: { likeCount: -1 } },
+          { new: true },
+        )
+      : await CommunityPost.findOneAndUpdate(
+          { _id: post._id, likedBy: { $ne: req.userId } },
+          { $addToSet: { likedBy: req.userId }, $inc: { likeCount: 1 } },
+          { new: true },
+        );
+
+    // `updated` is null only if a concurrent request already applied the
+    // same toggle direction first — fall back to the post's now-current
+    // state rather than erroring, since the user's intent ("liked" /
+    // "unliked") was already satisfied by that other request.
+    post.likeCount = updated ? updated.likeCount : post.likeCount;
 
     if (!alreadyLiked && String(post.userId) !== String(req.userId)) {
       try {
@@ -404,6 +511,19 @@ export const reportPost = async (req, res, next) => {
       });
       await user.save();
       post.reportCount = (post.reportCount || 0) + 1;
+      // No admin review queue exists for community reports yet (reportCount
+      // was previously increment-only, read by nothing) — auto-hiding past a
+      // threshold is the pragmatic stopgap so a heavily-reported post can't
+      // accumulate unlimited reports and stay visible indefinitely with zero
+      // moderation action ever taken.
+      if (post.reportCount >= COMMUNITY_REPORT_AUTO_HIDE_THRESHOLD && post.isActive) {
+        post.isActive = false;
+        logger.warn('community_post_auto_hidden', {
+          action: 'community_post_auto_hidden',
+          postId: post._id,
+          reportCount: post.reportCount,
+        });
+      }
       await post.save();
     }
 
@@ -459,6 +579,70 @@ export const deleteComment = async (req, res, next) => {
 
     return sendResponse(res, HTTP_STATUS.OK, 'Comment deleted', {
       commentsCount: post.comments.length,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/community/:id/poll/vote — Cast a vote on a post's poll */
+export const votePoll = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid post id');
+    }
+
+    // Accept either optionIds (multi-select) or a single optionId for convenience.
+    const rawOptionIds = Array.isArray(req.body.optionIds)
+      ? req.body.optionIds
+      : req.body.optionId
+        ? [req.body.optionId]
+        : [];
+    const optionIds = [...new Set(rawOptionIds.map((id) => String(id).trim()).filter(Boolean))];
+    if (optionIds.length === 0) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'At least one optionId is required');
+    }
+
+    const post = await CommunityPost.findOne({ _id: req.params.id, isActive: true });
+    if (!post) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Post not found');
+    if (!post.poll || !Array.isArray(post.poll.options) || post.poll.options.length === 0) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'This post has no poll');
+    }
+
+    if (!post.poll.allowMultiple && optionIds.length > 1) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'This poll only allows a single choice');
+    }
+
+    if (post.pollVotes.some((vote) => String(vote.userId) === String(req.userId))) {
+      return sendError(res, HTTP_STATUS.CONFLICT, 'You have already voted on this poll');
+    }
+
+    const validIds = new Set(post.poll.options.map((option) => option.optionId));
+    if (optionIds.some((id) => !validIds.has(id))) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid poll option');
+    }
+
+    post.poll.options.forEach((option) => {
+      if (optionIds.includes(option.optionId)) option.votes += 1;
+    });
+    post.pollVotes.push({ userId: req.userId, optionIds });
+    await post.save();
+    await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: 5 } });
+
+    const totalVotes = post.poll.options.reduce((sum, option) => sum + option.votes, 0);
+    return sendResponse(res, HTTP_STATUS.OK, 'Vote counted', {
+      poll: {
+        question: post.poll.question,
+        allowMultiple: !!post.poll.allowMultiple,
+        options: post.poll.options.map((option) => ({
+          optionId: option.optionId,
+          topic: option.topic,
+          votes: option.votes,
+        })),
+        totalVotes,
+        myVote: optionIds,
+      },
+      tokensAwarded: 5,
     });
   } catch (error) {
     next(error);

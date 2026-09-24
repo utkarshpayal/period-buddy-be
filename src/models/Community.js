@@ -58,6 +58,31 @@ const communityPostSchema = new mongoose.Schema(
       },
     ],
 
+    // Optional attached poll. Multi-select supported via poll.allowMultiple.
+    // Per-user selections live in pollVotes so we can prevent double-voting and
+    // resolve the requester's own choices; poll.options.votes are denormalized
+    // counters kept in sync on each vote.
+    poll: {
+      question: { type: String, trim: true, maxlength: 300 },
+      allowMultiple: { type: Boolean, default: false },
+      options: [
+        {
+          optionId: { type: String, required: true, trim: true },
+          topic: { type: String, required: true, trim: true, maxlength: 200 },
+          votes: { type: Number, default: 0, min: 0 },
+          _id: false,
+        },
+      ],
+    },
+    pollVotes: [
+      {
+        userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+        optionIds: [{ type: String, trim: true }],
+        votedAt: { type: Date, default: Date.now },
+        _id: false,
+      },
+    ],
+
     // Denormalized counters (sources of truth live in CommunityLike / Comment collections)
     likeCount: { type: Number, default: 0 },
     commentCount: { type: Number, default: 0 },

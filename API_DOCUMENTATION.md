@@ -35,7 +35,7 @@ Standard error wrapper:
 
 | Frontend feature | Backend routes |
 | --- | --- |
-| Auth, onboarding, profile | `/api/auth/*`, `/api/logout` |
+| Auth, onboarding, profile | `/api/auth/*` |
 | Home dashboard | `/api/auth/dashboard` |
 | Period tracker | `/api/cycle/*` |
 | Smart predictions | `/api/cycle/predictions`, `/api/cycle/stats` |
@@ -170,7 +170,7 @@ Response:
 { "success": true, "statusCode": 200, "message": "Password changed successfully", "data": null }
 ```
 
-### POST `/api/auth/logout` or POST `/api/logout`
+### POST `/api/auth/logout`
 
 Response:
 
@@ -468,7 +468,7 @@ Payload:
 
 Allowed `flow`: `none`, `light`, `medium`, `heavy`, `spotting`.
 
-Allowed `mood`: `happy`, `calm`, `emotional`, `tired`, `sad`, `anxious`, `irritable`, `neutral`, `energetic`.
+Allowed `mood`: `happy`, `calm`, `emotional`, `tired`, `sad`, `anxious`, `irritable`, `neutral`, `energetic`, `frisky`, `moodSwings`, `depressed`, `guilty`, `obsessive`, `lowEnergy`, `apathetic`, `confused`, `selfCritical`. Same list for `moods` (string[], multi-select counterpart — see below).
 
 Allowed `energy`: `low`, `medium`, `steady`, `high`.
 
@@ -1166,3 +1166,51 @@ Create payload:
   "order": 1
 }
 ```
+
+## Admin Push Notification Broadcasts
+
+All routes require an `admin` JWT. Broadcasts are sent in the background in batches of up to 500 users (one FCM `sendEach` call per batch). Progress is saved after every batch, so a crash or deploy resumes from the last completed batch. Only one audience-wide broadcast can be queued or sending at a time; sends to hand-picked users (`audience: "selected"`) run in a separate lane, so they're never blocked by or stuck behind a large broadcast.
+
+### GET `/api/admin/notifications/audience?audience=all`
+
+`audience`: `all` | `user` | `partner` | `doctor`. Returns `{ audience, totalUsers, totalWithToken, fcmConfigured }` (active, non-deleted accounts only).
+
+### GET `/api/admin/notifications/recipients?search=priya`
+
+Search active accounts (name, email, phone; min 2 chars, max 20 results) to hand-pick recipients. Each user has `hasDevice` (boolean) — the token itself is never returned.
+
+### POST `/api/admin/notifications/test`
+
+Sends the message immediately to one account's device.
+
+```json
+{ "title": "Welcome to The Nura Care", "body": "2 days left until your period starts", "email": "someone@example.com" }
+```
+
+### POST `/api/admin/notifications/broadcasts`
+
+Returns `202` with the queued `broadcast`. `409` if another broadcast is still sending; `503` if Firebase isn't configured.
+
+```json
+{ "title": "Welcome to The Nura Care", "body": "2 days left until your period starts", "audience": "all", "saveToInbox": true }
+```
+
+To message specific people instead: `{ "title": "...", "body": "...", "audience": "selected", "userIds": ["<id>", "<id>"] }` (1–5000 ids; suspended/deleted accounts are skipped). The response includes `recipientPreview` (up to 3 names) for display.
+
+`saveToInbox` (default `true`) also writes a `system` in-app `Notification` per user. Tokens FCM reports as dead are removed from users automatically.
+
+### GET `/api/admin/notifications/broadcasts?page=1&limit=20`
+
+Paginated history. Each broadcast has `status` (`queued` | `running` | `completed` | `failed` | `cancelled`), `totalUsers`, `processedUsers`, `sentCount`, `failedCount`, `invalidTokenCount`, `inboxCount`, `lastError`.
+
+### GET `/api/admin/notifications/broadcasts/:id`
+
+A single broadcast's progress (the admin UI polls this list while one is sending).
+
+### POST `/api/admin/notifications/broadcasts/:id/cancel`
+
+A queued broadcast is cancelled at once; a running one stops after its current batch.
+
+### POST `/api/admin/notifications/broadcasts/:id/retry`
+
+Resumes a `failed` broadcast from the batch where it stopped.

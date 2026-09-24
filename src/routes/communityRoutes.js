@@ -15,6 +15,8 @@ router.get('/', authenticate, communityController.getPosts);
  * @route   POST /api/community
  * @desc    Create an anonymous community post
  * @access  Private
+ * @note    Gated behind 'community_posting' via the global feature-route
+ *          registry (config/subscriptionRouteRegistry.js), not inline here.
  */
 router.post('/', authenticate, communityController.createPost);
 
@@ -52,6 +54,13 @@ router.post('/:id/report', authenticate, communityController.reportPost);
  * @access  Private
  */
 router.post('/:id/comment', authenticate, communityController.addComment);
+
+/**
+ * @route   POST /api/community/:id/poll/vote
+ * @desc    Cast a vote on a post's poll (body: { optionIds: string[] })
+ * @access  Private
+ */
+router.post('/:id/poll/vote', authenticate, communityController.votePoll);
 
 /**
  * @route   DELETE /api/community/:id

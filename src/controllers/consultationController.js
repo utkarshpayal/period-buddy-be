@@ -1,13 +1,19 @@
 import Doctor from '../models/Doctor.js';
 import Consultation from '../models/Consultation.js';
 import ConsultationMessage from '../models/ConsultationMessage.js';
+import DoctorAvailability from '../models/DoctorAvailability.js';
 import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
 import { escapeRegex, isValidObjectId } from '../utils/apiHelpers.js';
 import { broadcastToRoom } from '../config/websocket.js';
-import { createOrder, verifySignature, isPaymentConfigured } from '../utils/razorpayClient.js';
+import {
+  createOrder,
+  getOrderStatus,
+  isPaymentConfigured,
+  cashfreeMode,
+} from '../utils/cashfreeClient.js';
 
 const doctorGreeting = (doctor) =>
   `Hello! I am ${doctor.name}. Your confidential dashboard log has been successfully shared. How can I guide your wellness milestones today?`;
@@ -40,7 +46,53 @@ export const getDoctors = async (req, res, next) => {
   }
 };
 
-/** POST /api/consultation/order — Create a Razorpay order + a pending
+const DAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/** GET /api/consultation/doctors/:id/availability — Public-facing weekly
+ * schedule for a doctor, grouped by day, so the app can render bookable slots. */
+export const getDoctorAvailability = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid doctor id');
+    }
+
+    const doctor = await Doctor.findById(req.params.id);
+    if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor not found');
+
+    const slots = await DoctorAvailability.find({
+      doctorId: doctor._id,
+      isAvailable: true,
+    }).sort({ dayOfWeek: 1, startTime: 1 });
+
+    // Group into { dayOfWeek, day, slots: [{startTime,endTime,maxSlots}] }
+    const byDay = new Map();
+    for (const slot of slots) {
+      if (!byDay.has(slot.dayOfWeek)) {
+        byDay.set(slot.dayOfWeek, {
+          dayOfWeek: slot.dayOfWeek,
+          day: DAY_LABELS[slot.dayOfWeek],
+          slots: [],
+        });
+      }
+      byDay.get(slot.dayOfWeek).slots.push({
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        maxSlots: slot.maxSlots,
+        timezone: slot.timezone,
+      });
+    }
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Availability fetched', {
+      doctorId: doctor._id,
+      isAvailable: doctor.isAvailable,
+      days: Array.from(byDay.values()),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/consultation/order — Create a Cashfree order + a pending
  * Consultation for it. No session access is granted until /verify confirms
  * the payment actually went through. */
 export const createConsultationOrder = async (req, res, next) => {
@@ -82,20 +134,48 @@ export const createConsultationOrder = async (req, res, next) => {
       paymentStatus: 'unpaid',
     });
 
-    const order = await createOrder({
-      // Doctor.pricePerSession is a whole-unit amount (e.g. rupees); Razorpay
-      // expects the currency's smallest unit (paise for INR).
-      amountMinorUnits: Math.round(doctor.pricePerSession * 100),
-      currency: doctor.currency,
-      receipt: String(consultation._id),
-      notes: {
-        userId: String(req.userId),
-        doctorId: String(doctorId),
-        consultationId: String(consultation._id),
-      },
-    });
+    const user = await User.findById(req.userId);
+    // Cashfree order ids must be unique per order (not reusable like a
+    // Razorpay receipt) — the consultation id alone could collide with a
+    // retried booking attempt for the same consultation, so a short random
+    // suffix keeps each createOrder call unique.
+    const cashfreeOrderId = `consult_${consultation._id}_${Date.now().toString(36)}`;
 
-    consultation.razorpayOrderId = order.id;
+    let order;
+    try {
+      order = await createOrder({
+        orderId: cashfreeOrderId,
+        // Doctor.pricePerSession is already a whole-unit amount (e.g. rupees) —
+        // unlike Razorpay, Cashfree's order_amount wants the whole-unit value,
+        // not the currency's smallest unit.
+        amount: doctor.pricePerSession,
+        currency: doctor.currency,
+        customer: { id: req.userId, name: user?.name, email: user?.email, phone: user?.phone },
+        notes: {
+          userId: String(req.userId),
+          doctorId: String(doctorId),
+          consultationId: String(consultation._id),
+        },
+      });
+    } catch (error) {
+      // Cashfree down/timeout after the Consultation was already persisted —
+      // clean it up rather than leaving a permanently 'pending' row with no
+      // cashfreeOrderId (same fix as subscriptionController.createSubscriptionOrder).
+      await Consultation.deleteOne({ _id: consultation._id });
+      logger.error('consultation_order_create_failed', {
+        action: 'consultation_order_create_failed',
+        userId: req.userId,
+        consultationId: consultation._id,
+        error: error.message,
+      });
+      return sendError(
+        res,
+        HTTP_STATUS.SERVICE_UNAVAILABLE,
+        'Could not start payment right now — please try again shortly',
+      );
+    }
+
+    consultation.cashfreeOrderId = order.order_id;
     await consultation.save();
 
     logger.info('consultation_order_created', {
@@ -103,16 +183,17 @@ export const createConsultationOrder = async (req, res, next) => {
       userId: req.userId,
       doctorId,
       consultationId: consultation._id,
-      orderId: order.id,
+      orderId: order.order_id,
       amount: doctor.pricePerSession,
     });
 
     return sendResponse(res, HTTP_STATUS.CREATED, 'Payment order created', {
       consultationId: consultation._id,
-      orderId: order.id,
-      amount: order.amount,
-      currency: order.currency,
-      keyId: process.env.RAZORPAY_KEY_ID,
+      orderId: order.order_id,
+      amount: doctor.pricePerSession,
+      currency: doctor.currency,
+      paymentSessionId: order.payment_session_id,
+      cashfreeMode: cashfreeMode(),
     });
   } catch (error) {
     logger.error('consultation_order_error', { userId: req.userId, error: error.message });
@@ -120,25 +201,21 @@ export const createConsultationOrder = async (req, res, next) => {
   }
 };
 
-/** POST /api/consultation/verify — Verify a completed Razorpay checkout and,
- * only on a valid signature, activate the Consultation session. */
+/** POST /api/consultation/verify — Verify a completed Cashfree checkout and,
+ * only once Cashfree confirms the order was actually paid, activate the
+ * Consultation session. */
 export const verifyConsultationPayment = async (req, res, next) => {
   try {
-    const { consultationId, razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+    const { consultationId, orderId } = req.body;
 
-    if (
-      !isValidObjectId(consultationId) ||
-      !razorpay_order_id ||
-      !razorpay_payment_id ||
-      !razorpay_signature
-    ) {
+    if (!isValidObjectId(consultationId) || !orderId) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Missing payment verification fields');
     }
 
     const consultation = await Consultation.findOne({
       _id: consultationId,
       userId: req.userId,
-      razorpayOrderId: razorpay_order_id,
+      cashfreeOrderId: orderId,
     });
     if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation order not found');
 
@@ -147,31 +224,59 @@ export const verifyConsultationPayment = async (req, res, next) => {
       return sendResponse(res, HTTP_STATUS.OK, 'Consultation already booked', consultation);
     }
 
-    const isValid = verifySignature({
-      orderId: razorpay_order_id,
-      paymentId: razorpay_payment_id,
-      signature: razorpay_signature,
-    });
+    const cfOrder = await getOrderStatus(orderId);
 
-    if (!isValid) {
+    // 'ACTIVE' means the order is still open — e.g. a UPI collect request
+    // the user hasn't approved in their UPI app yet, which can take up to a
+    // minute. That's "not paid yet", not a failure: a UPI-collect flow
+    // polls this endpoint every few seconds while waiting, and marking the
+    // consultation 'failed' on the first poll would kill a payment that's
+    // still legitimately in flight. Only a terminal Cashfree status
+    // ('EXPIRED'/'TERMINATED'/'TERMINATION_REQUESTED') is a real failure.
+    if (cfOrder.order_status === 'ACTIVE') {
+      return sendResponse(res, HTTP_STATUS.ACCEPTED, 'Payment still pending', { pending: true });
+    }
+
+    if (cfOrder.order_status !== 'PAID') {
       consultation.paymentStatus = 'failed';
       await consultation.save();
       logger.error('consultation_payment_verify_failed', {
         action: 'consultation_payment_verify_failed',
         userId: req.userId,
         consultationId,
+        orderStatus: cfOrder.order_status,
       });
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Payment verification failed');
     }
 
     const doctor = await Doctor.findById(consultation.doctorId);
 
-    consultation.status = 'paid';
-    consultation.paymentStatus = 'paid';
-    consultation.razorpayPaymentId = razorpay_payment_id;
-    consultation.startedAt = new Date();
-    consultation.messages = [{ sender: 'doctor', text: doctorGreeting(doctor) }];
-    await consultation.save();
+    // Atomically claim the pending → paid transition. Only the first of any
+    // concurrent /verify calls matches (status not yet paid/active), so the
+    // one-time side effects below (wallet credit, doctor counter, greeting)
+    // can never run twice for the same consultation.
+    const claimed = await Consultation.findOneAndUpdate(
+      { _id: consultation._id, status: { $nin: ['paid', 'active', 'completed'] } },
+      {
+        $set: {
+          status: 'paid',
+          paymentStatus: 'paid',
+          startedAt: new Date(),
+          // Deterministic Jitsi room so patient and doctor land in the same call
+          // (mirrors meetingLinkFor() in doctorController).
+          meetingLink: `https://meet.jit.si/PeriodBuddy-Consult-${consultation._id}`,
+          messages: [{ sender: 'doctor', text: doctorGreeting(doctor) }],
+        },
+      },
+      { new: true },
+    );
+
+    if (!claimed) {
+      // A concurrent request already booked it — return the booked state
+      // without re-running side effects.
+      await consultation.populate('doctorId');
+      return sendResponse(res, HTTP_STATUS.OK, 'Consultation already booked', consultation);
+    }
 
     await ConsultationMessage.create({
       consultationId: consultation._id,
@@ -190,12 +295,12 @@ export const verifyConsultationPayment = async (req, res, next) => {
       doctorId: consultation.doctorId,
       doctorName: doctor.name,
       amount: consultation.amountPaid,
-      paymentId: razorpay_payment_id,
+      orderId,
     });
 
-    await consultation.populate('doctorId');
+    await claimed.populate('doctorId');
 
-    return sendResponse(res, HTTP_STATUS.CREATED, 'Consultation booked successfully', consultation);
+    return sendResponse(res, HTTP_STATUS.CREATED, 'Consultation booked successfully', claimed);
   } catch (error) {
     logger.error('consultation_verify_error', { userId: req.userId, error: error.message });
     next(error);
@@ -225,9 +330,13 @@ export const getMessages = async (req, res, next) => {
     const consultation = await Consultation.findOne({ _id: req.params.id, userId: req.userId });
     if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation not found');
 
-    const messages = await ConsultationMessage.find({ consultationId: consultation._id }).sort({
-      sentAt: 1,
-    });
+    // Cap to the most recent 300 messages (newest-first, then restored to
+    // chronological order) to bound the payload on long conversations.
+    const messages = (
+      await ConsultationMessage.find({ consultationId: consultation._id })
+        .sort({ sentAt: -1 })
+        .limit(300)
+    ).reverse();
 
     if (messages.length === 0 && consultation.messages && consultation.messages.length > 0) {
       return sendResponse(res, HTTP_STATUS.OK, 'Messages fetched', consultation.messages);
@@ -263,23 +372,12 @@ export const sendMessage = async (req, res, next) => {
     const userText = text.trim();
     consultation.messages.push({ sender: 'user', text: userText });
 
-    // Simulate doctor's auto-reply
-    const doctorReply =
-      'Understood. Our logging engine is checking your cycle history trend structures to fine-tune diagnostic assessments. Please provide any related physical updates.';
-    consultation.messages.push({ sender: 'doctor', text: doctorReply });
-
     await consultation.save();
 
-    const msgUser = await ConsultationMessage.create({
+    await ConsultationMessage.create({
       consultationId: consultation._id,
       sender: 'user',
       text: userText,
-    });
-
-    const msgDoctor = await ConsultationMessage.create({
-      consultationId: consultation._id,
-      sender: 'doctor',
-      text: doctorReply,
     });
 
     logger.info('consultation_message_sent', {
@@ -288,7 +386,17 @@ export const sendMessage = async (req, res, next) => {
       consultationId: consultation._id,
     });
 
-    const responseData = [msgUser, msgDoctor];
+    // Both the REST response and the WS broadcast must carry the full
+    // recent log (not just the message just created) — the mobile client
+    // treats each of these as the authoritative list and replaces its
+    // local state wholesale, so sending only the delta here made every
+    // earlier message in the thread disappear until the screen refetched
+    // via GET /messages.
+    const responseData = (
+      await ConsultationMessage.find({ consultationId: consultation._id })
+        .sort({ sentAt: -1 })
+        .limit(300)
+    ).reverse();
 
     // Broadcast messages to active consultation room
     broadcastToRoom(`consultation_${consultation._id}`, {

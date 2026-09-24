@@ -15,6 +15,8 @@ router.get('/questions', authenticate, screeningController.getQuestions);
  * @route   POST /api/screening/assess
  * @desc    Score answers for a condition, save the assessment, and return the result
  * @access  Private
+ * @note    Gated behind 'symptom_checker' via the global feature-route
+ *          registry (config/subscriptionRouteRegistry.js), not inline here.
  */
 router.post('/assess', authenticate, screeningController.submitAssessment);
 

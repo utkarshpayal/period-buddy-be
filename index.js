@@ -1,14 +1,18 @@
 import 'dotenv/config';
 import express from 'express';
+import mongoose from 'mongoose';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
-import { connectDB } from './src/config/database.js';
+import { apiLimiter, rateLimitEnabled } from './src/middleware/rateLimiters.js';
+import { connectDB, disconnectDB } from './src/config/database.js';
 import { seedDatabase } from './src/utils/seeder.js';
+import { startInProcessScheduler, stopInProcessScheduler } from './src/utils/inProcessScheduler.js';
+import { startBroadcastWorker, stopBroadcastWorker } from './src/utils/pushBroadcastWorker.js';
 import { errorHandler, notFound } from './src/middleware/errorHandler.js';
 import httpLogger from './src/utils/httpLogger.js';
 import logger from './src/utils/logger.js';
 import { authenticate } from './src/middleware/authMiddleware.js';
+import { globalFeatureGate } from './src/middleware/subscriptionMiddleware.js';
 import { logout as logoutController } from './src/controllers/authController.js';
 import { createServer } from 'http';
 import { initWebSocket } from './src/config/websocket.js';
@@ -38,23 +42,62 @@ import speechRoutes from './src/routes/speechRoutes.js';
 import screeningRoutes from './src/routes/screeningRoutes.js';
 import insightRoutes from './src/routes/insightRoutes.js';
 import voiceAgentRoutes from './src/routes/voiceAgentRoutes.js';
+import notificationRoutes from './src/routes/notificationRoutes.js';
+import doctorRoutes from './src/routes/doctorRoutes.js';
+import schemeRoutes from './src/routes/schemeRoutes.js';
+import schemeApplicationRoutes from './src/routes/schemeApplicationRoutes.js';
+import auditRoutes from './src/routes/auditRoutes.js';
+import companyAssetRoutes from './src/routes/companyAssetRoutes.js';
+import companyFolderRoutes from './src/routes/companyFolderRoutes.js';
+import adminRoutes from './src/routes/adminRoutes.js';
+import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
+import adminSubscriptionRoutes from './src/routes/adminSubscriptionRoutes.js';
 import { setupSwagger } from './src/docs/swagger.js';
 
 const app = express();
+
+// Behind a reverse proxy (nginx / load balancer) in production, so req.ip and
+// rate-limit keys reflect the real client IP from X-Forwarded-For.
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
 
 /* ──────────────────────────────────────────────────────────
    Database
 ────────────────────────────────────────────────────────── */
 connectDB().then(() => {
   seedDatabase();
+  startInProcessScheduler();
+  startBroadcastWorker();
 });
 
 /* ──────────────────────────────────────────────────────────
    Security & Core Middleware
 ────────────────────────────────────────────────────────── */
 app.use(helmet());
+
+// CORS: in production, restrict to an explicit allowlist (ALLOWED_ORIGINS,
+// comma-separated). Elsewhere (dev), reflect the request origin so Expo dev
+// clients / localhost tooling work without configuration.
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+const allowAllOrigins = allowedOrigins.includes('*');
+
 const corsOptions = {
-  origin: true,
+  origin(origin, callback) {
+    // Non-browser clients (mobile app, curl, server-to-server) send no Origin.
+    if (!origin) return callback(null, true);
+    if (process.env.NODE_ENV !== 'production') return callback(null, true);
+    // ALLOWED_ORIGINS=* opts into reflecting any origin (note: with
+    // credentials:true, browsers require the actual origin echoed back,
+    // not a literal "*" header — the `cors` package handles that).
+    if (allowAllOrigins) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
   optionsSuccessStatus: 204,
 };
@@ -62,17 +105,12 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
-// Rate limiting — 500 requests per 15 minutes per IP
-// eslint-disable-next-line no-unused-vars -- kept ready for production; see comment below
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 500,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, message: 'Too many requests, please try again later.' },
-});
-//This is commented for local development, in production it should be uncommented
-// app.use('/api', limiter);
+// Rate limiting — enabled in production by default (see rateLimiters.js).
+// Sensitive auth endpoints get a stricter limiter inside authRoutes.js.
+if (rateLimitEnabled) {
+  app.use('/api', apiLimiter);
+  logger.info('rate_limiting_enabled', { action: 'rate_limiting_enabled' });
+}
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
@@ -83,6 +121,7 @@ app.use(httpLogger);
 /* ──────────────────────────────────────────────────────────
    Health Check
 ────────────────────────────────────────────────────────── */
+// Liveness — the process is up. Never touches dependencies.
 app.get('/health', (req, res) => {
   res.status(200).json({
     success: true,
@@ -93,6 +132,39 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Readiness — the app can actually serve traffic (DB connected). Returns 503
+// when the database isn't ready so orchestrators/load balancers can hold
+// traffic. Exposes only a coarse status string, never connection details.
+app.get('/health/ready', (req, res) => {
+  // mongoose.connection.readyState: 1 = connected.
+  const dbConnected = mongoose.connection?.readyState === 1;
+  res.status(dbConnected ? 200 : 503).json({
+    success: dbConnected,
+    status: dbConnected ? 'ready' : 'not_ready',
+    checks: { database: dbConnected ? 'up' : 'down' },
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Cashfree's order_meta.return_url target (cashfreeClient.js#createOrder) —
+// only reached if the app's CashfreeCheckoutModal fails to intercept the
+// navigation client-side first (see its onShouldStartLoadWithRequest). Plain
+// static HTML, not an API response: this is rendered directly in a WebView,
+// and the real payment status is still (re-)confirmed by the app calling
+// verifyPayment, never trusted from this page alone.
+app.get('/api/payments/return', (req, res) => {
+  res
+    .status(200)
+    .type('html')
+    .send(
+      '<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1" />' +
+        '<title>Payment complete</title></head>' +
+        '<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;' +
+        'font-family:-apple-system,Roboto,sans-serif;text-align:center;padding:24px;box-sizing:border-box;">' +
+        '<p>Payment received. You can return to the Nura app now.</p></body></html>',
+    );
+});
+
 /* ──────────────────────────────────────────────────────────
    Swagger API Documentation
 ────────────────────────────────────────────────────────── */
@@ -101,6 +173,13 @@ setupSwagger(app);
 /* ──────────────────────────────────────────────────────────
    API Routes
 ────────────────────────────────────────────────────────── */
+// Mounted ahead of every domain router below: for the handful of
+// registered method+path pairs (config/subscriptionRouteRegistry.js) this
+// enforces the subscription paywall before the request reaches its real
+// handler; every other request is a single cheap array scan and falls
+// straight through. See subscriptionMiddleware.js#globalFeatureGate.
+app.use(globalFeatureGate);
+
 app.use('/api/auth', authRoutes);
 app.post('/api/logout', authenticate, logoutController);
 app.use('/api/questions', questionAnswerRoutes);
@@ -126,6 +205,19 @@ app.use('/api/speech', speechRoutes);
 app.use('/api/screening', screeningRoutes);
 app.use('/api/insights', insightRoutes);
 app.use('/api/voice-agent', voiceAgentRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/doctor', doctorRoutes);
+app.use('/api/schemes', schemeRoutes);
+app.use('/api/scheme-applications', schemeApplicationRoutes);
+app.use('/api/audit-logs', auditRoutes);
+app.use('/api/company-assets', companyAssetRoutes);
+app.use('/api/company-folders', companyFolderRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
+// Mounted before /api/admin so its own auth/authorize pass runs exactly
+// once (adminRoutes has no catch-all, so a request under /api/admin/
+// subscriptions/* would otherwise fall through its middleware first too).
+app.use('/api/admin/subscriptions', adminSubscriptionRoutes);
+app.use('/api/admin', adminRoutes);
 
 /* ──────────────────────────────────────────────────────────
    Error Handling
@@ -138,7 +230,7 @@ app.use(errorHandler);
 ────────────────────────────────────────────────────────── */
 const PORT = process.env.PORT || 5000;
 const server = createServer(app);
-initWebSocket(server);
+const wss = initWebSocket(server);
 
 server.listen(PORT, () => {
   logger.info('server_started', {
@@ -166,20 +258,51 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-process.on('SIGTERM', () => {
-  logger.info('process_sigterm', {
-    action: 'process_sigterm',
-    message: 'SIGTERM received, shutting down gracefully',
-  });
-  process.exit(0);
-});
+let shuttingDown = false;
+const gracefulShutdown = async (signal) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info('graceful_shutdown_started', { action: 'graceful_shutdown_started', signal });
 
-process.on('SIGINT', () => {
-  logger.info('process_sigint', {
-    action: 'process_sigint',
-    message: 'SIGINT received, shutting down gracefully',
-  });
-  process.exit(0);
-});
+  // Force-exit if a hung connection prevents clean shutdown.
+  const forceTimer = setTimeout(() => {
+    logger.error('graceful_shutdown_timeout', { action: 'graceful_shutdown_timeout', signal });
+    process.exit(1);
+  }, 10000);
+  forceTimer.unref();
+
+  try {
+    stopInProcessScheduler();
+    stopBroadcastWorker();
+    // Stop accepting new WS connections and close existing ones.
+    if (wss) {
+      for (const client of wss.clients) {
+        try {
+          client.close(1001, 'Server shutting down');
+        } catch {
+          /* ignore */
+        }
+      }
+      await new Promise((resolve) => wss.close(() => resolve()));
+    }
+    // Stop accepting new HTTP connections, then drain in-flight ones.
+    await new Promise((resolve) => server.close(() => resolve()));
+    // Close the database connection last so in-flight requests can finish.
+    await disconnectDB();
+    logger.info('graceful_shutdown_complete', { action: 'graceful_shutdown_complete', signal });
+    clearTimeout(forceTimer);
+    process.exit(0);
+  } catch (error) {
+    logger.error('graceful_shutdown_error', {
+      action: 'graceful_shutdown_error',
+      signal,
+      error: error.message,
+    });
+    process.exit(1);
+  }
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 export default app;

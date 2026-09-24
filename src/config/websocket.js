@@ -2,6 +2,10 @@ import { WebSocketServer } from 'ws';
 import url from 'url';
 import { verifyToken } from '../utils/jwt.js';
 import logger from '../utils/logger.js';
+import Consultation from '../models/Consultation.js';
+import Doctor from '../models/Doctor.js';
+import BuddyMatch from '../models/BuddyMatch.js';
+import Partner from '../models/Partner.js';
 
 // Global map to track active rooms and client connections
 // Room Name -> Set of WebSocket clients
@@ -9,6 +13,62 @@ const rooms = new Map();
 
 // Map of WebSocket client to metadata (e.g. userId, rooms joined)
 const clientMetadata = new Map();
+
+/**
+ * Whether `userId` is actually allowed into `room`. Room names are visible
+ * client-side (`consultation_<id>`, `buddy_<roomKey>`, `partner_<id>`), and
+ * Mongo ObjectIds are guessable within a time window, so without this check
+ * any authenticated client could join any room by name and read/inject into
+ * a chat, WebRTC signaling session, or partner-sync feed that isn't theirs.
+ * Any room name that doesn't match a known, ownership-checked shape is
+ * denied by default.
+ */
+const isAuthorizedForRoom = async (userId, room) => {
+  if (!userId) return false;
+
+  // `user_<id>` personal rooms are auto-joined server-side on connect (see
+  // wss.on('connection') below); the client also explicitly (re-)joins its
+  // own on some screens, which is harmless as long as it's always the
+  // caller's own id.
+  if (room.startsWith('user_')) {
+    return room === `user_${userId}`;
+  }
+
+  // Global public room every authenticated user may join, for live
+  // community-feed updates (new posts/comments) — not scoped to a
+  // particular resource, so there's no ownership to check beyond auth.
+  if (room === 'community') return true;
+
+  if (room.startsWith('consultation_')) {
+    const consultationId = room.slice('consultation_'.length);
+    const consultation = await Consultation.findById(consultationId);
+    if (!consultation) return false;
+    if (String(consultation.userId) === String(userId)) return true;
+    const doctor = await Doctor.findById(consultation.doctorId);
+    return Boolean(doctor && String(doctor.userId) === String(userId));
+  }
+
+  if (room.startsWith('buddy_')) {
+    const roomKey = room.slice('buddy_'.length);
+    const match = await BuddyMatch.findOne({ roomKey, status: 'active' });
+    return Boolean(match && match.members.some((memberId) => String(memberId) === String(userId)));
+  }
+
+  if (room.startsWith('partner_')) {
+    // Unlike consultation_/buddy_, this is NOT a shared room both sides
+    // join — each side of a pairing has its own Partner document and its
+    // own `partner_<that document's _id>` room; partnerController fans a
+    // given event out to both sides' rooms separately (see
+    // `broadcastToRoom(\`partner_${myProfile._id}\`, ...)` alongside
+    // `broadcastToRoom(\`partner_${partnerProfile._id}\`, ...)`). So this
+    // room is only ever joinable by the one user whose own Partner doc it is.
+    const partnerDocId = room.slice('partner_'.length);
+    const partner = await Partner.findById(partnerDocId);
+    return Boolean(partner && String(partner.userId) === String(userId));
+  }
+
+  return false;
+};
 
 /**
  * Initializes the WebSocket Server
@@ -59,13 +119,27 @@ export const initWebSocket = (server) => {
       logger.info('ws_auto_joined_personal', { userId, room: personalRoom });
     }
 
-    ws.on('message', (message) => {
+    ws.on('message', async (message) => {
       try {
         const parsedMessage = JSON.parse(message);
         const { type, room, text } = parsedMessage;
 
         if (type === 'join') {
           if (!room) return;
+
+          const authorized = await isAuthorizedForRoom(userId, room);
+          if (!authorized) {
+            logger.warn('ws_room_join_denied', { userId, room });
+            ws.send(
+              JSON.stringify({ type: 'error', room, message: 'Not authorized to join this room' }),
+            );
+            return;
+          }
+
+          // A socket can close (and its metadata get torn down by the
+          // 'close' handler below) while the authorization check above was
+          // still pending — don't resurrect a dead client's entry.
+          if (!clientMetadata.has(ws)) return;
 
           // Join room
           if (!rooms.has(room)) {
@@ -105,6 +179,10 @@ export const initWebSocket = (server) => {
           );
         } else if (type === 'message') {
           if (!room || !text?.trim()) return;
+          // Only broadcast into a room this socket actually joined (and was
+          // authorized for, at join time) — otherwise a client could skip
+          // 'join' entirely and inject messages into any room by name.
+          if (!clientMetadata.get(ws)?.rooms.has(room)) return;
 
           logger.info('ws_message_received', { userId, room, text: text.substring(0, 50) });
 
@@ -115,13 +193,21 @@ export const initWebSocket = (server) => {
             sentAt: new Date().toISOString(),
             userId,
           });
-        } else if (room && room.startsWith('buddy_') && type) {
-          // Period Buddy presence/video-call signaling (presence_ping/pong/leave,
+        } else if (
+          room &&
+          (room.startsWith('buddy_') || room.startsWith('consultation_')) &&
+          type
+        ) {
+          // Video-call / presence signaling (presence_ping/pong/leave,
           // call_request/accept/decline/end, webrtc_offer/answer/ice_candidate).
-          // Both sides of a pairing join the same buddy_<roomKey> room (roomKey is
-          // unique per pairing — see BuddyMatch.roomKey), so this is a plain shared-room
-          // broadcast; we just skip the sender itself to avoid it reacting to its own signal.
-          if (!userId) return;
+          // Used both by anonymous buddy pairings (buddy_<roomKey>) and by
+          // doctor<->patient consultations (consultation_<id>) — the clinician
+          // portal and the patient app join the same consultation room and speak
+          // this same WebRTC signaling protocol. It's a plain shared-room
+          // broadcast; we skip the sender itself to avoid it reacting to its own signal.
+          // Same "must have actually joined" guard as the 'message' branch
+          // above — the room-membership check already happened at 'join'.
+          if (!userId || !clientMetadata.get(ws)?.rooms.has(room)) return;
 
           logger.info('ws_signal_relay', { userId, room, signalType: type });
 

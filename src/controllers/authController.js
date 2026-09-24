@@ -3,6 +3,22 @@ import PendingSignup from '../models/PendingSignup.js';
 import CycleLog from '../models/CycleLog.js';
 import CycleSettings from '../models/CycleSettings.js';
 import Habit from '../models/Habit.js';
+import HabitCompletion from '../models/HabitCompletion.js';
+import ForestLog from '../models/ForestLog.js';
+import BuddyMatch from '../models/BuddyMatch.js';
+import BuddyMessage from '../models/BuddyMessage.js';
+import Consultation from '../models/Consultation.js';
+import ConsultationMessage from '../models/ConsultationMessage.js';
+import Community from '../models/Community.js';
+import CommunityLike from '../models/CommunityLike.js';
+import Comment from '../models/Comment.js';
+import Document from '../models/Document.js';
+import DocumentChatMessage from '../models/DocumentChatMessage.js';
+import Notification from '../models/Notification.js';
+import RewardTransaction from '../models/RewardTransaction.js';
+import ScreeningAssessment from '../models/ScreeningAssessment.js';
+import UserSession from '../models/UserSession.js';
+import Partner from '../models/Partner.js';
 import { comparePassword, hashPassword } from '../utils/password.js';
 import { generateToken } from '../utils/jwt.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
@@ -21,9 +37,13 @@ import {
   OTP_MAX_ATTEMPTS,
 } from '../utils/otp.js';
 import { sendMail } from '../utils/mailer.js';
-import { getOtpEmailTemplate } from '../templates/emailTemplates.js';
+import {
+  getOtpEmailTemplate,
+  getAccountDeletionOtpEmailTemplate,
+} from '../templates/emailTemplates.js';
 import { verifyGoogleIdToken } from '../utils/googleAuth.js';
 import logger from '../utils/logger.js';
+import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
 
 const sendOtpEmail = async ({ email, firstName, otp }) => {
   await sendMail({
@@ -337,7 +357,7 @@ const PROFILE_COMPLETE_BONUS = 20;
 
 export const onboarding = async (req, res, next) => {
   try {
-    const { dateOfBirth, gender, phone, profilePicture } = req.body;
+    const { dateOfBirth, gender, phone, profilePicture, state } = req.body;
 
     const existingUser = await User.findById(req.userId);
     if (!existingUser) {
@@ -348,11 +368,12 @@ export const onboarding = async (req, res, next) => {
 
     const updates = {
       isProfileComplete: true,
-      ...pickDefined({ dateOfBirth, gender, phone, profilePicture }, [
+      ...pickDefined({ dateOfBirth, gender, phone, profilePicture, state }, [
         'dateOfBirth',
         'gender',
         'phone',
         'profilePicture',
+        'state',
       ]),
       ...(isFirstCompletion && {
         walletBalance: (existingUser.walletBalance || 0) + PROFILE_COMPLETE_BONUS,
@@ -407,6 +428,7 @@ export const updateProfile = async (req, res, next) => {
       'dateOfBirth',
       'gender',
       'profilePicture',
+      'state',
       'notificationsEnabled',
       'anonymousCommunityMode',
     ]);
@@ -499,6 +521,13 @@ export const deleteAccount = async (req, res, next) => {
     user.email = `deleted_${user._id}_${user.email}`;
     await user.save();
 
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.ACCOUNT_DELETED,
+      resourceType: 'user',
+      resourceId: user._id,
+      metadata: { mode: 'authenticated' },
+    });
     return sendResponse(res, HTTP_STATUS.OK, 'Account deleted successfully');
   } catch (error) {
     next(error);
@@ -582,6 +611,156 @@ export const updateFcmToken = async (req, res, next) => {
     return sendResponse(res, HTTP_STATUS.OK, 'FCM token updated successfully', {
       notificationToken: user.notificationToken,
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const SELF_DELETE_RESEND_COOLDOWN_SECONDS = OTP_RESEND_COOLDOWN_SECONDS;
+
+/**
+ * Purges every collection that stores per-user data, then removes the User
+ * document itself. Used only after the deletion OTP has been confirmed.
+ * Kept as one helper so the set of collections touched has a single home —
+ * update this list, not each call site, when a new per-user model is added.
+ */
+const purgeAllUserData = async (userId) => {
+  const [ownedConsultations, ownedMatches] = await Promise.all([
+    Consultation.find({ userId }).select('_id'),
+    // Buddy pairings are shared rows keyed by `members` (both participants), not
+    // a per-user `userId` — deleting the account removes the whole pairing and
+    // its message stream for both sides.
+    BuddyMatch.find({ members: userId }).select('_id'),
+  ]);
+  const consultationIds = ownedConsultations.map((c) => c._id);
+  const matchIds = ownedMatches.map((m) => m._id);
+
+  await Promise.all([
+    CycleLog.deleteMany({ userId }),
+    CycleSettings.deleteMany({ userId }),
+    Habit.deleteMany({ userId }),
+    HabitCompletion.deleteMany({ userId }),
+    ForestLog.deleteMany({ userId }),
+    BuddyMatch.deleteMany({ members: userId }),
+    BuddyMessage.deleteMany({ matchId: { $in: matchIds } }),
+    Consultation.deleteMany({ userId }),
+    ConsultationMessage.deleteMany({ consultationId: { $in: consultationIds } }),
+    Community.deleteMany({ userId }),
+    CommunityLike.deleteMany({ userId }),
+    Comment.deleteMany({ userId }),
+    Document.deleteMany({ userId }),
+    DocumentChatMessage.deleteMany({ userId }),
+    Notification.deleteMany({ userId }),
+    RewardTransaction.deleteMany({ userId }),
+    ScreeningAssessment.deleteMany({ userId }),
+    UserSession.deleteMany({ userId }),
+    Partner.deleteMany({ userId }),
+  ]);
+
+  await User.deleteOne({ _id: userId });
+};
+
+/**
+ * Self-service deletion, step 1 — public/unauthenticated (used by the
+ * marketing site's unlisted "delete my data" page). Requesting a code never
+ * reveals whether the email has an account: same response either way, and
+ * the email itself is only sent if it does. This is deliberate — an
+ * unauthenticated endpoint that confirms account existence is an enumeration
+ * leak, and the page it backs is reachable by anyone who finds the URL.
+ */
+export const requestSelfDeletion = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    const user = await User.findOne({ email: normalizedEmail }).select('+selfDeleteLastSentAt');
+
+    if (user) {
+      if (user.selfDeleteLastSentAt) {
+        const secondsSinceLastSend = (Date.now() - user.selfDeleteLastSentAt.getTime()) / 1000;
+        if (secondsSinceLastSend < SELF_DELETE_RESEND_COOLDOWN_SECONDS) {
+          // Still respond with the generic success message — don't leak timing/existence.
+          return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.SELF_DELETE_OTP_SENT, {
+            email: normalizedEmail,
+            expiresInMinutes: OTP_EXPIRY_MINUTES,
+          });
+        }
+      }
+
+      const otp = generateOtp();
+      user.selfDeleteOtpHash = await hashOtp(otp);
+      user.selfDeleteOtpExpiresAt = getOtpExpiry();
+      user.selfDeleteOtpAttempts = 0;
+      user.selfDeleteLastSentAt = new Date();
+      await user.save();
+
+      await sendMail({
+        to: normalizedEmail,
+        subject: 'Confirm deletion of your Nura account',
+        html: getAccountDeletionOtpEmailTemplate({
+          firstName: user.firstName,
+          otp,
+          expiryMinutes: OTP_EXPIRY_MINUTES,
+        }),
+      });
+
+      logger.info('self_delete_requested', { userId: user._id, email: normalizedEmail });
+    }
+
+    return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.SELF_DELETE_OTP_SENT, {
+      email: normalizedEmail,
+      expiresInMinutes: OTP_EXPIRY_MINUTES,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Self-service deletion, step 2 — verifies the OTP emailed in step 1, then
+ * permanently purges the account and everything tied to it. Irreversible.
+ */
+export const confirmSelfDeletion = async (req, res, next) => {
+  try {
+    const { email, code } = req.body;
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    const user = await User.findOne({ email: normalizedEmail }).select(
+      '+selfDeleteOtpHash +selfDeleteOtpExpiresAt +selfDeleteOtpAttempts',
+    );
+
+    if (!user || !user.selfDeleteOtpHash) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, ERROR_MESSAGES.SELF_DELETE_NO_REQUEST);
+    }
+
+    if (user.selfDeleteOtpExpiresAt < new Date()) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.SELF_DELETE_OTP_EXPIRED);
+    }
+
+    if (user.selfDeleteOtpAttempts >= OTP_MAX_ATTEMPTS) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.SELF_DELETE_OTP_MAX_ATTEMPTS);
+    }
+
+    const isValid = await compareOtp(String(code), user.selfDeleteOtpHash);
+    if (!isValid) {
+      user.selfDeleteOtpAttempts += 1;
+      await user.save();
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.SELF_DELETE_OTP_INVALID);
+    }
+
+    const userId = user._id;
+    logger.info('self_delete_confirmed', { userId, email: normalizedEmail });
+
+    await purgeAllUserData(userId);
+
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.ACCOUNT_DELETED,
+      resourceType: 'user',
+      resourceId: userId,
+      metadata: { mode: 'self_service' },
+    });
+    return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.SELF_DELETE_COMPLETE);
   } catch (error) {
     next(error);
   }

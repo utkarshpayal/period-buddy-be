@@ -1,4 +1,5 @@
 import slugify from 'slugify';
+import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
 import Blog from '../models/Blog.js';
 import HealthIssue from '../models/HealthIssue.js';
 import QuestionAnswer from '../models/QuestionAnswer.js';
@@ -442,7 +443,12 @@ export const listContent = async (req, res, next) => {
         const filter = config.buildFilter(req.query);
         if (!filter) return { invalid: true };
 
-        const documents = await config.Model.find(filter).sort(config.sort);
+        // Previously unbounded — every blog/reel/QA/health-issue/wellbeing
+        // document's full body was returned with no cap when `type=all`
+        // (or no `type`), unlike every other list endpoint in this codebase.
+        // Reuses the same `limit` the single-type branch above already
+        // applies, per content type.
+        const documents = await config.Model.find(filter).sort(config.sort).limit(limit);
 
         return {
           type,
@@ -686,6 +692,12 @@ export const createContent = async (req, res, next) => {
     const result = await creators[type]();
     if (result.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, result.error);
 
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.CONTENT_CREATED,
+      resourceType: type,
+      resourceId: result.document?._id,
+    });
     return sendResponse(
       res,
       HTTP_STATUS.CREATED,
@@ -910,6 +922,12 @@ export const updateContent = async (req, res, next) => {
 
     if (!document) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Content not found');
 
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.CONTENT_UPDATED,
+      resourceType: type,
+      resourceId: req.params.id,
+    });
     return sendResponse(
       res,
       HTTP_STATUS.OK,
@@ -970,6 +988,12 @@ export const deleteContent = async (req, res, next) => {
 
     if (!document) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Content not found');
 
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.CONTENT_DELETED,
+      resourceType: type,
+      resourceId: req.params.id,
+    });
     return sendResponse(res, HTTP_STATUS.OK, 'Content unpublished', config.serialize(document));
   } catch (error) {
     next(error);
