@@ -44,6 +44,7 @@ import {
 import { verifyGoogleIdToken } from '../utils/googleAuth.js';
 import logger from '../utils/logger.js';
 import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
+import { buildLogoutTokenFilter } from '../utils/logoutToken.js';
 
 const sendOtpEmail = async ({ email, firstName, otp }) => {
   await sendMail({
@@ -490,7 +491,18 @@ export const logout = async (req, res, next) => {
     // In a real application, you might want to implement token blacklisting.
     // Drop this device's push token so a logged-out phone stops receiving
     // this account's notifications (period reminders, partner updates, ...).
-    await User.updateOne({ _id: req.userId }, { $unset: { notificationToken: 1 } });
+    // With `fcmToken` in the body, only clear it if it's still this device's
+    // (another phone may have registered since); without it (older app
+    // builds), clear unconditionally. See utils/logoutToken.js.
+    // Best-effort: a failure here must never make logout itself fail.
+    const filter = buildLogoutTokenFilter(req.userId, req.body);
+    if (filter) {
+      try {
+        await User.updateOne(filter, { $unset: { notificationToken: 1 } });
+      } catch (err) {
+        logger.warn('logout_token_unset_failed', { userId: req.userId, error: err?.message });
+      }
+    }
     return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.LOGOUT_SUCCESS);
   } catch (error) {
     next(error);
