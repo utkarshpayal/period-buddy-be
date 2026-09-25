@@ -1,0 +1,26 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CodeDeployRelease",
+      "Effect": "Allow",
+      "Action": [
+        "codedeploy:CreateDeployment",
+        "codedeploy:GetApplication",
+        "codedeploy:GetApplicationRevision",
+        "codedeploy:RegisterApplicationRevision",
+        "codedeploy:GetDeployment"
+      ],
+      "Resource": [
+        "arn:aws:codedeploy:ap-south-1:740726746628:application:the-nura-care-be",
+        "arn:aws:codedeploy:ap-south-1:740726746628:deploymentgroup:the-nura-care-be/the-nura-care-be"
+      ]
+    },
+    {
+      "Sid": "CodeDeployConfig",
+      "Effect": "Allow",
+      "Action": "codedeploy:GetDeploymentConfig",
+      "Resource": "arn:aws:codedeploy:ap-south-1:740726746628:deploymentconfig:*"
+    }
+  ]
+}
