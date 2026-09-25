@@ -465,6 +465,36 @@ export const disconnectPartner = async (req, res, next) => {
       },
     );
 
+    // Tell both sides in real time. The other side's app only stores its
+    // partner role on-device, so without this a viewer disconnected by the
+    // owner stays on the (now empty) partner view until the app next
+    // re-checks the role. Clients auto-join their personal `user_<id>` room
+    // on connect (config/websocket.js). The Notification doc also sends a
+    // push via its post-save hook, so an offline partner learns why too.
+    try {
+      const me = await User.findById(req.userId).select('firstName lastName');
+      const myName = [me?.firstName, me?.lastName].filter(Boolean).join(' ') || 'Your partner';
+      const notifOther = await Notification.create({
+        userId: partnerId,
+        type: 'system',
+        title: 'Partner connection ended',
+        body: `${myName} ended your partner connection.`,
+        sentAt: new Date(),
+      });
+      broadcastToRoom(`user_${partnerId}`, {
+        type: 'partner_disconnected',
+        notification: notifOther,
+      });
+      broadcastToRoom(`user_${req.userId}`, { type: 'partner_disconnected' });
+    } catch (notifyError) {
+      // The disconnect itself already succeeded — don't fail the request.
+      logger.error('partner_disconnect_notify_error', {
+        userId: req.userId,
+        partnerId,
+        error: notifyError.message,
+      });
+    }
+
     logger.info('partner_disconnected', {
       action: 'partner_disconnected',
       userId: req.userId,
