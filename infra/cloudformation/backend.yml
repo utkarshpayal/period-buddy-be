@@ -1,0 +1,493 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Nura API on a single EC2 host running Docker (API + Caddy for HTTPS), with a
+  CodePipeline that builds on every push to GitHub and deploys via CodeDeploy.
+  See infra/README.md for the step-by-step setup.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: nura
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+    Description: Prefix for resource names (lowercase).
+  GitHubOwner:
+    Type: String
+    Default: utkarshpayal
+  GitHubRepo:
+    Type: String
+    Default: period-buddy-be
+  GitHubBranch:
+    Type: String
+    Default: main
+  SiteAddress:
+    Type: String
+    Default: ':80'
+    Description: >-
+      What Caddy serves. ":80" = plain HTTP on the Elastic IP (use until DNS is
+      switched). One or more domains, comma-separated, e.g.
+      "backend.thenura.care,www.backend.thenura.care" = automatic HTTPS for
+      each, once their A records point at the Elastic IP. Takes effect on the
+      next deploy.
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues: [t3.micro, t3.small, t3.medium, t3.large]
+    Description: t3.small (2 GB RAM) is the recommended minimum.
+  RootVolumeSizeGiB:
+    Type: Number
+    Default: 20
+    MinValue: 12
+  UploadsBucketName:
+    Type: String
+    Default: ''
+    Description: >-
+      Optional. Existing S3 bucket the API uploads to (AWS_S3_BUCKET). When
+      set, the instance role gets read/write on it, so AWS_ACCESS_KEY_ID /
+      AWS_SECRET_ACCESS_KEY can be left out of the app secret.
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [7, 14, 30, 60, 90, 180, 365]
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Amazon Linux 2023 (x86_64). Leave as is.
+
+Conditions:
+  HasUploadsBucket: !Not [!Equals [!Ref UploadsBucketName, '']]
+
+Resources:
+  # ---------------------------------------------------------------- network
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.40.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags: [{ Key: Name, Value: !Sub '${ProjectName}-vpc' }]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{ Key: Name, Value: !Sub '${ProjectName}-igw' }]
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: !Sub '${ProjectName}-public' }]
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: !Sub '${ProjectName}-public' }]
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # Only HTTP/HTTPS are open. There is no SSH port: shell access is through
+  # SSM Session Manager (see infra/README.md).
+  ApiSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Nura API - HTTP/HTTPS from anywhere
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - {
+            IpProtocol: tcp,
+            FromPort: 80,
+            ToPort: 80,
+            CidrIp: 0.0.0.0/0,
+            Description: HTTP (ACME challenge + redirect),
+          }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTPS }
+        - { IpProtocol: udp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTP/3 }
+      Tags: [{ Key: Name, Value: !Sub '${ProjectName}-api' }]
+
+  # --------------------------------------------------------------- storage
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${ProjectName}-api'
+      # Lets `delete-stack` remove the repo even though it holds images.
+      EmptyOnDelete: true
+      ImageScanningConfiguration: { ScanOnPush: true }
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep the 20 most recent images",
+                "selection": { "tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": 20 },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-artifacts
+            Status: Enabled
+            ExpirationInDays: 30
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/${ProjectName}/api'
+      RetentionInDays: !Ref LogRetentionDays
+
+  # The API's whole environment as one JSON object ({"MONGODB_URI": "...",
+  # ...}). Created with placeholders; fill it with
+  # infra/scripts/push-env-to-secret.sh. Later stack updates don't touch the
+  # value unless this template's SecretString itself changes.
+  AppSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub '${ProjectName}/api/env'
+      Description: Environment variables for the Nura API container (JSON object)
+      SecretString: '{"MONGODB_URI":"","JWT_SECRET":""}'
+
+  # ------------------------------------------------------------- instance
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Session Manager shell access, no SSH keys needed.
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: nura-api-host
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: EcrAuth
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Sid: EcrPull
+                Effect: Allow
+                Action:
+                  [ecr:BatchGetImage, ecr:GetDownloadUrlForLayer, ecr:BatchCheckLayerAvailability]
+                Resource: !GetAtt EcrRepository.Arn
+              - Sid: ReadAppSecret
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref AppSecret
+              - Sid: ContainerLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents, logs:DescribeLogStreams]
+                Resource: !Sub '${ApiLogGroup.Arn}:*'
+              - Sid: CodeDeployRevisions
+                Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion]
+                Resource: !Sub '${ArtifactBucket.Arn}/*'
+        - !If
+          - HasUploadsBucket
+          - PolicyName: nura-api-uploads
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                  Resource: !Sub 'arn:${AWS::Partition}:s3:::${UploadsBucketName}/*'
+                - Effect: Allow
+                  Action: s3:ListBucket
+                  Resource: !Sub 'arn:${AWS::Partition}:s3:::${UploadsBucketName}'
+          - !Ref AWS::NoValue
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  ApiInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: PublicDefaultRoute
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds: [!Ref ApiSecurityGroup]
+      MetadataOptions:
+        HttpTokens: required # IMDSv2 only
+        # 2 hops: the SDK inside the container reaches instance credentials
+        # (only needed when UploadsBucketName is used instead of static keys).
+        HttpPutResponseHopLimit: 2
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: !Ref RootVolumeSizeGiB
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - { Key: Name, Value: !Sub '${ProjectName}-api' }
+        - { Key: NuraDeployTarget, Value: !Sub '${ProjectName}-api' }
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # First-boot setup: Docker + Compose, CodeDeploy agent, swap.
+          set -euxo pipefail
+          dnf install -y docker jq ruby wget
+          systemctl enable --now docker
+
+          # Docker Compose v2 plugin (env_file "format: raw" needs >= 2.30).
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl -fsSL "https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64" \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          docker compose version
+
+          # 2 GB swap — headroom for image pulls on small instances.
+          if [ ! -f /swapfile ]; then
+            dd if=/dev/zero of=/swapfile bs=1M count=2048
+            chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+            echo '/swapfile swap swap defaults 0 0' >> /etc/fstab
+          fi
+
+          # CodeDeploy agent.
+          cd /tmp
+          wget -q "https://aws-codedeploy-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/latest/install"
+          chmod +x ./install
+          ./install auto
+          systemctl enable --now codedeploy-agent
+
+          mkdir -p /opt/nura
+
+  ApiElasticIp:
+    Type: AWS::EC2::EIP
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref ApiInstance
+      Tags: [{ Key: Name, Value: !Sub '${ProjectName}-api' }]
+
+  # ------------------------------------------------------------- pipeline
+  # Created in PENDING state — approve it once in the console (Developer
+  # Tools → Settings → Connections) before the pipeline can pull code.
+  GitHubConnection:
+    Type: AWS::CodeStarConnections::Connection
+    Properties:
+      ConnectionName: !Sub '${ProjectName}-github'
+      ProviderType: GitHub
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: codebuild.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: nura-codebuild
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}-api*'
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObject]
+                Resource: !Sub '${ArtifactBucket.Arn}/*'
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: !GetAtt EcrRepository.Arn
+
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${ProjectName}-api-build'
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts: { Type: CODEPIPELINE }
+      Source: { Type: CODEPIPELINE, BuildSpec: buildspec.yml }
+      TimeoutInMinutes: 30
+      Cache:
+        Type: LOCAL
+        Modes: [LOCAL_DOCKER_LAYER_CACHE, LOCAL_SOURCE_CACHE]
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true # needed for docker build
+        EnvironmentVariables:
+          - { Name: ECR_REPOSITORY_URI, Value: !GetAtt EcrRepository.RepositoryUri }
+          - { Name: SECRET_ID, Value: !Ref AppSecret }
+          - { Name: LOG_GROUP, Value: !Ref ApiLogGroup }
+          - { Name: SITE_ADDRESS, Value: !Ref SiteAddress }
+
+  CodeDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: codedeploy.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+
+  DeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: !Sub '${ProjectName}-api'
+      ComputePlatform: Server
+
+  DeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref DeployApplication
+      DeploymentGroupName: !Sub '${ProjectName}-api'
+      ServiceRoleArn: !GetAtt CodeDeployRole.Arn
+      DeploymentConfigName: CodeDeployDefault.AllAtOnce
+      Ec2TagFilters:
+        - { Key: NuraDeployTarget, Value: !Sub '${ProjectName}-api', Type: KEY_AND_VALUE }
+      # A failed ValidateService (/health/ready) redeploys the last good revision.
+      AutoRollbackConfiguration:
+        Enabled: true
+        Events: [DEPLOYMENT_FAILURE]
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: codepipeline.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: nura-pipeline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObject, s3:GetBucketVersioning]
+                Resource: [!GetAtt ArtifactBucket.Arn, !Sub '${ArtifactBucket.Arn}/*']
+              - Effect: Allow
+                Action: [codestar-connections:UseConnection, codeconnections:UseConnection]
+                Resource: !Ref GitHubConnection
+              - Effect: Allow
+                Action: [codebuild:StartBuild, codebuild:BatchGetBuilds]
+                Resource: !GetAtt BuildProject.Arn
+              - Effect: Allow
+                Action:
+                  - codedeploy:CreateDeployment
+                  - codedeploy:GetApplication
+                  - codedeploy:GetApplicationRevision
+                  - codedeploy:GetDeployment
+                  - codedeploy:GetDeploymentConfig
+                  - codedeploy:RegisterApplicationRevision
+                Resource: '*'
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub '${ProjectName}-api'
+      PipelineType: V2
+      RoleArn: !GetAtt PipelineRole.Arn
+      ArtifactStore: { Type: S3, Location: !Ref ArtifactBucket }
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: GitHub
+              ActionTypeId:
+                { Category: Source, Owner: AWS, Provider: CodeStarSourceConnection, Version: '1' }
+              Configuration:
+                ConnectionArn: !Ref GitHubConnection
+                FullRepositoryId: !Sub '${GitHubOwner}/${GitHubRepo}'
+                BranchName: !Ref GitHubBranch
+                OutputArtifactFormat: CODE_ZIP
+                DetectChanges: true
+              OutputArtifacts: [{ Name: Source }]
+        - Name: Build
+          Actions:
+            - Name: TestAndBuildImage
+              ActionTypeId: { Category: Build, Owner: AWS, Provider: CodeBuild, Version: '1' }
+              Configuration: { ProjectName: !Ref BuildProject }
+              InputArtifacts: [{ Name: Source }]
+              OutputArtifacts: [{ Name: Revision }]
+        - Name: Deploy
+          Actions:
+            - Name: DeployToEc2
+              ActionTypeId: { Category: Deploy, Owner: AWS, Provider: CodeDeploy, Version: '1' }
+              Configuration:
+                ApplicationName: !Ref DeployApplication
+                DeploymentGroupName: !Ref DeploymentGroup
+              InputArtifacts: [{ Name: Revision }]
+
+Outputs:
+  PublicIp:
+    Description: Elastic IP of the API host — point your domain's A record here.
+    Value: !Ref ApiElasticIp
+  ApiUrlBeforeDns:
+    Description: Plain-HTTP URL that works right after the first deploy (SiteAddress ":80").
+    Value: !Sub 'http://${ApiElasticIp}/health'
+  GitHubConnectionArn:
+    Description: Approve this connection once in the console before the first pipeline run.
+    Value: !Ref GitHubConnection
+  AppSecretArn:
+    Description: Fill with infra/scripts/push-env-to-secret.sh.
+    Value: !Ref AppSecret
+  EcrRepositoryUri:
+    Value: !GetAtt EcrRepository.RepositoryUri
+  InstanceId:
+    Description: For Session Manager (aws ssm start-session --target <id>).
+    Value: !Ref ApiInstance
+  PipelineConsoleUrl:
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/${Pipeline}/view?region=${AWS::Region}'

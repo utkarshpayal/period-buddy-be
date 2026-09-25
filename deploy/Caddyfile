@@ -1,0 +1,18 @@
+# Reverse proxy in front of the API (see docker-compose.yml). Caddy obtains
+# and renews the TLS certificate itself and proxies WebSocket upgrades
+# (chat, calls, live notifications) with no extra configuration.
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# Largest upload the API accepts is a 300 MB reel video
+	# (routes/contentRoutes.js); leave headroom for multipart overhead.
+	request_body {
+		max_size 320MB
+	}
+
+	reverse_proxy api:5000 {
+		# One proxy hop — matches `app.set('trust proxy', 1)` in index.js, so
+		# rate limiting keys on the real client IP.
+		header_up X-Forwarded-Proto {scheme}
+	}
+}

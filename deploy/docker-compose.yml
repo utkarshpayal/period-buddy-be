@@ -1,0 +1,65 @@
+# Runs on the EC2 host from /opt/nura (copied there by deploy/scripts/install.sh).
+#
+# Two files next to this one, both written by install.sh — never committed:
+#   .env     compose settings: IMAGE_URI, SITE_ADDRESS, LOG_GROUP, AWS_REGION
+#   app.env  the API's environment, rendered from AWS Secrets Manager
+#
+# Exactly ONE api container on purpose: WebSocket rooms (config/websocket.js)
+# and the reminder / check-in-call scheduler (utils/inProcessScheduler.js)
+# live in process memory. Two replicas would split chat rooms between them
+# and send every scheduled reminder twice.
+
+name: nura
+
+services:
+  api:
+    image: ${IMAGE_URI:?IMAGE_URI is not set}
+    restart: unless-stopped
+    env_file:
+      - path: app.env
+        # Values are taken literally (no quote handling or $-interpolation),
+        # so secrets containing quotes, # or $ survive intact.
+        format: raw
+    environment:
+      NODE_ENV: production
+      PORT: '5000'
+    expose:
+      - '5000'
+    # index.js's graceful shutdown force-exits after 10s.
+    stop_grace_period: 15s
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:?AWS_REGION is not set}
+        awslogs-group: ${LOG_GROUP:?LOG_GROUP is not set}
+        awslogs-stream: api
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      # A domain (e.g. api.thenura.care) → automatic HTTPS via Let's Encrypt,
+      # once its DNS points at this host. ":80" → plain HTTP (before DNS is set).
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-group: ${LOG_GROUP}
+        awslogs-stream: caddy
+
+volumes:
+  # Holds the TLS certificates — keep it, or Let's Encrypt rate limits bite.
+  caddy_data:
+  caddy_config:

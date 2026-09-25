@@ -27,10 +27,27 @@ const transports = [
   }),
 ];
 
+// Size-capped: in a long-lived container these files otherwise grow until
+// the disk fills. The console transport (→ CloudWatch via Docker's awslogs
+// driver, deploy/docker-compose.yml) remains the primary log stream.
+const LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
+const LOG_FILE_MAX_FILES = 5;
+
 if (process.env.NODE_ENV === 'production') {
   transports.push(
-    new winston.transports.File({ filename: path.join(LOG_DIR, 'error.log'), level: 'error' }),
-    new winston.transports.File({ filename: path.join(LOG_DIR, 'combined.log') }),
+    new winston.transports.File({
+      filename: path.join(LOG_DIR, 'error.log'),
+      level: 'error',
+      maxsize: LOG_FILE_MAX_BYTES,
+      maxFiles: LOG_FILE_MAX_FILES,
+      tailable: true,
+    }),
+    new winston.transports.File({
+      filename: path.join(LOG_DIR, 'combined.log'),
+      maxsize: LOG_FILE_MAX_BYTES,
+      maxFiles: LOG_FILE_MAX_FILES,
+      tailable: true,
+    }),
   );
 }
 

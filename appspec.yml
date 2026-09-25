@@ -1,0 +1,28 @@
+# CodeDeploy (EC2) — see deploy/scripts/ and infra/README.md.
+version: 0.0
+os: linux
+files:
+  - source: /
+    destination: /opt/nura/release
+file_exists_behavior: OVERWRITE
+# Build artifacts don't reliably keep the executable bit; CodeDeploy won't
+# run a hook script without it.
+permissions:
+  - object: /opt/nura/release/deploy/scripts
+    pattern: '*.sh'
+    mode: 755
+    type:
+      - file
+hooks:
+  AfterInstall:
+    - location: deploy/scripts/install.sh
+      timeout: 600
+      runas: root
+  ApplicationStart:
+    - location: deploy/scripts/start.sh
+      timeout: 300
+      runas: root
+  ValidateService:
+    - location: deploy/scripts/validate.sh
+      timeout: 180
+      runas: root
