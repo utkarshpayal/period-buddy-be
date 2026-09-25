@@ -107,7 +107,7 @@ export const upsertCycleLog = async (userId, payload) => {
   // anchored at this log's own date via `options.today`), instead of a raw
   // offset from the user-configured, only-user-edited
   // CycleSettings.lastPeriodStartDate — which drifts out of sync from a
-  // user's real logged periods over time (see fixes.md 1.4: insightController
+  // user's real logged periods over time (see docs/fixes.md 1.4: insightController
   // and partnerController already had to make this same switch).
   const predictionsAtDate = settings
     ? computeCyclePredictions(settings, recentLogs, { today: date })
@@ -539,7 +539,7 @@ export const getSymptomPredictions = async (req, res, next) => {
     // cycle's actual period-start date, from the same episode-based anchor
     // getPredictions/insights use — not a raw offset from the
     // user-configured lastPeriodStartDate, which drifts out of sync from
-    // real logged periods over time — see fixes.md 1.4) so repeat logs
+    // real logged periods over time — see docs/fixes.md 1.4) so repeat logs
     // within the same cycle only count once.
     const bucketKey = (symptom, phase) => `${symptom}::${phase}`;
     const occurrenceCycles = new Map(); // bucketKey -> Set(cycleIndex)

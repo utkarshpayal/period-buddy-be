@@ -61,4 +61,4 @@ Delete sections that don't apply. Keep this comment out of the final description
 - [ ] `npm run lint` passes
 - [ ] `npm test` passes
 - [ ] No secrets, `.env`, or credentials committed
-- [ ] `API_DOCUMENTATION.md` / `CLAUDE.md` updated if behavior or architecture changed
+- [ ] `docs/API_DOCUMENTATION.md` / `CLAUDE.md` updated if behavior or architecture changed

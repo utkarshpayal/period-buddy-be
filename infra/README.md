@@ -1,7 +1,7 @@
 # Deploying the Nura API to AWS
 
 > Team overview of every service, role, file and setting in production:
-> **[INFRASTRUCTURE.md](INFRASTRUCTURE.md)**. This README is the step-by-step setup guide.
+> **[docs/INFRASTRUCTURE.md](../docs/INFRASTRUCTURE.md)**. This README is the step-by-step setup guide.
 
 One EC2 host runs two Docker containers — the API and [Caddy](https://caddyserver.com)
 (HTTPS certificates + reverse proxy, WebSockets included). A CodePipeline
