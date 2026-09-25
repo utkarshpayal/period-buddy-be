@@ -6,7 +6,9 @@
 #   docker run --env-file .env -p 5000:5000 nura-api
 
 # ---- dependencies (production only) ----------------------------------------
-FROM node:20-bookworm-slim AS deps
+# Base images come from ECR Public's mirror of Docker Hub's official images:
+# same image, but no anonymous Docker Hub pull limit (CodeBuild shares IPs).
+FROM public.ecr.aws/docker/library/node:20-bookworm-slim AS deps
 WORKDIR /app
 # NODE_ENV=production makes the "prepare" script skip husky (a dev tool).
 ENV NODE_ENV=production
@@ -14,7 +16,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 # ---- runtime ----------------------------------------------------------------
-FROM node:20-bookworm-slim
+FROM public.ecr.aws/docker/library/node:20-bookworm-slim
 ENV NODE_ENV=production \
     PORT=5000
 WORKDIR /app
