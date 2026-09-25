@@ -10,5 +10,7 @@ compose up -d --remove-orphans
 # The Caddyfile is a bind mount, so an edited Caddyfile needs a reload.
 compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || true
 
-# Keep recent images for quick rollbacks; drop unused ones older than 7 days.
-docker image prune -af --filter "until=168h" >/dev/null || true
+# Drop every image the running containers don't use (~565 MB each). A
+# rollback redeploys an older revision, which pulls its image from ECR again,
+# so local copies aren't needed — and small root volumes fill up fast.
+docker image prune -af >/dev/null || true
