@@ -1,10 +1,12 @@
 import express from 'express';
-import { authenticate, authorize } from '../middleware/authMiddleware.js';
+import { authenticate } from '../middleware/authMiddleware.js';
+import { requirePermission } from '../middleware/rbac.js';
+import { PERMISSIONS } from '../config/permissions.js';
 import * as companyFolderController from '../controllers/companyFolderController.js';
 
 const router = express.Router();
 
-router.use(authenticate, authorize('admin'));
+router.use(authenticate, requirePermission(PERMISSIONS.COMPANY_FILES_MANAGE));
 
 /**
  * @route   GET /api/company-folders?parentId=

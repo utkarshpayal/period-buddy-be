@@ -896,6 +896,45 @@ const buildWellbeingUpdates = (body) => {
   return { updates };
 };
 
+/* ---------------------------------------------------------------------------
+ * Approval-gate helpers (used by routes/contentRoutes.js via withApproval)
+ * ------------------------------------------------------------------------- */
+
+/** Resolve `{ type, config, document }` for `/:type/:id`, or null. */
+export const loadContentForRequest = async (req) => {
+  const type = normalizeContentType(req.params.type);
+  if (!type || !isValidObjectId(req.params.id)) return null;
+  const config = CONTENT_CONFIG[type];
+  const document = await config.Model.findById(req.params.id);
+  return document ? { type, config, document } : null;
+};
+
+/** True when the body would make the item visible in the app. */
+export const bodyRequestsLive = (body = {}) => {
+  const visibility = resolveVisibilityInput(body);
+  return Boolean(visibility.provided && !visibility.invalid && visibility.value);
+};
+
+/** Is the item currently visible in the app? */
+export const isContentLive = ({ config, document }) => Boolean(document[config.statusField]);
+
+/** Serialized snapshot of an item, for the approvals diff view. */
+export const snapshotContent = async (req) => {
+  const loaded = await loadContentForRequest(req);
+  if (!loaded) return undefined;
+  return loaded.config.serialize(loaded.document, { includeBody: true });
+};
+
+/**
+ * Staff without content.publish may only create drafts: strip any visibility
+ * flags and pin the new item to its type's hidden state.
+ */
+export const forceDraftVisibility = (body = {}) => {
+  const rest = { ...body };
+  for (const field of ['isPublished', 'isActive', 'publish', 'status']) delete rest[field];
+  return { ...rest, status: 'draft' };
+};
+
 export const updateContent = async (req, res, next) => {
   try {
     const type = normalizeContentType(req.params.type);

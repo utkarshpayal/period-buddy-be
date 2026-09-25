@@ -18614,6 +18614,62 @@
         ]
       }
     },
+    "/api/admin/me": {
+      "get": {
+        "tags": [
+          "Super Admin"
+        ],
+        "description": "Requires the `admin` role.",
+        "operationId": "get__api_admin_me",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/admin/analytics": {
       "get": {
         "tags": [
@@ -19467,6 +19523,1036 @@
         ],
         "description": "Requires the `admin` role.",
         "operationId": "post__api_admin_notifications_broadcasts__id_retry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/staff": {
+      "get": {
+        "tags": [
+          "Super Admin"
+        ],
+        "description": "Requires the `admin` role.",
+        "operationId": "get__api_admin_staff",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/staff/invite": {
+      "post": {
+        "tags": [
+          "Super Admin"
+        ],
+        "description": "Requires the `admin` role.",
+        "operationId": "post__api_admin_staff_invite",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/staff/{id}/role": {
+      "patch": {
+        "tags": [
+          "Super Admin"
+        ],
+        "description": "Requires the `admin` role.",
+        "operationId": "patch__api_admin_staff__id_role",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/staff/{id}/status": {
+      "patch": {
+        "tags": [
+          "Super Admin"
+        ],
+        "description": "Requires the `admin` role.",
+        "operationId": "patch__api_admin_staff__id_status",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/staff/{id}/resend-invite": {
+      "post": {
+        "tags": [
+          "Super Admin"
+        ],
+        "description": "Requires the `admin` role.",
+        "operationId": "post__api_admin_staff__id_resend_invite",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/staff/{id}": {
+      "delete": {
+        "tags": [
+          "Super Admin"
+        ],
+        "description": "Requires the `admin` role.",
+        "operationId": "delete__api_admin_staff__id",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/change-requests": {
+      "get": {
+        "tags": [
+          "Super Admin"
+        ],
+        "description": "Requires the `admin` role.",
+        "operationId": "get__api_admin_change_requests",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/change-requests/summary": {
+      "get": {
+        "tags": [
+          "Super Admin"
+        ],
+        "description": "Requires the `admin` role.",
+        "operationId": "get__api_admin_change_requests_summary",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/change-requests/{id}": {
+      "get": {
+        "tags": [
+          "Super Admin"
+        ],
+        "description": "Requires the `admin` role.",
+        "operationId": "get__api_admin_change_requests__id",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/change-requests/{id}/approve": {
+      "post": {
+        "tags": [
+          "Super Admin"
+        ],
+        "description": "Requires the `admin` role.",
+        "operationId": "post__api_admin_change_requests__id_approve",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/change-requests/{id}/reject": {
+      "post": {
+        "tags": [
+          "Super Admin"
+        ],
+        "description": "Requires the `admin` role.",
+        "operationId": "post__api_admin_change_requests__id_reject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/change-requests/{id}/cancel": {
+      "post": {
+        "tags": [
+          "Super Admin"
+        ],
+        "description": "Requires the `admin` role.",
+        "operationId": "post__api_admin_change_requests__id_cancel",
         "parameters": [
           {
             "name": "id",

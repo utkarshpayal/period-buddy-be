@@ -1,7 +1,9 @@
 import express from 'express';
 import * as marketingController from '../controllers/marketingController.js';
 import { validateNewsletterSubscribe, handleValidationErrors } from '../schemas/marketingSchema.js';
-import { authenticate, authorize } from '../middleware/authMiddleware.js';
+import { authenticate } from '../middleware/authMiddleware.js';
+import { requirePermission } from '../middleware/rbac.js';
+import { PERMISSIONS } from '../config/permissions.js';
 
 const router = express.Router();
 
@@ -38,6 +40,11 @@ router.get('/unsubscribe', marketingController.unsubscribeNewsletterViaLink);
  * @desc    Admin: list active subscribers
  * @access  Admin
  */
-router.get('/', authenticate, authorize('admin'), marketingController.getNewsletterSubscribers);
+router.get(
+  '/',
+  authenticate,
+  requirePermission(PERMISSIONS.MARKETING_READ),
+  marketingController.getNewsletterSubscribers,
+);
 
 export default router;

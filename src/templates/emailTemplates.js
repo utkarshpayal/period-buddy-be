@@ -342,3 +342,36 @@ export const getDoctorInviteTemplate = ({ name, inviteUrl, expiryHours, specialt
   `;
   return emailLayout('Your Nura clinician invitation', content);
 };
+
+const escapeHtml = (value) =>
+  String(value ?? '').replace(
+    /[&<>"']/g,
+    (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch],
+  );
+
+/** Invite for an Admin Workspace staff member (content / app / clinical team). */
+export const getStaffInviteTemplate = ({
+  name,
+  roleLabel,
+  invitedByName,
+  inviteUrl,
+  expiryHours,
+}) => {
+  const content = `
+    <span class="badge">You're invited to the Nura Workspace</span>
+    <h2 style="margin-top: 0; color: ${BRAND.foreground}; font-size: 24px; font-weight: 600;">Hi ${escapeHtml(name) || 'there'},</h2>
+    <p>${escapeHtml(invitedByName) || 'The Nura team'} has invited you to join the Nura Admin Workspace as <strong>${escapeHtml(roleLabel)}</strong>.</p>
+
+    <div style="text-align: center; margin: 32px 0;">
+      <a href="${inviteUrl}" class="button">Set your password & sign in</a>
+    </div>
+
+    <p>This secure link expires in <strong>${expiryHours} hours</strong>. If the button doesn't work, copy and paste this URL into your browser:</p>
+    <p style="word-break: break-all; color: ${BRAND.primary}; font-size: 13px;">${inviteUrl}</p>
+    <div class="divider"></div>
+    <p>If you weren't expecting this invitation, you can safely ignore this email.</p>
+    <p style="margin-bottom: 0;">Warmly,</p>
+    <p style="font-weight: 600; margin-top: 4px; color: ${BRAND.primary};">The Nura Team</p>
+  `;
+  return emailLayout('Your Nura Workspace invitation', content);
+};

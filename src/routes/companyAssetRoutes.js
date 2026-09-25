@@ -1,6 +1,8 @@
 import express from 'express';
 import multer from 'multer';
-import { authenticate, authorize } from '../middleware/authMiddleware.js';
+import { authenticate } from '../middleware/authMiddleware.js';
+import { requirePermission } from '../middleware/rbac.js';
+import { PERMISSIONS } from '../config/permissions.js';
 import * as companyAssetController from '../controllers/companyAssetController.js';
 
 const router = express.Router();
@@ -58,7 +60,7 @@ const upload = multer({
  */
 router.get('/public', restrictToPublicAssetsOrigin, companyAssetController.listPublicAssets);
 
-router.use(authenticate, authorize('admin'));
+router.use(authenticate, requirePermission(PERMISSIONS.COMPANY_FILES_MANAGE));
 
 /**
  * @route   GET /api/company-assets

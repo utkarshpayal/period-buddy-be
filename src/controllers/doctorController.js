@@ -18,33 +18,13 @@ import { generateToken } from '../utils/jwt.js';
 import { sendMail } from '../utils/mailer.js';
 import { getDoctorInviteTemplate } from '../templates/emailTemplates.js';
 import { userRoleEnum } from '../enums/enums.js';
-
-const INVITE_EXPIRY_HOURS = 48;
+import { INVITE_EXPIRY_HOURS, buildInviteUrl } from '../utils/invite.js';
+import { describeAccess, isStaffRole } from '../config/permissions.js';
 
 /** Jitsi room per consultation — free, no keys, deterministic so both sides
  * of a booking land in the same room. */
 const meetingLinkFor = (consultationId) =>
   `https://meet.jit.si/PeriodBuddy-Consult-${consultationId}`;
-
-/** Base origin for the admin/clinician CMS where invitees set their password.
- * Prefers the explicit env var; otherwise falls back per environment so the
- * link is never host-less — and, critically, never points at localhost in
- * production (which broke real invite emails).
- *
- * Localhost is opt-in (NODE_ENV must be exactly "development"), not the
- * default — a deployed host with NODE_ENV unset/misconfigured (staging,
- * or "production" never actually reaching this process) still gets the
- * real domain instead of silently leaking localhost into invite emails. */
-const adminAppBaseUrl = () => {
-  const explicit = process.env.ADMIN_APP_URL || process.env.FRONTEND_URL;
-  if (explicit) return explicit.replace(/\/$/, '');
-  const isLocalDev = process.env.NODE_ENV === 'development';
-  return isLocalDev ? 'http://localhost:5173' : 'https://admin.thenura.care';
-};
-
-/** Build the set-password link the invitee follows. */
-const buildInviteUrl = (email, rawToken) =>
-  `${adminAppBaseUrl()}/set-password?token=${rawToken}&email=${encodeURIComponent(email)}`;
 
 /** Resolve the Doctor profile backing the currently logged-in doctor User.
  * Returns null when the account has no linked profile. */
@@ -350,7 +330,12 @@ export const setPasswordFromInvite = async (req, res, next) => {
 
     const authToken = generateToken({ userId: user._id, email: user.email, role: user.role });
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Password set successfully', user.toJSON(), authToken);
+    // This link also onboards Admin Workspace staff (staffController), so
+    // carry their access the same way the login response does.
+    const userData = user.toJSON();
+    if (isStaffRole(user.role)) userData.access = describeAccess(user.role);
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Password set successfully', userData, authToken);
   } catch (error) {
     next(error);
   }

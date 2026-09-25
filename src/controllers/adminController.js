@@ -1,3 +1,4 @@
+import { isStaffRole } from '../config/permissions.js';
 import User from '../models/User.js';
 import Doctor from '../models/Doctor.js';
 import Consultation from '../models/Consultation.js';
@@ -109,6 +110,13 @@ export const setUserStatus = async (req, res, next) => {
     const { isActive } = req.body;
     if (typeof isActive !== 'boolean') {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'isActive (boolean) is required');
+    }
+
+    // Staff accounts are managed from Team & Access (staffController), where
+    // the role hierarchy is enforced — never from the app-users screen.
+    const target = await User.findById(req.params.id).select('role').lean();
+    if (target && isStaffRole(target.role) && req.user.role !== userRoleEnum.ADMIN) {
+      return sendError(res, HTTP_STATUS.FORBIDDEN, 'Staff accounts are managed from Team & Access');
     }
 
     // An admin can't suspend their own account (would lock themselves out).

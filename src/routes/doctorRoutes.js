@@ -2,6 +2,8 @@ import express from 'express';
 import * as doctorController from '../controllers/doctorController.js';
 import { uploadContentMedia } from '../controllers/uploadController.js';
 import { authenticate, authorize } from '../middleware/authMiddleware.js';
+import { requirePermission } from '../middleware/rbac.js';
+import { PERMISSIONS } from '../config/permissions.js';
 import { mediaUpload } from '../middleware/mediaUpload.js';
 
 const router = express.Router();
@@ -21,16 +23,36 @@ router.post('/set-password', doctorController.setPasswordFromInvite);
  * Admin — invite & manage gynecologists
  * ------------------------------------------------------------------------- */
 
-router.post('/invite', authenticate, authorize('admin'), doctorController.inviteDoctor);
-router.get('/admin/list', authenticate, authorize('admin'), doctorController.listDoctorsForAdmin);
-router.patch('/admin/:id', authenticate, authorize('admin'), doctorController.updateDoctorByAdmin);
+router.post(
+  '/invite',
+  authenticate,
+  requirePermission(PERMISSIONS.DOCTORS_MANAGE),
+  doctorController.inviteDoctor,
+);
+router.get(
+  '/admin/list',
+  authenticate,
+  requirePermission(PERMISSIONS.DOCTORS_READ),
+  doctorController.listDoctorsForAdmin,
+);
+router.patch(
+  '/admin/:id',
+  authenticate,
+  requirePermission(PERMISSIONS.DOCTORS_MANAGE),
+  doctorController.updateDoctorByAdmin,
+);
 router.post(
   '/admin/:id/resend-invite',
   authenticate,
-  authorize('admin'),
+  requirePermission(PERMISSIONS.DOCTORS_MANAGE),
   doctorController.resendInvite,
 );
-router.delete('/admin/:id', authenticate, authorize('admin'), doctorController.deactivateDoctor);
+router.delete(
+  '/admin/:id',
+  authenticate,
+  requirePermission(PERMISSIONS.DOCTORS_MANAGE),
+  doctorController.deactivateDoctor,
+);
 
 /* ---------------------------------------------------------------------------
  * Doctor — everything below requires the doctor role

@@ -1,3 +1,4 @@
+import { describeAccess, isStaffRole } from '../config/permissions.js';
 import User from '../models/User.js';
 import PendingSignup from '../models/PendingSignup.js';
 import CycleLog from '../models/CycleLog.js';
@@ -258,8 +259,11 @@ export const login = async (req, res, next) => {
       role: user.role,
     });
 
-    // Get user data without password
+    // Get user data without password. Staff also get their workspace access
+    // (role label, department, permissions) so the Admin Workspace can build
+    // its navigation without a second round trip.
     const userData = user.toJSON();
+    if (isStaffRole(user.role)) userData.access = describeAccess(user.role);
 
     return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.LOGIN_SUCCESS, userData, token);
   } catch (error) {
