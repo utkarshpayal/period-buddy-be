@@ -66,4 +66,4 @@ Rate limiting (`express-rate-limit`, `middleware/rateLimiters.js`) is active, no
 
 ## Token-usage hygiene
 
-A `.ignore` file excludes large/binary/generated files (`eng.traineddata`, `package-lock.json`, `logs/`, service-account/config blobs under `src/utils/`) from broad search tools (Grep/Glob/Explore) so they aren't scanned or dumped into context during exploration. These files are still directly readable by exact path when actually needed — the exclusion only affects untargeted searches. Don't remove entries from `.ignore` without a reason; add new ones if a large/generated file shows up in the repo.
+A `.ignore` file excludes large/generated files (`package-lock.json`, `logs/`, the service-account blob under `src/utils/`) from broad search tools (Grep/Glob/Explore) so they aren't scanned or dumped into context during exploration. These files are still directly readable by exact path when actually needed — the exclusion only affects untargeted searches. Don't remove entries from `.ignore` without a reason; add new ones if a large/generated file shows up in the repo.
