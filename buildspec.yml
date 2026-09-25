@@ -17,6 +17,10 @@ phases:
       nodejs: 20
   pre_build:
     commands:
+      - |
+        for v in ECR_REPOSITORY_URI SECRET_ID LOG_GROUP SITE_ADDRESS; do
+          [ -n "${!v}" ] || { echo "CodeBuild env var $v is not set (see infra/README.md)" >&2; exit 1; }
+        done
       - npm ci
       - npm run lint
       - NODE_ENV=test npm test
