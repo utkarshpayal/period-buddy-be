@@ -283,6 +283,26 @@ export const getAccountDeletionOtpEmailTemplate = ({ firstName, otp, expiryMinut
 };
 
 /**
+ * Sent when someone signs in with valid credentials to an account an admin
+ * has suspended (utils/accountStatus.js, throttled to once per 24h).
+ */
+export const getAccountSuspendedTemplate = ({ firstName, supportEmail }) => {
+  const support = escapeHtml(supportEmail);
+  const content = `
+    <span class="badge" style="background-color: ${BRAND.dangerLight}; color: ${BRAND.danger};">Account suspended</span>
+    <h2 style="margin-top: 0; color: ${BRAND.foreground}; font-size: 24px; font-weight: 600;">Hi ${escapeHtml(firstName) || 'there'},</h2>
+    <p>Someone just tried to sign in to your Nura account, but it is currently <strong>suspended</strong>, so the sign-in was blocked.</p>
+    <p>While your account is suspended you can't use the Nura app. Your data has not been deleted.</p>
+    <p>If you think this is a mistake, or you'd like to ask for your account to be restored, reply to this email or write to <a href="mailto:${support}" style="color: ${BRAND.primaryDark}; font-weight: 600; text-decoration: none;">${support}</a>.</p>
+    <p><strong>If this wasn't you</strong>, someone may know your password — we recommend changing it once your account is restored.</p>
+    <div class="divider"></div>
+    <p style="margin-bottom: 0;">Warmly,</p>
+    <p style="font-weight: 600; margin-top: 4px; color: ${BRAND.primary};">The Nura Team</p>
+  `;
+  return emailLayout('Your Nura account is suspended', content);
+};
+
+/**
  * Template for Contact Form Submission Notification (Sent to Admin/Team)
  */
 export const getContactNotificationTemplate = ({ name, email, topic, message }) => {

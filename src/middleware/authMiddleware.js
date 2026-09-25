@@ -4,6 +4,7 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { sendError } from '../utils/sendResponse.js';
 import User from '../models/User.js';
 import logger from '../utils/logger.js';
+import { isSuspended, sendAccountSuspendedError } from '../utils/accountStatus.js';
 
 export const authenticate = async (req, res, next) => {
   try {
@@ -16,6 +17,11 @@ export const authenticate = async (req, res, next) => {
     const decoded = verifyToken(token);
     const user = await User.findById(decoded.userId);
 
+    // Suspended while already signed in: still a 401 (so clients sign out as
+    // before), but with code ACCOUNT_SUSPENDED so they can say why.
+    if (isSuspended(user)) {
+      return sendAccountSuspendedError(res, HTTP_STATUS.UNAUTHORIZED);
+    }
     if (!user || !user.isActive) {
       return sendError(res, HTTP_STATUS.UNAUTHORIZED, ERROR_MESSAGES.USER_NOT_FOUND);
     }

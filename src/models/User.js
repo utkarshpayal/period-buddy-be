@@ -53,6 +53,9 @@ const userSchema = new mongoose.Schema(
     // Auth & status
     isEmailVerified: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
+    // Last "sign-in blocked, account suspended" email (utils/accountStatus.js),
+    // used to throttle it to one per 24h.
+    suspensionNoticeSentAt: { type: Date },
     role: {
       type: String,
       enum: Object.values(userRoleEnum),
