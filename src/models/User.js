@@ -92,6 +92,8 @@ const userSchema = new mongoose.Schema(
     inviteTokenHash: { type: String, select: false },
     inviteTokenExpiresAt: { type: Date, select: false },
     mustSetPassword: { type: Boolean, default: false },
+    // Admin Workspace staff — who invited this account (Team & Access).
+    invitedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 
     // Soft delete
     deletedAt: { type: Date, default: null },

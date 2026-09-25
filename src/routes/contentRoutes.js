@@ -3,11 +3,40 @@ import express from 'express';
 import multer from 'multer';
 import * as contentController from '../controllers/contentController.js';
 import { uploadContentMedia } from '../controllers/uploadController.js';
-import { authenticate, authorize } from '../middleware/authMiddleware.js';
+import { authenticate } from '../middleware/authMiddleware.js';
+import { requirePermission } from '../middleware/rbac.js';
+import { withApproval } from '../middleware/approvalGate.js';
+import { PERMISSIONS, DEPARTMENTS, hasPermission } from '../config/permissions.js';
 
 const router = express.Router();
 
-router.use(authenticate, authorize('admin'));
+router.use(authenticate, requirePermission(PERMISSIONS.CONTENT_READ));
+
+const canWrite = requirePermission(PERMISSIONS.CONTENT_WRITE);
+
+const contentTitle = (req, before) =>
+  before?.title || before?.question || req.body?.title || req.body?.question || 'item';
+
+// Content Admins (content.write without content.publish) may create items,
+// but only as drafts — publishing is a separate, approval-gated step.
+const draftOnlyUnlessPublisher = (req, res, next) => {
+  if (!hasPermission(req.user.role, PERMISSIONS.CONTENT_PUBLISH)) {
+    req.body = contentController.forceDraftVisibility(req.body);
+  }
+  next();
+};
+
+// A request for an item that doesn't exist goes straight to the controller
+// so the caller gets a 404 now, not a doomed approval request.
+const itemExists = async (req) => Boolean(await contentController.loadContentForRequest(req));
+
+const contentGate = {
+  directPermission: PERMISSIONS.CONTENT_PUBLISH,
+  needsApproval: itemExists,
+  department: DEPARTMENTS.CONTENT,
+  resourceType: (req) => req.params.type,
+  snapshot: contentController.snapshotContent,
+};
 
 // Browsers on some OSes (notably Linux, when the system mime database is
 // missing an entry) send an empty or generic `application/octet-stream`
@@ -73,11 +102,60 @@ router.get('/summary', contentController.getContentSummary);
  *          directMp4Url/audioUrl/imageUrl.
  * @access  Private (admin)
  */
-router.post('/media/upload', mediaUpload.single('file'), uploadContentMedia);
-router.post('/:type', contentController.createContent);
+router.post('/media/upload', canWrite, mediaUpload.single('file'), uploadContentMedia);
+router.post('/:type', canWrite, draftOnlyUnlessPublisher, contentController.createContent);
 router.get('/:type/:id', contentController.getContentById);
-router.put('/:type/:id', contentController.updateContent);
-router.patch('/:type/:id/publish', contentController.setContentVisibility);
-router.delete('/:type/:id', contentController.deleteContent);
+
+// Editing a draft applies immediately; editing something live (or an edit
+// that would make it live) is held for a Content Super Admin.
+router.put(
+  '/:type/:id',
+  canWrite,
+  withApproval(
+    {
+      ...contentGate,
+      key: 'content.update',
+      action: 'update',
+      needsApproval: async (req) => {
+        const loaded = await contentController.loadContentForRequest(req);
+        if (!loaded) return false; // let the controller 404
+        return (
+          contentController.isContentLive(loaded) || contentController.bodyRequestsLive(req.body)
+        );
+      },
+      summarize: (req, before) => `Edit "${contentTitle(req, before)}"`,
+    },
+    contentController.updateContent,
+  ),
+);
+
+router.patch(
+  '/:type/:id/publish',
+  canWrite,
+  withApproval(
+    {
+      ...contentGate,
+      key: 'content.visibility',
+      action: 'publish',
+      summarize: (req, before) =>
+        `${contentController.bodyRequestsLive(req.body) ? 'Publish' : 'Unpublish'} "${contentTitle(req, before)}"`,
+    },
+    contentController.setContentVisibility,
+  ),
+);
+
+router.delete(
+  '/:type/:id',
+  canWrite,
+  withApproval(
+    {
+      ...contentGate,
+      key: 'content.delete',
+      action: 'delete',
+      summarize: (req, before) => `Remove "${contentTitle(req, before)}"`,
+    },
+    contentController.deleteContent,
+  ),
+);
 
 export default router;

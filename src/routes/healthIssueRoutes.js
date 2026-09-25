@@ -1,6 +1,8 @@
 import express from 'express';
 import * as healthController from '../controllers/healthIssueController.js';
-import { authenticate, authorize } from '../middleware/authMiddleware.js';
+import { authenticate } from '../middleware/authMiddleware.js';
+import { requirePermission } from '../middleware/rbac.js';
+import { PERMISSIONS } from '../config/permissions.js';
 
 const router = express.Router();
 
@@ -23,20 +25,35 @@ router.get('/:id', authenticate, healthController.getHealthIssueById);
  * @desc    Admin: Create a health issue entry
  * @access  Admin
  */
-router.post('/', authenticate, authorize('admin'), healthController.createHealthIssue);
+router.post(
+  '/',
+  authenticate,
+  requirePermission(PERMISSIONS.CONTENT_PUBLISH),
+  healthController.createHealthIssue,
+);
 
 /**
  * @route   PUT /api/health-issues/:id
  * @desc    Admin: Update a health issue entry
  * @access  Admin
  */
-router.put('/:id', authenticate, authorize('admin'), healthController.updateHealthIssue);
+router.put(
+  '/:id',
+  authenticate,
+  requirePermission(PERMISSIONS.CONTENT_PUBLISH),
+  healthController.updateHealthIssue,
+);
 
 /**
  * @route   DELETE /api/health-issues/:id
  * @desc    Admin: Soft-delete a health issue entry
  * @access  Admin
  */
-router.delete('/:id', authenticate, authorize('admin'), healthController.deleteHealthIssue);
+router.delete(
+  '/:id',
+  authenticate,
+  requirePermission(PERMISSIONS.CONTENT_PUBLISH),
+  healthController.deleteHealthIssue,
+);
 
 export default router;

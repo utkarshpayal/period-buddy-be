@@ -1,7 +1,9 @@
 import express from 'express';
 import * as marketingController from '../controllers/marketingController.js';
 import { validateContactMessage, handleValidationErrors } from '../schemas/marketingSchema.js';
-import { authenticate, authorize } from '../middleware/authMiddleware.js';
+import { authenticate } from '../middleware/authMiddleware.js';
+import { requirePermission } from '../middleware/rbac.js';
+import { PERMISSIONS } from '../config/permissions.js';
 
 const router = express.Router();
 
@@ -22,7 +24,12 @@ router.post(
  * @desc    Admin: list contact form submissions (?status=new|read|resolved)
  * @access  Admin
  */
-router.get('/', authenticate, authorize('admin'), marketingController.getContactMessages);
+router.get(
+  '/',
+  authenticate,
+  requirePermission(PERMISSIONS.MARKETING_READ),
+  marketingController.getContactMessages,
+);
 
 /**
  * @route   PATCH /api/contact/:id/status
@@ -32,7 +39,7 @@ router.get('/', authenticate, authorize('admin'), marketingController.getContact
 router.patch(
   '/:id/status',
   authenticate,
-  authorize('admin'),
+  requirePermission(PERMISSIONS.MARKETING_READ),
   marketingController.updateContactMessageStatus,
 );
 

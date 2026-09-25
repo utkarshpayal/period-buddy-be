@@ -1,6 +1,8 @@
 import express from 'express';
 import * as wellbeingController from '../controllers/wellbeingController.js';
-import { authenticate, authorize } from '../middleware/authMiddleware.js';
+import { authenticate } from '../middleware/authMiddleware.js';
+import { requirePermission } from '../middleware/rbac.js';
+import { PERMISSIONS } from '../config/permissions.js';
 
 const router = express.Router();
 
@@ -44,20 +46,35 @@ router.post('/:id/track-view', authenticate, wellbeingController.trackResourceVi
  * @desc    Admin: Create a wellbeing resource
  * @access  Admin
  */
-router.post('/', authenticate, authorize('admin'), wellbeingController.createResource);
+router.post(
+  '/',
+  authenticate,
+  requirePermission(PERMISSIONS.CONTENT_PUBLISH),
+  wellbeingController.createResource,
+);
 
 /**
  * @route   PUT /api/wellbeing/:id
  * @desc    Admin: Update a wellbeing resource
  * @access  Admin
  */
-router.put('/:id', authenticate, authorize('admin'), wellbeingController.updateResource);
+router.put(
+  '/:id',
+  authenticate,
+  requirePermission(PERMISSIONS.CONTENT_PUBLISH),
+  wellbeingController.updateResource,
+);
 
 /**
  * @route   DELETE /api/wellbeing/:id
  * @desc    Admin: Soft-delete a wellbeing resource
  * @access  Admin
  */
-router.delete('/:id', authenticate, authorize('admin'), wellbeingController.deleteResource);
+router.delete(
+  '/:id',
+  authenticate,
+  requirePermission(PERMISSIONS.CONTENT_PUBLISH),
+  wellbeingController.deleteResource,
+);
 
 export default router;

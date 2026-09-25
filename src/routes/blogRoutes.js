@@ -1,6 +1,8 @@
 import express from 'express';
 import * as blogController from '../controllers/blogController.js';
-import { authenticate, authorize } from '../middleware/authMiddleware.js';
+import { authenticate } from '../middleware/authMiddleware.js';
+import { requirePermission } from '../middleware/rbac.js';
+import { PERMISSIONS } from '../config/permissions.js';
 
 const router = express.Router();
 
@@ -44,21 +46,36 @@ router.post('/:slug/translate', authenticate, blogController.translateBlog);
  * @desc    Admin: Create a blog post
  * @access  Admin
  */
-router.post('/', authenticate, authorize('admin'), blogController.createBlog);
+router.post(
+  '/',
+  authenticate,
+  requirePermission(PERMISSIONS.CONTENT_PUBLISH),
+  blogController.createBlog,
+);
 
 /**
  * @route   PUT /api/blogs/:id
  * @desc    Admin: Update a blog post
  * @access  Admin
  */
-router.put('/:id', authenticate, authorize('admin'), blogController.updateBlog);
+router.put(
+  '/:id',
+  authenticate,
+  requirePermission(PERMISSIONS.CONTENT_PUBLISH),
+  blogController.updateBlog,
+);
 
 /**
  * @route   DELETE /api/blogs/:id
  * @desc    Admin: Unpublish a blog post
  * @access  Admin
  */
-router.delete('/:id', authenticate, authorize('admin'), blogController.deleteBlog);
+router.delete(
+  '/:id',
+  authenticate,
+  requirePermission(PERMISSIONS.CONTENT_PUBLISH),
+  blogController.deleteBlog,
+);
 
 /**
  * @route   PATCH /api/blogs/:id/like

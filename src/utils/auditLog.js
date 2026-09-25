@@ -40,6 +40,15 @@ export const AUDIT_ACTIONS = {
   PUSH_BROADCAST_CANCELLED: 'push_broadcast.cancelled',
   PUSH_BROADCAST_RETRIED: 'push_broadcast.retried',
   PUSH_TEST_SENT: 'push_test.sent',
+  CHANGE_REQUEST_CREATED: 'change_request.created',
+  CHANGE_REQUEST_APPROVED: 'change_request.approved',
+  CHANGE_REQUEST_REJECTED: 'change_request.rejected',
+  CHANGE_REQUEST_CANCELLED: 'change_request.cancelled',
+  STAFF_INVITED: 'staff.invited',
+  STAFF_INVITE_RESENT: 'staff.invite_resent',
+  STAFF_ROLE_CHANGED: 'staff.role_changed',
+  STAFF_STATUS_CHANGED: 'staff.status_changed',
+  STAFF_REMOVED: 'staff.removed',
 };
 
 /**

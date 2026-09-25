@@ -1,6 +1,8 @@
 import express from 'express';
 import * as schemeController from '../controllers/schemeController.js';
-import { authenticate, authorize } from '../middleware/authMiddleware.js';
+import { authenticate } from '../middleware/authMiddleware.js';
+import { requirePermission } from '../middleware/rbac.js';
+import { PERMISSIONS } from '../config/permissions.js';
 
 const router = express.Router();
 
@@ -12,7 +14,12 @@ const router = express.Router();
  *          (?status=&schemeId=&search=&page=&limit=)
  * @access  Admin
  */
-router.get('/admin/all', authenticate, authorize('admin'), schemeController.adminListApplications);
+router.get(
+  '/admin/all',
+  authenticate,
+  requirePermission(PERMISSIONS.SCHEME_APPLICATIONS_READ),
+  schemeController.adminListApplications,
+);
 
 /**
  * @route   GET /api/scheme-applications/admin/filters
@@ -23,7 +30,7 @@ router.get('/admin/all', authenticate, authorize('admin'), schemeController.admi
 router.get(
   '/admin/filters',
   authenticate,
-  authorize('admin'),
+  requirePermission(PERMISSIONS.SCHEME_APPLICATIONS_READ),
   schemeController.adminApplicationFilters,
 );
 
@@ -35,7 +42,7 @@ router.get(
 router.patch(
   '/admin/:id',
   authenticate,
-  authorize('admin'),
+  requirePermission(PERMISSIONS.SCHEME_APPLICATIONS_REVIEW),
   schemeController.adminReviewApplication,
 );
 

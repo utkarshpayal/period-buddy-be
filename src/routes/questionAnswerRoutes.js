@@ -17,11 +17,18 @@ import {
   listChatSessions,
   sendChatSessionMessage,
 } from '../controllers/chatSessionController.js';
-import { authenticate, authorize, optionalAuth } from '../middleware/authMiddleware.js';
+import { authenticate, optionalAuth } from '../middleware/authMiddleware.js';
+import { requirePermission } from '../middleware/rbac.js';
+import { PERMISSIONS } from '../config/permissions.js';
 
 const router = express.Router();
 
-router.post('/', authenticate, authorize('admin'), createQuestionAnswer);
+router.post(
+  '/',
+  authenticate,
+  requirePermission(PERMISSIONS.CONTENT_PUBLISH),
+  createQuestionAnswer,
+);
 
 router.get('/', optionalAuth, getAllQuestionAnswers);
 
@@ -44,8 +51,18 @@ router.delete('/sessions/:id', authenticate, deleteChatSession);
 
 router.get('/:id', optionalAuth, getSingleQuestionAnswer);
 
-router.put('/:id', authenticate, authorize('admin'), updateQuestionAnswer);
+router.put(
+  '/:id',
+  authenticate,
+  requirePermission(PERMISSIONS.CONTENT_PUBLISH),
+  updateQuestionAnswer,
+);
 
-router.delete('/:id', authenticate, authorize('admin'), deleteQuestionAnswer);
+router.delete(
+  '/:id',
+  authenticate,
+  requirePermission(PERMISSIONS.CONTENT_PUBLISH),
+  deleteQuestionAnswer,
+);
 
 export default router;
