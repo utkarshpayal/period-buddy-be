@@ -69,7 +69,15 @@ if ! systemctl is-active --quiet codedeploy-agent; then
   tmp=$(mktemp -d)
   wget -q "https://aws-codedeploy-${region}.s3.${region}.amazonaws.com/latest/install" -O "$tmp/install"
   chmod +x "$tmp/install"
-  "$tmp/install" auto
+  # The installer rejects Ruby versions missing from its hard-coded list
+  # (e.g. Ruby 3.3 on Ubuntu 26.04) although the agent runs fine on them —
+  # on Debian/Ubuntu fall back to installing the agent's .deb directly.
+  if ! "$tmp/install" auto && [[ "$ID" == ubuntu || "$ID" == debian ]]; then
+    log "Installer refused; installing the agent .deb directly"
+    wget -q "https://aws-codedeploy-${region}.s3.${region}.amazonaws.com/latest/codedeploy-agent_all.deb" \
+      -O "$tmp/codedeploy-agent_all.deb"
+    apt-get install -y "$tmp/codedeploy-agent_all.deb"
+  fi
   rm -rf "$tmp"
 fi
 systemctl enable --now codedeploy-agent
