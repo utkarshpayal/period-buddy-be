@@ -208,14 +208,14 @@ Docker ships container logs straight to CloudWatch (`awslogs` driver), so
 
 ## 5. IAM roles and permissions
 
-Policy JSON files are kept in [`infra/iam/`](iam/).
+Policy JSON files are kept in [`infra/iam/`](../infra/iam/).
 
 | Role | Used by | Permissions | Where defined |
 |---|---|---|---|
-| `codebuild-the-nura-care-be-service-role` | CodeBuild | AWS-made: build logs, artifacts, GitHub connection. **Ours:** inline `nura-ecr-push` = ECR login + push to `nura-api` only | [`iam/codebuild-inline-policy.json`](iam/codebuild-inline-policy.json) |
-| `AWSCodePipelineServiceRole-ap-south-1-the-nura-care-be` | CodePipeline | AWS-made: S3 artifacts, CodeBuild, connection. **Ours:** inline `nura-codedeploy-release` = register revision + create deployment for this app only | [`iam/codepipeline-inline-policy.json`](iam/codepipeline-inline-policy.json) |
+| `codebuild-the-nura-care-be-service-role` | CodeBuild | AWS-made: build logs, artifacts, GitHub connection. **Ours:** inline `nura-ecr-push` = ECR login + push to `nura-api` only | [`iam/codebuild-inline-policy.json`](../infra/iam/codebuild-inline-policy.json) |
+| `AWSCodePipelineServiceRole-ap-south-1-the-nura-care-be` | CodePipeline | AWS-made: S3 artifacts, CodeBuild, connection. **Ours:** inline `nura-codedeploy-release` = register revision + create deployment for this app only | [`iam/codepipeline-inline-policy.json`](../infra/iam/codepipeline-inline-policy.json) |
 | `nura-backend-be-codedeploy-role` | CodeDeploy service | AWS-managed `AWSCodeDeployRole` (find instances by tag, run deployments) | AWS console |
-| `nura-backend-instance-role` | The EC2 server (instance profile) | `AmazonSSMManagedInstanceCore` (Session Manager) · inline `nura_api_host` = ECR pull from `nura-api`, read secret `nura/api/env`, write logs to `/nura/api`, read deploy bundles from the artifact bucket · inline `nura_api_uploads` = read/write S3 bucket `thenura` | [`iam/instance-inline-policy.json`](iam/instance-inline-policy.json) |
+| `nura-backend-instance-role` | The EC2 server (instance profile) | `AmazonSSMManagedInstanceCore` (Session Manager) · inline `nura_api_host` = ECR pull from `nura-api`, read secret `nura/api/env`, write logs to `/nura/api`, read deploy bundles from the artifact bucket · inline `nura_api_uploads` = read/write S3 bucket `thenura` | [`iam/instance-inline-policy.json`](../infra/iam/instance-inline-policy.json) |
 
 Principles:
 - Every policy is scoped to **our** resources (one ECR repo, one secret, one log group). The only exception is `ecr:GetAuthorizationToken`, which AWS only allows on `*`.
@@ -236,7 +236,7 @@ Principles:
 | CodeDeploy agent 1.8.1 | Receives deployments. **Installed from a repacked .deb:** the official package only accepts Ruby ≤ 3.2, Ubuntu 26.04 ships Ruby 3.3 (see §11). |
 | SSM agent (snap) | Session Manager shell. |
 
-Set up by [`infra/scripts/bootstrap-host.sh`](scripts/bootstrap-host.sh) (safe to re-run).
+Set up by [`infra/scripts/bootstrap-host.sh`](../infra/scripts/bootstrap-host.sh) (safe to re-run).
 
 **Old setup being removed** (check it's done: §13): nginx, certbot + `/etc/letsencrypt`, pm2 (`pm2-ubuntu` service), Node.js on the host, and `~/period-buddy-be` (old code checkout **with a plaintext `.env`**).
 
@@ -478,14 +478,14 @@ MongoDB Atlas, Firebase, Resend, Cashfree, Sarvam and Spaceship are billed separ
 
 ## 15. The CloudFormation alternative
 
-[`infra/cloudformation/backend.yml`](cloudformation/backend.yml) creates an
+[`infra/cloudformation/backend.yml`](../infra/cloudformation/backend.yml) creates an
 equivalent setup **from scratch as code**: its own VPC, a new EC2 with an
 Elastic IP, ECR `nura-api`, secret, logs, CodeBuild, CodeDeploy and a pipeline
 named `nura-api`. It is **not deployed**. Production uses the hand-made
 `the-nura-care-be` pipeline and the existing `Nura-Backend` server described above.
 
 Use it to rebuild production cleanly (e.g. a new server with an Elastic IP and a
-bigger disk, created reproducibly). Follow [`infra/README.md`](README.md). Before
+bigger disk, created reproducibly). Follow [`infra/README.md`](../infra/README.md). Before
 you use it:
 - It would create a **second** ECR repo/secret with the same names as the ones
   that exist now, and those names conflict. Delete or rename the manual ones first,

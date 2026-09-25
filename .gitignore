@@ -15,7 +15,7 @@ yarn-error.log*
 .idea/
 src/utils/firebase-service-account.json
 # Mobile Firebase client-config files — belong in the frontend repo, not
-# here; nothing in src/ references either (see fixes.md 2.3).
+# here; nothing in src/ references either (see docs/fixes.md 2.3).
 src/utils/google-services.json
 src/utils/GoogleService-Info.plist
 .husky/_
