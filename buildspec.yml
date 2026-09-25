@@ -1,0 +1,48 @@
+# CodeBuild — lint + test, build the Docker image, push it to ECR, and hand
+# CodeDeploy a revision (appspec.yml + deploy/) that points at that image.
+# Environment variables come from the CodeBuild project
+# (infra/cloudformation/backend.yml): ECR_REPOSITORY_URI, SECRET_ID,
+# LOG_GROUP, SITE_ADDRESS.
+version: 0.2
+
+env:
+  # bash, not CodeBuild's default /bin/sh: `printf %q` below is bash-only.
+  shell: bash
+  variables:
+    HUSKY: '0'
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+  pre_build:
+    commands:
+      - npm ci
+      - npm run lint
+      - NODE_ENV=test npm test
+      - IMAGE_TAG=$(echo "${CODEBUILD_RESOLVED_SOURCE_VERSION:-build-$CODEBUILD_BUILD_NUMBER}" | cut -c1-12)
+      - IMAGE_URI="$ECR_REPOSITORY_URI:$IMAGE_TAG"
+      - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "${ECR_REPOSITORY_URI%%/*}"
+  build:
+    commands:
+      - docker build --pull -t "$IMAGE_URI" -t "$ECR_REPOSITORY_URI:latest" .
+  post_build:
+    commands:
+      # post_build runs even when build failed — don't push a broken image.
+      - '[ "$CODEBUILD_BUILD_SUCCEEDING" = "1" ] || exit 1'
+      - docker push "$IMAGE_URI"
+      - docker push "$ECR_REPOSITORY_URI:latest"
+      - |
+        {
+          printf 'IMAGE_URI=%q\n' "$IMAGE_URI"
+          printf 'AWS_REGION=%q\n' "$AWS_DEFAULT_REGION"
+          printf 'SECRET_ID=%q\n' "$SECRET_ID"
+          printf 'LOG_GROUP=%q\n' "$LOG_GROUP"
+          printf 'SITE_ADDRESS=%q\n' "$SITE_ADDRESS"
+        } > deploy/release.env
+      - cat deploy/release.env
+
+artifacts:
+  files:
+    - appspec.yml
+    - deploy/**/*

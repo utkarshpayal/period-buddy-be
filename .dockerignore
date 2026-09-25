@@ -1,0 +1,31 @@
+# Keep secrets, local state and non-runtime files out of the image.
+.env
+.env.*
+!.env.example
+src/utils/firebase-service-account.json
+src/utils/google-services.json
+src/utils/GoogleService-Info.plist
+
+node_modules
+npm-debug.log*
+logs
+*.log
+
+.git
+.github
+.husky
+.claude
+.vscode
+.idea
+
+# Deployment tooling runs on the host / in AWS, not inside the container.
+Dockerfile
+.dockerignore
+buildspec.yml
+appspec.yml
+deploy
+infra
+
+# Docs and tests
+*.md
+**/__tests__
