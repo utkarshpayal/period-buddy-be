@@ -210,6 +210,8 @@ comments have no report endpoint at all.
 - **Fix:** use an atomic `$inc`/`$addToSet` on `likedBy` instead of
   read-modify-save; block self-likes; either wire `CommunityReport` into a
   real admin review queue or add an auto-hide threshold on `reportCount`.
+- **Update:** the unused `src/models/CommunityReport.js` has been deleted
+  (it was never imported). Recreate it if the review-queue option is chosen.
 
 ---
 
