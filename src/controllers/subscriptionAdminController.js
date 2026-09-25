@@ -7,8 +7,11 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import {
   getPagination,
   buildPagination,
+  escapeRegex,
+  isPaginatedRequest,
   pickDefined,
   isValidObjectId,
+  sendPaginatedList,
 } from '../utils/apiHelpers.js';
 import { getSettings } from '../utils/subscriptionAccess.js';
 import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
@@ -336,8 +339,28 @@ const COUPON_FIELDS = [
 /** GET /api/admin/subscriptions/coupons — full catalog incl. inactive. */
 export const adminListCoupons = async (req, res, next) => {
   try {
-    const coupons = await Coupon.find().sort({ createdAt: -1 });
-    return sendResponse(res, HTTP_STATUS.OK, 'Coupons fetched', coupons);
+    // ?search= matches the code; ?page=&limit= (default 20, max 100) opts
+    // into paging with `pagination` on the envelope. Without page/limit, the
+    // full list as before.
+    const filter = {};
+    if (req.query.search) {
+      filter.code = { $regex: escapeRegex(String(req.query.search).trim()), $options: 'i' };
+    }
+    const query = Coupon.find(filter).sort({ createdAt: -1, _id: -1 });
+    if (!isPaginatedRequest(req.query)) {
+      return sendResponse(res, HTTP_STATUS.OK, 'Coupons fetched', await query);
+    }
+    const { page, limit, skip } = getPagination(req.query, { limit: 20, maxLimit: 100 });
+    const [coupons, total] = await Promise.all([
+      query.skip(skip).limit(limit),
+      Coupon.countDocuments(filter),
+    ]);
+    return sendPaginatedList(
+      res,
+      'Coupons fetched',
+      coupons,
+      buildPagination({ page, limit, total }),
+    );
   } catch (error) {
     next(error);
   }

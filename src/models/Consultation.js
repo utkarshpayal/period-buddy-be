@@ -44,5 +44,7 @@ const consultationSchema = new mongoose.Schema(
 
 consultationSchema.index({ userId: 1, doctorId: 1 });
 consultationSchema.index({ userId: 1, status: 1 });
+// Doctor portal's paginated bookings list (GET /api/doctor/consultations).
+consultationSchema.index({ doctorId: 1, createdAt: -1 });
 
 export default mongoose.model('Consultation', consultationSchema);

@@ -301,9 +301,13 @@ export const summarizeDocuments = async (req, res, next) => {
 
 export const getChatHistory = async (req, res, next) => {
   try {
-    const messages = await DocumentChatMessage.find({ userId: req.userId })
-      .sort({ createdAt: 1 })
+    // Newest 200, returned oldest-first for display. (Sorting ascending
+    // before the limit used to return the *oldest* 200, so once a user
+    // passed 200 messages their new ones never showed up.)
+    const newestFirst = await DocumentChatMessage.find({ userId: req.userId })
+      .sort({ createdAt: -1, _id: -1 })
       .limit(200);
+    const messages = newestFirst.reverse();
     return sendResponse(res, HTTP_STATUS.OK, 'Chat history fetched', { messages });
   } catch (error) {
     logger.error('document_chat_history_error', { userId: req.userId, error: error.message });

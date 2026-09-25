@@ -40,6 +40,8 @@ const notificationSchema = new mongoose.Schema(
 );
 
 notificationSchema.index({ userId: 1, isRead: 1, createdAt: -1 });
+// Paginated newest-first listing (GET /api/partner/notifications).
+notificationSchema.index({ userId: 1, createdAt: -1 });
 
 notificationSchema.post('save', async function (doc) {
   try {
