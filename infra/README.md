@@ -173,3 +173,23 @@ changes for users until then, and moving back is just the reverse DNS edit.
 - **Tearing down:** `aws cloudformation delete-stack --stack-name nura-api`. The
   artifact bucket and the app secret are kept (`DeletionPolicy: Retain`); delete
   them by hand if you really mean it.
+
+---
+
+## Console-made pipeline (`the-nura-care-be`)
+
+The pipeline `the-nura-care-be` (ap-south-1) was created by hand in the console
+and deploys to the existing `Nura-Backend` instance (CodeDeploy tag `Name=Nura-Backend`)
+rather than to this stack's server. It uses the same `buildspec.yml`, so it needs the
+same pieces, created by hand:
+
+| Piece | Value |
+|---|---|
+| ECR repo | `740726746628.dkr.ecr.ap-south-1.amazonaws.com/nura-api` (scan on push, keep last 20) |
+| CodeBuild env vars | `ECR_REPOSITORY_URI`, `SECRET_ID=nura/api/env`, `LOG_GROUP=/nura/api`, `SITE_ADDRESS` |
+| CodeBuild role inline policy | [`iam/codebuild-inline-policy.json`](iam/codebuild-inline-policy.json) on `codebuild-the-nura-care-be-service-role` |
+| Instance role inline policy | [`iam/instance-inline-policy.json`](iam/instance-inline-policy.json) + `AmazonSSMManagedInstanceCore`, on the instance profile of `Nura-Backend` |
+| Secret / log group | `nura/api/env` (fill with `push-env-to-secret.sh`), `/nura/api` |
+
+The host also needs Docker + the compose plugin, `jq`, the AWS CLI and the CodeDeploy
+agent. Ports 80/443 must be free for Caddy, so stop any nginx/pm2 setup already on it.
