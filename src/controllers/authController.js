@@ -46,6 +46,11 @@ import { verifyGoogleIdToken } from '../utils/googleAuth.js';
 import logger from '../utils/logger.js';
 import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
 import { buildLogoutTokenFilter } from '../utils/logoutToken.js';
+import {
+  isSuspended,
+  notifySuspendedLoginAttempt,
+  sendAccountSuspendedError,
+} from '../utils/accountStatus.js';
 
 const sendOtpEmail = async ({ email, firstName, otp }) => {
   await sendMail({
@@ -230,11 +235,6 @@ export const login = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.UNAUTHORIZED, ERROR_MESSAGES.INVALID_CREDENTIALS);
     }
 
-    // Check if user is active
-    if (!user.isActive) {
-      return sendError(res, HTTP_STATUS.UNAUTHORIZED, 'Your account is inactive');
-    }
-
     // Google-only accounts have no password — send them back to Google sign-in
     // instead of letting bcrypt.compare blow up on an undefined hash.
     if (!user.password) {
@@ -245,6 +245,17 @@ export const login = async (req, res, next) => {
     const isPasswordValid = await comparePassword(password, user.password);
 
     if (!isPasswordValid) {
+      return sendError(res, HTTP_STATUS.UNAUTHORIZED, ERROR_MESSAGES.INVALID_CREDENTIALS);
+    }
+
+    // Checked only after the password matches, so this can't be used to
+    // probe which emails belong to suspended accounts (or to trigger the
+    // notice email for someone else's account).
+    if (isSuspended(user)) {
+      notifySuspendedLoginAttempt(user);
+      return sendAccountSuspendedError(res);
+    }
+    if (!user.isActive) {
       return sendError(res, HTTP_STATUS.UNAUTHORIZED, ERROR_MESSAGES.INVALID_CREDENTIALS);
     }
 
@@ -299,6 +310,12 @@ export const googleAuth = async (req, res, next) => {
     let user = await User.findOne({ $or: [{ googleId }, { email: normalizedEmail }] });
 
     if (user) {
+      // The Google ID token is already verified, so the caller owns this
+      // email — safe to say it's suspended and send the notice.
+      if (isSuspended(user)) {
+        notifySuspendedLoginAttempt(user);
+        return sendAccountSuspendedError(res);
+      }
       if (!user.isActive) {
         return sendError(res, HTTP_STATUS.UNAUTHORIZED, 'Your account is inactive');
       }
