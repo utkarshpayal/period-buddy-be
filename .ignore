@@ -3,12 +3,9 @@
 # Purpose: keep broad codebase searches from scanning large/binary/
 # generated files that are never relevant to a code change.
 
-eng.traineddata
 package-lock.json
 logs/
 *.log
 
 # Service-account / device config blobs — binary-ish, never edited by hand
 src/utils/firebase-service-account.json
-src/utils/google-services.json
-src/utils/GoogleService-Info.plist

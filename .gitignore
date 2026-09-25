@@ -1,11 +1,13 @@
 node_modules/
 .env
-.env.local
-.env.*.local
+# Every env variant (.env.production, .env.local, …) holds real secrets.
+.env.*
+!.env.example
 dist/
 build/
 .DS_Store
 *.log
+logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -17,3 +19,6 @@ src/utils/firebase-service-account.json
 src/utils/google-services.json
 src/utils/GoogleService-Info.plist
 .husky/_
+
+# Personal Claude Code settings (the shared .claude/settings.json is tracked)
+.claude/settings.local.json
