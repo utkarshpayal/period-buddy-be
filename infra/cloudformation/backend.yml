@@ -24,8 +24,10 @@ Parameters:
     Default: ':80'
     Description: >-
       What Caddy serves. ":80" = plain HTTP on the Elastic IP (use until DNS is
-      set up). A domain such as "api.thenura.care" = automatic HTTPS, once that
-      domain's A record points at the Elastic IP. Takes effect on the next deploy.
+      switched). One or more domains, comma-separated, e.g.
+      "backend.thenura.care,www.backend.thenura.care" = automatic HTTPS for
+      each, once their A records point at the Elastic IP. Takes effect on the
+      next deploy.
   InstanceType:
     Type: String
     Default: t3.small

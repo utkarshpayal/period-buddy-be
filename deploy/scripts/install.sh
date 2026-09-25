@@ -36,6 +36,10 @@ jq -r '
 mv "$APP_DIR/app.env.tmp" "$APP_DIR/app.env"
 chmod 600 "$APP_DIR/app.env"
 
+# Caddy needs ", " between multiple site addresses; accept "a,b" too (easier
+# to pass as a CloudFormation parameter) and normalise it.
+SITE_ADDRESS=$(sed -E 's/[[:space:]]*,[[:space:]]*/, /g' <<<"$SITE_ADDRESS")
+
 cat >"$APP_DIR/.env" <<EOF
 IMAGE_URI=$IMAGE_URI
 AWS_REGION=$AWS_REGION

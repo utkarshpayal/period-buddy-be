@@ -102,20 +102,40 @@ Build ≈ 4–6 min, deploy ≈ 1–2 min. Then:
 curl http://<PublicIp>/health/ready     # {"success":true,"status":"ready",...}
 ```
 
-## 5. HTTPS on your domain
+## 5. Switch `backend.thenura.care` over to the new server
 
-1. DNS: create an **A record** `api.thenura.care → <PublicIp>`. Wait until
-   `dig +short api.thenura.care` returns that IP.
-2. Point the stack at the domain:
+The current API runs on the `Nura-Backend` EC2 instance (`13.233.146.11`), and
+`backend.thenura.care` / `www.backend.thenura.care` point at it. The new stack is
+a **separate** server, so the old one keeps serving until DNS moves — nothing
+changes for users until then, and moving back is just the reverse DNS edit.
+
+1. Before switching, check the new server end to end on its IP:
+   `curl http://<PublicIp>/health/ready`. Use the **same** `MONGODB_URI` and
+   `JWT_SECRET` as the old server (step 3) so sessions and data carry over.
+2. Point Caddy at the domains (comma-separated is fine) and release once:
    ```bash
    aws cloudformation deploy --region "$AWS_REGION" --stack-name nura-api \
      --template-file infra/cloudformation/backend.yml --capabilities CAPABILITY_IAM \
-     --parameter-overrides SiteAddress=api.thenura.care
+     --parameter-overrides SiteAddress=backend.thenura.care,www.backend.thenura.care
    ```
-3. **Release change** again. Caddy fetches a Let's Encrypt certificate on its own;
-   HTTP redirects to HTTPS from then on. Check `https://api.thenura.care/health/ready`.
-4. Point the clients at it: the app's `EXPO_PUBLIC_API_BASE_URL` (`eas.json`,
-   needs a new build) and the admin site's `VITE_API_BASE_URL`.
+   Then **Release change**. (Until DNS moves, Caddy can't get a certificate yet — that's expected.)
+3. DNS is at **Spaceship** (`launch1/2.spaceship.net`): change the **A records** for
+   `backend` and `www.backend` from `13.233.146.11` to the stack's `PublicIp`. Lower the
+   TTL beforehand if you can. Within minutes of propagation Caddy fetches Let's
+   Encrypt certificates on its own (HTTP then redirects to HTTPS).
+4. Check `https://backend.thenura.care/health/ready`, sign in on the app, and watch
+   `aws logs tail /nura/api --follow`. The app and admin already use this domain, so
+   they need no change.
+5. When you're happy (give it a day or two), **stop** the old `Nura-Backend` instance —
+   and only then, since both servers run the in-process scheduler: while both are up,
+   scheduled reminders / check-in calls can fire from each. Terminate it later once
+   you're sure you don't need anything from its disk.
+
+> **Scheduler note:** an EventBridge rule `nura-checkin-call-tick` (us-east-1) is
+> *enabled* and targets `https://www.backend.thenura.care/.../scheduler-tick`, but its
+> API destination is **inactive**, so it currently does nothing. This setup relies on the
+> in-process scheduler instead. Disable or delete that rule so it can't start firing
+> alongside it (double check-in calls) if the destination is ever re-activated.
 
 ---
 
