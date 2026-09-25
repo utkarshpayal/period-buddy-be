@@ -69,14 +69,17 @@ if ! systemctl is-active --quiet codedeploy-agent; then
   tmp=$(mktemp -d)
   wget -q "https://aws-codedeploy-${region}.s3.${region}.amazonaws.com/latest/install" -O "$tmp/install"
   chmod +x "$tmp/install"
-  # The installer rejects Ruby versions missing from its hard-coded list
-  # (e.g. Ruby 3.3 on Ubuntu 26.04) although the agent runs fine on them —
-  # on Debian/Ubuntu fall back to installing the agent's .deb directly.
+  # The installer and the .deb's Depends both stop at Ruby 3.2, so on newer
+  # distros (Ruby 3.3 on Ubuntu 26.04) neither installs, although the agent
+  # runs on it. On Debian/Ubuntu, rebuild the .deb depending on plain `ruby`.
   if ! "$tmp/install" auto && [[ "$ID" == ubuntu || "$ID" == debian ]]; then
-    log "Installer refused; installing the agent .deb directly"
+    log "Installer refused this Ruby; installing a repacked agent .deb"
     wget -q "https://aws-codedeploy-${region}.s3.${region}.amazonaws.com/latest/codedeploy-agent_all.deb" \
-      -O "$tmp/codedeploy-agent_all.deb"
-    apt-get install -y "$tmp/codedeploy-agent_all.deb"
+      -O "$tmp/agent.deb"
+    dpkg-deb -R "$tmp/agent.deb" "$tmp/pkg"
+    sed -i 's/^Depends:.*/Depends: ruby/' "$tmp/pkg/DEBIAN/control"
+    dpkg-deb -b "$tmp/pkg" "$tmp/agent-repacked.deb" >/dev/null
+    apt-get install -y "$tmp/agent-repacked.deb"
   fi
   rm -rf "$tmp"
 fi
