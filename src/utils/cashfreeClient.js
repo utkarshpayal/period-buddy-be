@@ -63,7 +63,7 @@ export const createOrder = async ({ orderId, amount, currency, customer, notes }
         customer_details: {
           customer_id: String(customer.id),
           customer_name: customer.name || 'Nura user',
-          customer_email: customer.email || 'support@thenura.care',
+          customer_email: customer.email || 'hello@thenura.care',
           customer_phone: customer.phone || '9999999999',
         },
         order_note: notes ? JSON.stringify(notes) : undefined,

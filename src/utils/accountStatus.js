@@ -15,7 +15,7 @@ export const ACCOUNT_SUSPENDED_MESSAGE =
  * attempts can't be used to flood the owner's inbox. */
 export const SUSPENSION_NOTICE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-export const supportEmail = () => process.env.SUPPORT_EMAIL || 'support@thenura.care';
+export const supportEmail = () => process.env.SUPPORT_EMAIL || 'hello@thenura.care';
 
 /**
  * `isActive: false` means one of two things: an admin suspended the account
