@@ -52,7 +52,9 @@ async function collectRoutes() {
     for (const layer of router.stack) {
       if (layer.route) {
         const names = layer.route.stack.map((s) => s.handle.name);
-        const middleware = [...routerMiddleware, ...names.slice(0, -1)];
+        // The final handler is included too: withApproval() wraps the
+        // controller in a function named `approvalGate`.
+        const middleware = [...routerMiddleware, ...names];
         const subPath = layer.route.path === '/' ? '' : layer.route.path;
         for (const method of Object.keys(layer.route.methods)) {
           routes.push({ method: method.toUpperCase(), path: prefix + subPath, group, middleware });
@@ -475,7 +477,26 @@ function generateEndpointSpec(r, routeDocs) {
   const notes = [];
   if (doc?.desc) notes.push(doc.desc);
   if (doc?.access) notes.push(`**Access:** ${doc.access}`);
-  if (r.path.startsWith('/api/admin')) notes.push('Requires the `admin` role.');
+  // Each requirePermission() check must pass (AND); within one check any of
+  // its permissions is enough (OR).
+  const permissionChecks = r.middleware
+    .filter((name) => name.startsWith('requirePermission:'))
+    .map((name) => name.slice('requirePermission:'.length).split(',').filter(Boolean))
+    .filter((perms) => perms.length > 0);
+  if (permissionChecks.length > 0) {
+    const text = permissionChecks
+      .map((perms) => perms.map((p) => `\`${p}\``).join(' or '))
+      .join(' **and** ');
+    notes.push(`**Permission:** ${text} (see \`config/permissions.js\`; Super Admin holds all).`);
+  } else if (r.middleware.includes('requireStaff')) {
+    notes.push('**Permission:** any Admin Workspace staff role.');
+  }
+  const approvalGated = r.middleware.includes('approvalGate');
+  if (approvalGated) {
+    notes.push(
+      'Staff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.',
+    );
+  }
   if (security.some((s) => s.schedulerSecret)) {
     notes.push('Called by the external scheduler with the `x-scheduler-secret` header.');
   }
@@ -502,6 +523,20 @@ function generateEndpointSpec(r, routeDocs) {
   if (r.method === 'POST') {
     responses['201'] = {
       description: 'Resource created successfully',
+      content: {
+        'application/json': {
+          schema: {
+            $ref: '#/components/schemas/StandardSuccessResponse',
+          },
+        },
+      },
+    };
+  }
+
+  if (approvalGated) {
+    responses['202'] = {
+      description:
+        'Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)',
       content: {
         'application/json': {
           schema: {

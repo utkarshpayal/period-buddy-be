@@ -42,7 +42,8 @@ export const withApproval = (options, handler) => {
   if (handlers.has(key)) throw new Error(`Duplicate approval handler key: ${key}`);
   handlers.set(key, handler);
 
-  return async (req, res, next) => {
+  // Named so scripts/generateSwaggerSpec.js can document the 202 response.
+  return async function approvalGate(req, res, next) {
     try {
       if (hasPermission(req.user.role, directPermission)) return handler(req, res, next);
       if (needsApproval && !(await needsApproval(req))) return handler(req, res, next);
