@@ -191,5 +191,14 @@ same pieces, created by hand:
 | Instance role inline policy | [`iam/instance-inline-policy.json`](iam/instance-inline-policy.json) + `AmazonSSMManagedInstanceCore`, on the instance profile of `Nura-Backend` |
 | Secret / log group | `nura/api/env` (fill with `push-env-to-secret.sh`), `/nura/api` |
 
-The host also needs Docker + the compose plugin, `jq`, the AWS CLI and the CodeDeploy
-agent. Ports 80/443 must be free for Caddy, so stop any nginx/pm2 setup already on it.
+| Deployment group | `the-nura-care-be`, auto-rollback on failure enabled |
+
+Preparing the host (once, in this order):
+
+1. Attach the instance role (EC2 → `Nura-Backend` → Actions → Security → Modify IAM role).
+2. Copy `infra/scripts/bootstrap-host.sh` to the host and run `sudo bash bootstrap-host.sh ap-south-1`.
+   It installs Docker + Compose v2, `jq`, AWS CLI v2 and the CodeDeploy agent, and warns
+   if something already holds ports 80/443.
+3. Fill the secret from the host's current `.env` (`push-env-to-secret.sh`, step 3 above).
+4. Right before **Release change**, stop whatever serves 80/443 today (nginx, pm2, …).
+   Caddy takes over both ports and gets its own certificates for `SITE_ADDRESS`.
