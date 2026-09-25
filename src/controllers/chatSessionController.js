@@ -2,7 +2,13 @@ import QaChatSession from '../models/QaChatSession.js';
 import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
-import { isValidObjectId } from '../utils/apiHelpers.js';
+import {
+  buildPagination,
+  getPagination,
+  isPaginatedRequest,
+  isValidObjectId,
+  sendPaginatedList,
+} from '../utils/apiHelpers.js';
 import {
   CHAT_TOPICS,
   COMPANION_DISCLAIMER,
@@ -97,17 +103,30 @@ export const createChatSession = async (req, res, next) => {
 };
 
 // GET /api/questions/sessions — chat history list, most recently active first.
+// ?page=&limit= (default 20, max 50) pages through every session; without
+// them, the newest 100 as before (older app builds).
 export const listChatSessions = async (req, res, next) => {
   try {
-    const sessions = await QaChatSession.find({ userId: req.userId })
-      .sort({ lastMessageAt: -1 })
-      .limit(100);
-
-    return sendResponse(
+    const filter = { userId: req.userId };
+    if (!isPaginatedRequest(req.query)) {
+      const sessions = await QaChatSession.find(filter).sort({ lastMessageAt: -1 }).limit(100);
+      return sendResponse(
+        res,
+        HTTP_STATUS.OK,
+        'Chat sessions fetched',
+        sessions.map(toSessionSummary),
+      );
+    }
+    const { page, limit, skip } = getPagination(req.query, { limit: 20, maxLimit: 50 });
+    const [sessions, total] = await Promise.all([
+      QaChatSession.find(filter).sort({ lastMessageAt: -1, _id: -1 }).skip(skip).limit(limit),
+      QaChatSession.countDocuments(filter),
+    ]);
+    return sendPaginatedList(
       res,
-      HTTP_STATUS.OK,
       'Chat sessions fetched',
       sessions.map(toSessionSummary),
+      buildPagination({ page, limit, total }),
     );
   } catch (error) {
     next(error);

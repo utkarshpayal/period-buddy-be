@@ -46,6 +46,31 @@ export const buildPagination = ({ page, limit, total }) => ({
   hasPrevPage: page > 1,
 });
 
+/**
+ * True when the caller opted into pagination (sent ?page= or ?limit=).
+ * Endpoints that used to return a bare array keep doing exactly that for
+ * callers that don't opt in — installed app builds and older admin bundles
+ * never send these params — and only switch to page-sized results when asked.
+ */
+export const isPaginatedRequest = (query = {}) =>
+  query.page !== undefined || query.limit !== undefined;
+
+/**
+ * Sends a list whose `data` keeps its pre-pagination shape (usually a bare
+ * array), with `pagination` (buildPagination) and any `extra` fields as
+ * siblings on the envelope — so adding pagination to an endpoint never
+ * breaks a client that reads `data` directly.
+ */
+export const sendPaginatedList = (res, message, data, pagination, extra = {}) =>
+  res.status(200).json({
+    success: true,
+    statusCode: 200,
+    message,
+    data,
+    pagination,
+    ...extra,
+  });
+
 export const pickDefined = (source, fields) => {
   const result = {};
 

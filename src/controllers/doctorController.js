@@ -12,7 +12,15 @@ import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
 import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
-import { isValidObjectId, escapeRegex, pickDefined } from '../utils/apiHelpers.js';
+import {
+  buildPagination,
+  escapeRegex,
+  getPagination,
+  isPaginatedRequest,
+  isValidObjectId,
+  pickDefined,
+  sendPaginatedList,
+} from '../utils/apiHelpers.js';
 import { broadcastToRoom } from '../config/websocket.js';
 import { generateToken } from '../utils/jwt.js';
 import { sendMail } from '../utils/mailer.js';
@@ -161,11 +169,26 @@ export const listDoctorsForAdmin = async (req, res, next) => {
       ];
     }
 
-    const doctors = await Doctor.find(filter)
+    const query = Doctor.find(filter)
       .populate('userId', 'email isActive mustSetPassword lastLogin')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1, _id: -1 });
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Doctors fetched', doctors);
+    // ?page=&limit= (default 20, max 100) — `pagination` rides on the
+    // envelope; without them the full list, as older admin bundles expect.
+    if (!isPaginatedRequest(req.query)) {
+      return sendResponse(res, HTTP_STATUS.OK, 'Doctors fetched', await query);
+    }
+    const { page, limit, skip } = getPagination(req.query, { limit: 20, maxLimit: 100 });
+    const [doctors, total] = await Promise.all([
+      query.skip(skip).limit(limit),
+      Doctor.countDocuments(filter),
+    ]);
+    return sendPaginatedList(
+      res,
+      'Doctors fetched',
+      doctors,
+      buildPagination({ page, limit, total }),
+    );
   } catch (error) {
     next(error);
   }
@@ -459,11 +482,51 @@ export const getConsultations = async (req, res, next) => {
       filter.status = { $ne: 'pending' };
     }
 
-    const consultations = await Consultation.find(filter)
-      .populate('userId', 'firstName lastName email profilePicture')
-      .sort({ createdAt: -1 });
+    // ?search= matches the patient's first/last name (or "first last"),
+    // among this doctor's own patients only.
+    const search = String(req.query.search || '').trim();
+    if (search) {
+      const pattern = escapeRegex(search).replace(/\s+/g, '\\s+');
+      const patientIds = await Consultation.distinct('userId', { doctorId: doctor._id });
+      const patients = await User.find({
+        _id: { $in: patientIds },
+        $or: [
+          { firstName: { $regex: pattern, $options: 'i' } },
+          { lastName: { $regex: pattern, $options: 'i' } },
+          {
+            $expr: {
+              $regexMatch: {
+                input: { $concat: ['$firstName', ' ', '$lastName'] },
+                regex: pattern,
+                options: 'i',
+              },
+            },
+          },
+        ],
+      }).select('_id');
+      filter.userId = { $in: patients.map((p) => p._id) };
+    }
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Consultations fetched', consultations);
+    const query = Consultation.find(filter)
+      .populate('userId', 'firstName lastName email profilePicture')
+      .sort({ createdAt: -1, _id: -1 });
+
+    // Opt-in paging (?page=&limit=, default 20, max 100); `pagination` rides
+    // on the envelope so `data` stays an array either way.
+    if (!isPaginatedRequest(req.query)) {
+      return sendResponse(res, HTTP_STATUS.OK, 'Consultations fetched', await query);
+    }
+    const { page, limit, skip } = getPagination(req.query, { limit: 20, maxLimit: 100 });
+    const [consultations, total] = await Promise.all([
+      query.skip(skip).limit(limit),
+      Consultation.countDocuments(filter),
+    ]);
+    return sendPaginatedList(
+      res,
+      'Consultations fetched',
+      consultations,
+      buildPagination({ page, limit, total }),
+    );
   } catch (error) {
     next(error);
   }
@@ -753,20 +816,45 @@ export const getPayments = async (req, res, next) => {
     const doctor = await getDoctorForUser(req.userId);
     if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor profile not found');
 
-    const payments = await Consultation.find({
-      doctorId: doctor._id,
-      paymentStatus: 'paid',
-    })
+    const filter = { doctorId: doctor._id, paymentStatus: 'paid' };
+    const query = Consultation.find(filter)
       .populate('userId', 'firstName lastName email')
-      .sort({ startedAt: -1, createdAt: -1 });
+      .sort({ startedAt: -1, createdAt: -1, _id: -1 });
 
-    const total = payments.reduce((sum, p) => sum + (p.amountPaid || 0), 0);
+    if (!isPaginatedRequest(req.query)) {
+      const payments = await query;
+      const total = payments.reduce((sum, p) => sum + (p.amountPaid || 0), 0);
+      return sendResponse(res, HTTP_STATUS.OK, 'Payments fetched', {
+        total,
+        count: payments.length,
+        currency: doctor.currency,
+        payments,
+      });
+    }
 
+    // Paged: `total`/`count` still cover *all* paid consultations (summed in
+    // the database, not over this page); `payments` is one page of them.
+    const { page, limit, skip } = getPagination(req.query, { limit: 20, maxLimit: 100 });
+    const [payments, [totals]] = await Promise.all([
+      query.skip(skip).limit(limit),
+      Consultation.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: { $ifNull: ['$amountPaid', 0] } },
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+    ]);
+    const count = totals?.count ?? 0;
     return sendResponse(res, HTTP_STATUS.OK, 'Payments fetched', {
-      total,
-      count: payments.length,
+      total: totals?.total ?? 0,
+      count,
       currency: doctor.currency,
       payments,
+      pagination: buildPagination({ page, limit, total: count }),
     });
   } catch (error) {
     next(error);

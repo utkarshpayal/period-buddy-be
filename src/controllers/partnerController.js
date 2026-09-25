@@ -11,6 +11,12 @@ import logger from '../utils/logger.js';
 import crypto from 'crypto';
 import { computeCyclePredictions } from '../utils/cycle.js';
 import { broadcastToRoom } from '../config/websocket.js';
+import {
+  buildPagination,
+  getPagination,
+  isPaginatedRequest,
+  sendPaginatedList,
+} from '../utils/apiHelpers.js';
 import { generateCareSuggestions } from '../utils/careSuggestionsAi.js';
 
 const CARE_SUGGESTIONS_CACHE_MS = 24 * 60 * 60 * 1000;
@@ -508,12 +514,33 @@ export const disconnectPartner = async (req, res, next) => {
 };
 
 /** GET /api/partner/notifications — Get partner's notifications */
+/**
+ * GET /api/partner/notifications — newest first, paginated with ?page=&limit=
+ * (default 20, max 50). `data` stays a plain array so app builds from before
+ * pagination keep working (they send no page and get the first 50, same as
+ * before); `pagination` and `unreadCount` ride alongside it on the envelope.
+ * `unreadCount` covers *all* notifications, not just this page, so a client
+ * can show an accurate unread badge without loading the whole list.
+ */
 export const getNotifications = async (req, res, next) => {
   try {
-    const notifications = await Notification.find({ userId: req.userId })
-      .sort({ createdAt: -1 })
-      .limit(50);
-    return sendResponse(res, HTTP_STATUS.OK, 'Notifications fetched successfully', notifications);
+    const { page, limit, skip } = getPagination(req.query, {
+      limit: isPaginatedRequest(req.query) ? 20 : 50,
+      maxLimit: 50,
+    });
+    const filter = { userId: req.userId };
+    const [notifications, total, unreadCount] = await Promise.all([
+      Notification.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit),
+      Notification.countDocuments(filter),
+      Notification.countDocuments({ ...filter, isRead: false }),
+    ]);
+    return sendPaginatedList(
+      res,
+      'Notifications fetched successfully',
+      notifications,
+      buildPagination({ page, limit, total }),
+      { unreadCount },
+    );
   } catch (error) {
     next(error);
   }
