@@ -1708,6 +1708,7 @@
         "tags": [
           "Q&A Knowledge Base"
         ],
+        "description": "**Permission:** `content.publish` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_questions",
         "responses": {
           "200": {
@@ -2398,6 +2399,7 @@
         "tags": [
           "Q&A Knowledge Base"
         ],
+        "description": "**Permission:** `content.publish` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "put__api_questions__id",
         "parameters": [
           {
@@ -2492,6 +2494,7 @@
         "tags": [
           "Q&A Knowledge Base"
         ],
+        "description": "**Permission:** `content.publish` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "delete__api_questions__id",
         "parameters": [
           {
@@ -5065,7 +5068,7 @@
           "Health Encyclopedia"
         ],
         "summary": "Admin: Create a health issue entry",
-        "description": "Admin: Create a health issue entry\n\n**Access:** Admin",
+        "description": "Admin: Create a health issue entry\n\n**Access:** Admin\n\n**Permission:** `content.publish` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_health_issues",
         "responses": {
           "200": {
@@ -5228,7 +5231,7 @@
           "Health Encyclopedia"
         ],
         "summary": "Admin: Update a health issue entry",
-        "description": "Admin: Update a health issue entry\n\n**Access:** Admin",
+        "description": "Admin: Update a health issue entry\n\n**Access:** Admin\n\n**Permission:** `content.publish` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "put__api_health_issues__id",
         "parameters": [
           {
@@ -5324,7 +5327,7 @@
           "Health Encyclopedia"
         ],
         "summary": "Admin: Soft-delete a health issue entry",
-        "description": "Admin: Soft-delete a health issue entry\n\n**Access:** Admin",
+        "description": "Admin: Soft-delete a health issue entry\n\n**Access:** Admin\n\n**Permission:** `content.publish` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "delete__api_health_issues__id",
         "parameters": [
           {
@@ -5485,7 +5488,7 @@
           "Blogs & Articles"
         ],
         "summary": "Admin: Create a blog post",
-        "description": "Admin: Create a blog post\n\n**Access:** Admin",
+        "description": "Admin: Create a blog post\n\n**Access:** Admin\n\n**Permission:** `content.publish` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_blogs",
         "responses": {
           "200": {
@@ -5900,7 +5903,7 @@
           "Blogs & Articles"
         ],
         "summary": "Admin: Update a blog post",
-        "description": "Admin: Update a blog post\n\n**Access:** Admin",
+        "description": "Admin: Update a blog post\n\n**Access:** Admin\n\n**Permission:** `content.publish` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "put__api_blogs__id",
         "parameters": [
           {
@@ -5996,7 +5999,7 @@
           "Blogs & Articles"
         ],
         "summary": "Admin: Unpublish a blog post",
-        "description": "Admin: Unpublish a blog post\n\n**Access:** Admin",
+        "description": "Admin: Unpublish a blog post\n\n**Access:** Admin\n\n**Permission:** `content.publish` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "delete__api_blogs__id",
         "parameters": [
           {
@@ -6387,6 +6390,7 @@
         "tags": [
           "Unified Content Studio"
         ],
+        "description": "**Permission:** `content.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_content",
         "parameters": [
           {
@@ -6470,6 +6474,7 @@
         "tags": [
           "Unified Content Studio"
         ],
+        "description": "**Permission:** `content.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_content_types",
         "responses": {
           "200": {
@@ -6525,6 +6530,7 @@
         "tags": [
           "Unified Content Studio"
         ],
+        "description": "**Permission:** `content.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_content_summary",
         "responses": {
           "200": {
@@ -6581,7 +6587,7 @@
           "Unified Content Studio"
         ],
         "summary": "Upload a reel video, guide audio, or thumbnail/cover image file to the `thenura` S3 bucket under `content/<userId>/<folder>`",
-        "description": "Upload a reel video, guide audio, or thumbnail/cover image file to the `thenura` S3 bucket under `content/<userId>/<folder>` (folder = 'reels', 'audio', or 'thumbnails' in the request body). Returns { url, key } for the caller to store as directMp4Url/audioUrl/imageUrl.\n\n**Access:** Private (admin)",
+        "description": "Upload a reel video, guide audio, or thumbnail/cover image file to the `thenura` S3 bucket under `content/<userId>/<folder>` (folder = 'reels', 'audio', or 'thumbnails' in the request body). Returns { url, key } for the caller to store as directMp4Url/audioUrl/imageUrl.\n\n**Access:** Private (admin)\n\n**Permission:** `content.read` **and** `content.write` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_content_media_upload",
         "responses": {
           "200": {
@@ -6682,6 +6688,7 @@
         "tags": [
           "Unified Content Studio"
         ],
+        "description": "**Permission:** `content.read` **and** `content.write` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_content__type",
         "parameters": [
           {
@@ -6788,6 +6795,7 @@
         "tags": [
           "Unified Content Studio"
         ],
+        "description": "**Permission:** `content.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_content__type__id",
         "parameters": [
           {
@@ -6871,6 +6879,7 @@
         "tags": [
           "Unified Content Studio"
         ],
+        "description": "**Permission:** `content.read` **and** `content.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "put__api_content__type__id",
         "parameters": [
           {
@@ -6895,6 +6904,16 @@
         "responses": {
           "200": {
             "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -6974,6 +6993,7 @@
         "tags": [
           "Unified Content Studio"
         ],
+        "description": "**Permission:** `content.read` **and** `content.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "delete__api_content__type__id",
         "parameters": [
           {
@@ -6998,6 +7018,16 @@
         "responses": {
           "200": {
             "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -7059,6 +7089,7 @@
         "tags": [
           "Unified Content Studio"
         ],
+        "description": "**Permission:** `content.read` **and** `content.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "patch__api_content__type__id_publish",
         "parameters": [
           {
@@ -7083,6 +7114,16 @@
         "responses": {
           "200": {
             "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8524,7 +8565,7 @@
           "Wellbeing & Intimacy"
         ],
         "summary": "Admin: Create a wellbeing resource",
-        "description": "Admin: Create a wellbeing resource\n\n**Access:** Admin",
+        "description": "Admin: Create a wellbeing resource\n\n**Access:** Admin\n\n**Permission:** `content.publish` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_wellbeing",
         "responses": {
           "200": {
@@ -8866,7 +8907,7 @@
           "Wellbeing & Intimacy"
         ],
         "summary": "Admin: Update a wellbeing resource",
-        "description": "Admin: Update a wellbeing resource\n\n**Access:** Admin",
+        "description": "Admin: Update a wellbeing resource\n\n**Access:** Admin\n\n**Permission:** `content.publish` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "put__api_wellbeing__id",
         "parameters": [
           {
@@ -8962,7 +9003,7 @@
           "Wellbeing & Intimacy"
         ],
         "summary": "Admin: Soft-delete a wellbeing resource",
-        "description": "Admin: Soft-delete a wellbeing resource\n\n**Access:** Admin",
+        "description": "Admin: Soft-delete a wellbeing resource\n\n**Access:** Admin\n\n**Permission:** `content.publish` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "delete__api_wellbeing__id",
         "parameters": [
           {
@@ -9228,6 +9269,7 @@
         "tags": [
           "Video Reels"
         ],
+        "description": "**Permission:** `content.publish` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_reels",
         "responses": {
           "200": {
@@ -9387,6 +9429,7 @@
         "tags": [
           "Video Reels"
         ],
+        "description": "**Permission:** `content.publish` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "put__api_reels__id",
         "parameters": [
           {
@@ -9481,6 +9524,7 @@
         "tags": [
           "Video Reels"
         ],
+        "description": "**Permission:** `content.publish` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "delete__api_reels__id",
         "parameters": [
           {
@@ -10688,7 +10732,7 @@
           "Marketing & Newsletter"
         ],
         "summary": "Admin: list active subscribers",
-        "description": "Admin: list active subscribers\n\n**Access:** Admin",
+        "description": "Admin: list active subscribers\n\n**Access:** Admin\n\n**Permission:** `marketing.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_newsletter",
         "responses": {
           "200": {
@@ -10822,7 +10866,7 @@
           "Contact Inquiries"
         ],
         "summary": "Admin: list contact form submissions",
-        "description": "Admin: list contact form submissions (?status=new|read|resolved)\n\n**Access:** Admin",
+        "description": "Admin: list contact form submissions (?status=new|read|resolved)\n\n**Access:** Admin\n\n**Permission:** `marketing.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_contact",
         "responses": {
           "200": {
@@ -10879,7 +10923,7 @@
           "Contact Inquiries"
         ],
         "summary": "Admin: update a contact message's status",
-        "description": "Admin: update a contact message's status\n\n**Access:** Admin",
+        "description": "Admin: update a contact message's status\n\n**Access:** Admin\n\n**Permission:** `marketing.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "patch__api_contact__id_status",
         "parameters": [
           {
@@ -12907,6 +12951,7 @@
         "tags": [
           "Doctor Portal"
         ],
+        "description": "**Permission:** `doctors.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_doctor_invite",
         "responses": {
           "200": {
@@ -12999,6 +13044,7 @@
         "tags": [
           "Doctor Portal"
         ],
+        "description": "**Permission:** `doctors.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_doctor_admin_list",
         "responses": {
           "200": {
@@ -13054,6 +13100,7 @@
         "tags": [
           "Doctor Portal"
         ],
+        "description": "**Permission:** `doctors.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "patch__api_doctor_admin__id",
         "parameters": [
           {
@@ -13148,6 +13195,7 @@
         "tags": [
           "Doctor Portal"
         ],
+        "description": "**Permission:** `doctors.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "delete__api_doctor_admin__id",
         "parameters": [
           {
@@ -13224,6 +13272,7 @@
         "tags": [
           "Doctor Portal"
         ],
+        "description": "**Permission:** `doctors.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_doctor_admin__id_resend_invite",
         "parameters": [
           {
@@ -14985,7 +15034,7 @@
           "Government Schemes"
         ],
         "summary": "Full catalogue incl.",
-        "description": "Full catalogue incl. inactive, for the Content Studio admin portal\n\n**Access:** Admin",
+        "description": "Full catalogue incl. inactive, for the Content Studio admin portal\n\n**Access:** Admin\n\n**Permission:** `content.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_schemes_admin_all",
         "parameters": [
           {
@@ -15062,7 +15111,7 @@
           "Government Schemes"
         ],
         "summary": "Create a scheme",
-        "description": "Create a scheme\n\n**Access:** Admin",
+        "description": "Create a scheme\n\n**Access:** Admin\n\n**Permission:** `content.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "post__api_schemes",
         "responses": {
           "200": {
@@ -15077,6 +15126,16 @@
           },
           "201": {
             "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -15232,7 +15291,7 @@
           "Government Schemes"
         ],
         "summary": "Update a scheme",
-        "description": "Update a scheme\n\n**Access:** Admin",
+        "description": "Update a scheme\n\n**Access:** Admin\n\n**Permission:** `content.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "patch__api_schemes__id",
         "parameters": [
           {
@@ -15248,6 +15307,16 @@
         "responses": {
           "200": {
             "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -15328,7 +15397,7 @@
           "Government Schemes"
         ],
         "summary": "Delete a scheme",
-        "description": "Delete a scheme\n\n**Access:** Admin",
+        "description": "Delete a scheme\n\n**Access:** Admin\n\n**Permission:** `content.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "delete__api_schemes__id",
         "parameters": [
           {
@@ -15344,6 +15413,16 @@
         "responses": {
           "200": {
             "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -15560,7 +15639,7 @@
           "Scheme Applications"
         ],
         "summary": "Every user's applications for the admin review queue",
-        "description": "Every user's applications for the admin review queue (?status=&schemeId=&search=&page=&limit=)\n\n**Access:** Admin",
+        "description": "Every user's applications for the admin review queue (?status=&schemeId=&search=&page=&limit=)\n\n**Access:** Admin\n\n**Permission:** `scheme_applications.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_scheme_applications_admin_all",
         "parameters": [
           {
@@ -15637,7 +15716,7 @@
           "Scheme Applications"
         ],
         "summary": "Status counts + distinct applicant states + schemes-with-applications for the admin queue's filter controls",
-        "description": "Status counts + distinct applicant states + schemes-with-applications for the admin queue's filter controls\n\n**Access:** Admin",
+        "description": "Status counts + distinct applicant states + schemes-with-applications for the admin queue's filter controls\n\n**Access:** Admin\n\n**Permission:** `scheme_applications.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_scheme_applications_admin_filters",
         "responses": {
           "200": {
@@ -15694,7 +15773,7 @@
           "Scheme Applications"
         ],
         "summary": "Admin approves / declines / reviews an application",
-        "description": "Admin approves / declines / reviews an application\n\n**Access:** Admin",
+        "description": "Admin approves / declines / reviews an application\n\n**Access:** Admin\n\n**Permission:** `scheme_applications.review` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "patch__api_scheme_applications_admin__id",
         "parameters": [
           {
@@ -16117,6 +16196,7 @@
         "tags": [
           "Audit Trail"
         ],
+        "description": "**Permission:** `audit.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_audit_logs",
         "responses": {
           "200": {
@@ -16206,7 +16286,7 @@
           "Company Assets"
         ],
         "summary": "Full company file library",
-        "description": "Full company file library (?search=&category=&isPublic=&page=&limit=)\n\n**Access:** Admin",
+        "description": "Full company file library (?search=&category=&isPublic=&page=&limit=)\n\n**Access:** Admin\n\n**Permission:** `company_files.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_company_assets",
         "responses": {
           "200": {
@@ -16261,7 +16341,7 @@
           "Company Assets"
         ],
         "summary": "Upload a file",
-        "description": "Upload a file (pitch deck, flow diagram, brand asset, etc.) to S3\n\n**Access:** Admin",
+        "description": "Upload a file (pitch deck, flow diagram, brand asset, etc.) to S3\n\n**Access:** Admin\n\n**Permission:** `company_files.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_company_assets",
         "responses": {
           "200": {
@@ -16363,7 +16443,7 @@
           "Company Assets"
         ],
         "summary": "Add a pointer to something hosted elsewhere",
-        "description": "Add a pointer to something hosted elsewhere (Drive, Figma, Notion, YouTube, ...) instead of uploading a file\n\n**Access:** Admin",
+        "description": "Add a pointer to something hosted elsewhere (Drive, Figma, Notion, YouTube, ...) instead of uploading a file\n\n**Access:** Admin\n\n**Permission:** `company_files.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_company_assets_link",
         "responses": {
           "200": {
@@ -16450,7 +16530,7 @@
           "Company Assets"
         ],
         "summary": "Short-lived signed S3 URL that forces a real download",
-        "description": "Short-lived signed S3 URL that forces a real download\n\n**Access:** Admin",
+        "description": "Short-lived signed S3 URL that forces a real download\n\n**Access:** Admin\n\n**Permission:** `company_files.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_company_assets__id_download",
         "parameters": [
           {
@@ -16528,7 +16608,7 @@
           "Company Assets"
         ],
         "summary": "Edit title/description/category or toggle public visibility",
-        "description": "Edit title/description/category or toggle public visibility\n\n**Access:** Admin",
+        "description": "Edit title/description/category or toggle public visibility\n\n**Access:** Admin\n\n**Permission:** `company_files.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "patch__api_company_assets__id",
         "parameters": [
           {
@@ -16624,7 +16704,7 @@
           "Company Assets"
         ],
         "summary": "Delete a file from the library",
-        "description": "Delete a file from the library (and from S3)\n\n**Access:** Admin",
+        "description": "Delete a file from the library (and from S3)\n\n**Access:** Admin\n\n**Permission:** `company_files.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "delete__api_company_assets__id",
         "parameters": [
           {
@@ -16701,6 +16781,7 @@
         "tags": [
           "Company Folders"
         ],
+        "description": "**Permission:** `company_files.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_company_folders",
         "responses": {
           "200": {
@@ -16755,7 +16836,7 @@
           "Company Folders"
         ],
         "summary": "Create a folder",
-        "description": "Create a folder\n\n**Access:** Admin",
+        "description": "Create a folder\n\n**Access:** Admin\n\n**Permission:** `company_files.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_company_folders",
         "responses": {
           "200": {
@@ -16842,7 +16923,7 @@
           "Company Folders"
         ],
         "summary": "Rename and/or move a folder",
-        "description": "Rename and/or move a folder\n\n**Access:** Admin",
+        "description": "Rename and/or move a folder\n\n**Access:** Admin\n\n**Permission:** `company_files.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "patch__api_company_folders__id",
         "parameters": [
           {
@@ -16938,7 +17019,7 @@
           "Company Folders"
         ],
         "summary": "Delete a folder, its subfolders, and everything inside them",
-        "description": "Delete a folder, its subfolders, and everything inside them\n\n**Access:** Admin",
+        "description": "Delete a folder, its subfolders, and everything inside them\n\n**Access:** Admin\n\n**Permission:** `company_files.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "delete__api_company_folders__id",
         "parameters": [
           {
@@ -17497,7 +17578,7 @@
         "tags": [
           "Admin Subscriptions"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `subscriptions.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_admin_subscriptions_settings",
         "responses": {
           "200": {
@@ -17551,11 +17632,21 @@
         "tags": [
           "Admin Subscriptions"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `subscriptions.read` **and** `subscriptions.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "put__api_admin_subscriptions_settings",
         "responses": {
           "200": {
             "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -17627,7 +17718,7 @@
         "tags": [
           "Admin Subscriptions"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `subscriptions.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_admin_subscriptions_features",
         "responses": {
           "200": {
@@ -17681,7 +17772,7 @@
         "tags": [
           "Admin Subscriptions"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `subscriptions.read` **and** `subscriptions.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "post__api_admin_subscriptions_features",
         "responses": {
           "200": {
@@ -17696,6 +17787,16 @@
           },
           "201": {
             "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -17767,7 +17868,7 @@
         "tags": [
           "Admin Subscriptions"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `subscriptions.read` **and** `subscriptions.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "patch__api_admin_subscriptions_features__id",
         "parameters": [
           {
@@ -17783,6 +17884,16 @@
         "responses": {
           "200": {
             "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -17862,7 +17973,7 @@
         "tags": [
           "Admin Subscriptions"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `subscriptions.read` **and** `subscriptions.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "delete__api_admin_subscriptions_features__id",
         "parameters": [
           {
@@ -17878,6 +17989,16 @@
         "responses": {
           "200": {
             "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -17939,7 +18060,7 @@
         "tags": [
           "Admin Subscriptions"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `subscriptions.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_admin_subscriptions_plans",
         "responses": {
           "200": {
@@ -17993,7 +18114,7 @@
         "tags": [
           "Admin Subscriptions"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `subscriptions.read` **and** `subscriptions.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "post__api_admin_subscriptions_plans",
         "responses": {
           "200": {
@@ -18008,6 +18129,16 @@
           },
           "201": {
             "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -18079,7 +18210,7 @@
         "tags": [
           "Admin Subscriptions"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `subscriptions.read` **and** `subscriptions.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "patch__api_admin_subscriptions_plans__id",
         "parameters": [
           {
@@ -18095,6 +18226,16 @@
         "responses": {
           "200": {
             "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -18174,7 +18315,7 @@
         "tags": [
           "Admin Subscriptions"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `subscriptions.read` **and** `subscriptions.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "delete__api_admin_subscriptions_plans__id",
         "parameters": [
           {
@@ -18190,6 +18331,16 @@
         "responses": {
           "200": {
             "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -18251,7 +18402,7 @@
         "tags": [
           "Admin Subscriptions"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `subscriptions.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_admin_subscriptions_coupons",
         "responses": {
           "200": {
@@ -18305,7 +18456,7 @@
         "tags": [
           "Admin Subscriptions"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `subscriptions.read` **and** `subscriptions.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "post__api_admin_subscriptions_coupons",
         "responses": {
           "200": {
@@ -18320,6 +18471,16 @@
           },
           "201": {
             "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -18391,7 +18552,7 @@
         "tags": [
           "Admin Subscriptions"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `subscriptions.read` **and** `subscriptions.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "patch__api_admin_subscriptions_coupons__id",
         "parameters": [
           {
@@ -18407,6 +18568,16 @@
         "responses": {
           "200": {
             "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -18486,7 +18657,7 @@
         "tags": [
           "Admin Subscriptions"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `subscriptions.read` **and** `subscriptions.write` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "delete__api_admin_subscriptions_coupons__id",
         "parameters": [
           {
@@ -18502,6 +18673,16 @@
         "responses": {
           "200": {
             "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -18563,7 +18744,7 @@
         "tags": [
           "Admin Subscriptions"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `subscriptions.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_admin_subscriptions_overview",
         "responses": {
           "200": {
@@ -18619,7 +18800,8 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "summary": "The signed-in staff member's role, department and permissions",
+        "description": "The signed-in staff member's role, department and permissions\n\n**Access:** Private (any staff role)\n\n**Permission:** any Admin Workspace staff role.",
         "operationId": "get__api_admin_me",
         "responses": {
           "200": {
@@ -18675,7 +18857,7 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `analytics.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_admin_analytics",
         "responses": {
           "200": {
@@ -18731,7 +18913,7 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `users.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_admin_users",
         "parameters": [
           {
@@ -18807,7 +18989,7 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `users.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_admin_users__id",
         "parameters": [
           {
@@ -18902,7 +19084,7 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `users.read` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "patch__api_admin_users__id_status",
         "parameters": [
           {
@@ -18918,6 +19100,16 @@
         "responses": {
           "200": {
             "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -18999,7 +19191,7 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `push.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_admin_notifications_audience",
         "responses": {
           "200": {
@@ -19055,7 +19247,7 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `push.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_admin_notifications_recipients",
         "responses": {
           "200": {
@@ -19111,7 +19303,7 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `push.send` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_admin_notifications_test",
         "responses": {
           "200": {
@@ -19197,7 +19389,7 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `push.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_admin_notifications_broadcasts",
         "responses": {
           "200": {
@@ -19251,7 +19443,7 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `push.send` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
         "operationId": "post__api_admin_notifications_broadcasts",
         "responses": {
           "200": {
@@ -19266,6 +19458,16 @@
           },
           "201": {
             "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
             "content": {
               "application/json": {
                 "schema": {
@@ -19337,7 +19539,7 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `push.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_admin_notifications_broadcasts__id",
         "parameters": [
           {
@@ -19414,7 +19616,7 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `push.send` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_admin_notifications_broadcasts__id_cancel",
         "parameters": [
           {
@@ -19521,7 +19723,7 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "description": "**Permission:** `push.broadcast` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_admin_notifications_broadcasts__id_retry",
         "parameters": [
           {
@@ -19628,7 +19830,8 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "summary": "List the staff the caller can see",
+        "description": "List the staff the caller can see (everyone for Super Admin, otherwise their own department) plus the roles they may assign. Query: search, role, status=active|invited|suspended\n\n**Access:** Private (staff.manage)\n\n**Permission:** `staff.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_admin_staff",
         "responses": {
           "200": {
@@ -19684,7 +19887,8 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "summary": "Invite a staff member by email with a role the caller may assign.",
+        "description": "Invite a staff member by email with a role the caller may assign. Body: { name, email, role }. Returns the staff row and a 48h inviteUrl\n\n**Access:** Private (staff.manage)\n\n**Permission:** `staff.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_admin_staff_invite",
         "responses": {
           "200": {
@@ -19770,7 +19974,8 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "summary": "Change a staff member's role.",
+        "description": "Change a staff member's role. Body: { role }. The last active Super Admin cannot be demoted\n\n**Access:** Private (staff.manage)\n\n**Permission:** `staff.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "patch__api_admin_staff__id_role",
         "parameters": [
           {
@@ -19867,7 +20072,8 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "summary": "Suspend or restore a staff member.",
+        "description": "Suspend or restore a staff member. Body: { isActive }\n\n**Access:** Private (staff.manage)\n\n**Permission:** `staff.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "patch__api_admin_staff__id_status",
         "parameters": [
           {
@@ -19964,7 +20170,8 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "summary": "Re-send a pending invite with a fresh 48h link",
+        "description": "Re-send a pending invite with a fresh 48h link\n\n**Access:** Private (staff.manage)\n\n**Permission:** `staff.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "post__api_admin_staff__id_resend_invite",
         "parameters": [
           {
@@ -20071,7 +20278,8 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "summary": "Revoke workspace access: the account becomes a deactivated regular user",
+        "description": "Revoke workspace access: the account becomes a deactivated regular user (audit trail kept)\n\n**Access:** Private (staff.manage)\n\n**Permission:** `staff.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "delete__api_admin_staff__id",
         "parameters": [
           {
@@ -20148,7 +20356,8 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "summary": "List change requests.",
+        "description": "List change requests. Query: scope=review|mine, status=pending|approved|rejected|cancelled|all, department, resourceType, resourceId, page, limit. Approvers see their department's queue; everyone sees their own\n\n**Access:** Private (any staff role)\n\n**Permission:** any Admin Workspace staff role.",
         "operationId": "get__api_admin_change_requests",
         "responses": {
           "200": {
@@ -20204,7 +20413,8 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "summary": "Badge counts: { toReview, minePending }",
+        "description": "Badge counts: { toReview, minePending }\n\n**Access:** Private (any staff role)\n\n**Permission:** any Admin Workspace staff role.",
         "operationId": "get__api_admin_change_requests_summary",
         "responses": {
           "200": {
@@ -20260,7 +20470,8 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "summary": "One change request, including the before-snapshot and proposed body",
+        "description": "One change request, including the before-snapshot and proposed body\n\n**Access:** Private (requester or department approver)\n\n**Permission:** any Admin Workspace staff role.",
         "operationId": "get__api_admin_change_requests__id",
         "parameters": [
           {
@@ -20337,7 +20548,8 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "summary": "Approve and apply a pending request by replaying it through its original controller.",
+        "description": "Approve and apply a pending request by replaying it through its original controller. Body: { note? }. 409 if no longer pending; 422 if the change can no longer be applied (request stays pending)\n\n**Access:** Private (department approver, not the requester)\n\n**Permission:** any Admin Workspace staff role.",
         "operationId": "post__api_admin_change_requests__id_approve",
         "parameters": [
           {
@@ -20444,7 +20656,8 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "summary": "Reject a pending request.",
+        "description": "Reject a pending request. Body: { note } (required)\n\n**Access:** Private (department approver)\n\n**Permission:** any Admin Workspace staff role.",
         "operationId": "post__api_admin_change_requests__id_reject",
         "parameters": [
           {
@@ -20551,7 +20764,8 @@
         "tags": [
           "Super Admin"
         ],
-        "description": "Requires the `admin` role.",
+        "summary": "Withdraw your own pending request",
+        "description": "Withdraw your own pending request\n\n**Access:** Private (requester)\n\n**Permission:** any Admin Workspace staff role.",
         "operationId": "post__api_admin_change_requests__id_cancel",
         "parameters": [
           {
