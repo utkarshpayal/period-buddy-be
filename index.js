@@ -8,6 +8,7 @@ import { connectDB, disconnectDB } from './src/config/database.js';
 import { seedDatabase } from './src/utils/seeder.js';
 import { startInProcessScheduler, stopInProcessScheduler } from './src/utils/inProcessScheduler.js';
 import { startBroadcastWorker, stopBroadcastWorker } from './src/utils/pushBroadcastWorker.js';
+import { startPushScheduler, stopPushScheduler } from './src/utils/pushScheduleRunner.js';
 import { errorHandler, notFound } from './src/middleware/errorHandler.js';
 import httpLogger from './src/utils/httpLogger.js';
 import logger from './src/utils/logger.js';
@@ -69,6 +70,7 @@ connectDB().then(() => {
   seedDatabase();
   startInProcessScheduler();
   startBroadcastWorker();
+  startPushScheduler();
 });
 
 /* ──────────────────────────────────────────────────────────
@@ -274,6 +276,7 @@ const gracefulShutdown = async (signal) => {
   try {
     stopInProcessScheduler();
     stopBroadcastWorker();
+    stopPushScheduler();
     // Stop accepting new WS connections and close existing ones.
     if (wss) {
       for (const client of wss.clients) {

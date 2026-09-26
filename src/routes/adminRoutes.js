@@ -1,5 +1,6 @@
 import express from 'express';
 import User from '../models/User.js';
+import PushSchedule from '../models/PushSchedule.js';
 import * as adminController from '../controllers/adminController.js';
 import * as adminNotificationController from '../controllers/adminNotificationController.js';
 import * as staffController from '../controllers/staffController.js';
@@ -59,6 +60,10 @@ router.patch(
 // Pushes to a handful of hand-picked users go straight out; anything wider
 // (a role, everyone, or a big selection) needs an App Super Admin.
 const DIRECT_PUSH_MAX_RECIPIENTS = 25;
+const isWidePush = ({ audience, userIds } = {}) =>
+  audience !== 'selected' || !Array.isArray(userIds) || userIds.length > DIRECT_PUSH_MAX_RECIPIENTS;
+const describeRecipients = ({ audience, userIds } = {}) =>
+  audience === 'selected' ? `${userIds?.length ?? 0} selected users` : audience || 'everyone';
 
 router.get(
   '/notifications/audience',
@@ -90,17 +95,9 @@ router.post(
       department: DEPARTMENTS.APP,
       action: 'push_send',
       resourceType: 'push_broadcast',
-      needsApproval: async (req) => {
-        const { audience, userIds } = req.body || {};
-        if (audience !== 'selected') return true;
-        return !Array.isArray(userIds) || userIds.length > DIRECT_PUSH_MAX_RECIPIENTS;
-      },
+      needsApproval: async (req) => isWidePush(req.body),
       summarize: (req) =>
-        `Send push "${String(req.body?.title || '').slice(0, 80)}" to ${
-          req.body?.audience === 'selected'
-            ? `${req.body?.userIds?.length ?? 0} selected users`
-            : req.body?.audience || 'everyone'
-        }`,
+        `Send push "${String(req.body?.title || '').slice(0, 80)}" to ${describeRecipients(req.body)}`,
     },
     adminNotificationController.createBroadcast,
   ),
@@ -119,6 +116,126 @@ router.post(
   '/notifications/broadcasts/:id/retry',
   requirePermission(P.PUSH_BROADCAST),
   adminNotificationController.retryBroadcast,
+);
+
+// Scheduled / repeating pushes. Same approval rule as sending now: anything
+// wider than a few hand-picked users needs push.broadcast. Pausing and
+// cancelling only ever reduce what gets sent, so push.send is enough.
+const loadScheduleTarget = (req) =>
+  PushSchedule.findById(req.params.id)
+    .select('title audience userIds')
+    .lean()
+    .catch(() => null);
+
+/**
+ * @route   GET /api/admin/notifications/schedules
+ * @desc    Scheduled and repeating pushes, newest first. Query: status (comma-separated active|paused|completed|cancelled), page, limit
+ * @access  Private (push.read)
+ */
+router.get(
+  '/notifications/schedules',
+  requirePermission(P.PUSH_READ),
+  adminNotificationController.listSchedules,
+);
+/**
+ * @route   POST /api/admin/notifications/schedules
+ * @desc    Schedule a push for later, once or repeating. Body: broadcast fields plus { startAt, repeat: none|daily|weekly|monthly, interval?, daysOfWeek?, endAt?, maxRuns? } (IST wall-clock)
+ * @access  Private (push.send; wider than 25 picked users needs push.broadcast or approval)
+ */
+router.post(
+  '/notifications/schedules',
+  requirePermission(P.PUSH_SEND),
+  withApproval(
+    {
+      key: 'push.schedule.create',
+      directPermission: P.PUSH_BROADCAST,
+      department: DEPARTMENTS.APP,
+      action: 'push_schedule',
+      resourceType: 'push_schedule',
+      needsApproval: async (req) => isWidePush(req.body),
+      summarize: (req) =>
+        `Schedule push "${String(req.body?.title || '').slice(0, 80)}" (${
+          req.body?.repeat && req.body.repeat !== 'none' ? `repeats ${req.body.repeat}` : 'once'
+        }) to ${describeRecipients(req.body)}`,
+    },
+    adminNotificationController.createSchedule,
+  ),
+);
+/**
+ * @route   GET /api/admin/notifications/schedules/:id
+ * @desc    One schedule with its last 10 sends (and picked recipients for a hand-picked one)
+ * @access  Private (push.read)
+ */
+router.get(
+  '/notifications/schedules/:id',
+  requirePermission(P.PUSH_READ),
+  adminNotificationController.getSchedule,
+);
+/**
+ * @route   PUT /api/admin/notifications/schedules/:id
+ * @desc    Replace an active/paused schedule's message, recipients and timing (same body as create)
+ * @access  Private (push.send; wider than 25 picked users needs push.broadcast or approval)
+ */
+router.put(
+  '/notifications/schedules/:id',
+  requirePermission(P.PUSH_SEND),
+  withApproval(
+    {
+      key: 'push.schedule.update',
+      directPermission: P.PUSH_BROADCAST,
+      department: DEPARTMENTS.APP,
+      action: 'push_schedule_update',
+      resourceType: 'push_schedule',
+      needsApproval: async (req) => isWidePush(req.body),
+      snapshot: async (req) => (await loadScheduleTarget(req)) || undefined,
+      summarize: (req) =>
+        `Edit scheduled push "${String(req.body?.title || '').slice(0, 80)}" to ${describeRecipients(
+          req.body,
+        )}`,
+    },
+    adminNotificationController.updateSchedule,
+  ),
+);
+/**
+ * @route   POST /api/admin/notifications/schedules/:id/pause
+ * @desc    Pause an active schedule
+ * @access  Private (push.send)
+ */
+router.post(
+  '/notifications/schedules/:id/pause',
+  requirePermission(P.PUSH_SEND),
+  adminNotificationController.pauseSchedule,
+);
+/**
+ * @route   POST /api/admin/notifications/schedules/:id/resume
+ * @desc    Resume a paused schedule from its next occurrence
+ * @access  Private (push.send; a wide audience needs push.broadcast or approval)
+ */
+router.post(
+  '/notifications/schedules/:id/resume',
+  requirePermission(P.PUSH_SEND),
+  withApproval(
+    {
+      key: 'push.schedule.resume',
+      directPermission: P.PUSH_BROADCAST,
+      department: DEPARTMENTS.APP,
+      action: 'push_schedule_resume',
+      resourceType: 'push_schedule',
+      needsApproval: async (req) => isWidePush((await loadScheduleTarget(req)) || {}),
+      summarize: () => 'Resume a scheduled push',
+    },
+    adminNotificationController.resumeSchedule,
+  ),
+);
+/**
+ * @route   DELETE /api/admin/notifications/schedules/:id
+ * @desc    Cancel a schedule for good (kept for history)
+ * @access  Private (push.send)
+ */
+router.delete(
+  '/notifications/schedules/:id',
+  requirePermission(P.PUSH_SEND),
+  adminNotificationController.cancelSchedule,
 );
 
 /* ---------------------------- Staff & access --------------------------- */

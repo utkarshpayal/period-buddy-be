@@ -19902,6 +19902,644 @@
         }
       }
     },
+    "/api/admin/notifications/schedules": {
+      "get": {
+        "tags": [
+          "Super Admin"
+        ],
+        "summary": "Scheduled and repeating pushes, newest first.",
+        "description": "Scheduled and repeating pushes, newest first. Query: status (comma-separated active|paused|completed|cancelled), page, limit\n\n**Access:** Private (push.read)\n\n**Permission:** `push.read` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "get__api_admin_notifications_schedules",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Super Admin"
+        ],
+        "summary": "Schedule a push for later, once or repeating.",
+        "description": "Schedule a push for later, once or repeating. Body: broadcast fields plus { startAt, repeat: none|daily|weekly|monthly, interval?, daysOfWeek?, endAt?, maxRuns? } (IST wall-clock)\n\n**Access:** Private (push.send; wider than 25 picked users needs push.broadcast or approval)\n\n**Permission:** `push.send` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
+        "operationId": "post__api_admin_notifications_schedules",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/notifications/schedules/{id}": {
+      "get": {
+        "tags": [
+          "Super Admin"
+        ],
+        "summary": "One schedule with its last 10 sends",
+        "description": "One schedule with its last 10 sends (and picked recipients for a hand-picked one)\n\n**Access:** Private (push.read)\n\n**Permission:** `push.read` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "get__api_admin_notifications_schedules__id",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Super Admin"
+        ],
+        "summary": "Replace an active/paused schedule's message, recipients and timing",
+        "description": "Replace an active/paused schedule's message, recipients and timing (same body as create)\n\n**Access:** Private (push.send; wider than 25 picked users needs push.broadcast or approval)\n\n**Permission:** `push.send` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
+        "operationId": "put__api_admin_notifications_schedules__id",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Super Admin"
+        ],
+        "summary": "Cancel a schedule for good",
+        "description": "Cancel a schedule for good (kept for history)\n\n**Access:** Private (push.send)\n\n**Permission:** `push.send` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "delete__api_admin_notifications_schedules__id",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/notifications/schedules/{id}/pause": {
+      "post": {
+        "tags": [
+          "Super Admin"
+        ],
+        "summary": "Pause an active schedule",
+        "description": "Pause an active schedule\n\n**Access:** Private (push.send)\n\n**Permission:** `push.send` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "post__api_admin_notifications_schedules__id_pause",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/notifications/schedules/{id}/resume": {
+      "post": {
+        "tags": [
+          "Super Admin"
+        ],
+        "summary": "Resume a paused schedule from its next occurrence",
+        "description": "Resume a paused schedule from its next occurrence\n\n**Access:** Private (push.send; a wide audience needs push.broadcast or approval)\n\n**Permission:** `push.send` (see `config/permissions.js`; Super Admin holds all).\n\nStaff without the direct permission get **202** and a pending change request instead of the change being applied; an approver applies it via `POST /api/admin/change-requests/{id}/approve`.",
+        "operationId": "post__api_admin_notifications_schedules__id_resume",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted for approval - `data: { pendingApproval: true, request }` (nothing applied yet)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/staff": {
       "get": {
         "tags": [

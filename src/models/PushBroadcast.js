@@ -52,6 +52,9 @@ const pushBroadcastSchema = new mongoose.Schema(
     attempts: { type: Number, default: 0 },
     lastError: { type: String, default: null },
 
+    // Set when this send was made by a PushSchedule occurrence.
+    scheduleId: { type: mongoose.Schema.Types.ObjectId, ref: 'PushSchedule', default: null },
+
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     startedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
