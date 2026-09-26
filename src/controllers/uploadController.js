@@ -23,11 +23,14 @@ export const uploadFile = async (req, res, next) => {
 
     const folder = (req.body.folder || 'uploads').replace(/[^a-zA-Z0-9_-]/g, '');
 
+    // Namespaced under the uploader (`users/<userId>/<folder>/...`) so the
+    // account purge can remove everything a user uploaded by prefix — see
+    // utils/accountLifecycle.js#purgeAccount.
     const { url, key } = await uploadBufferToS3({
       buffer: req.file.buffer,
       mimeType: req.file.mimetype,
       originalName: req.file.originalname,
-      folder: folder || 'uploads',
+      folder: `users/${req.userId}/${folder || 'uploads'}`,
     });
 
     return sendResponse(res, HTTP_STATUS.CREATED, SUCCESS_MESSAGES.FILE_UPLOADED, { url, key });

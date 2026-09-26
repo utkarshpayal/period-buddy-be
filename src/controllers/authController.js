@@ -4,22 +4,6 @@ import PendingSignup from '../models/PendingSignup.js';
 import CycleLog from '../models/CycleLog.js';
 import CycleSettings from '../models/CycleSettings.js';
 import Habit from '../models/Habit.js';
-import HabitCompletion from '../models/HabitCompletion.js';
-import ForestLog from '../models/ForestLog.js';
-import BuddyMatch from '../models/BuddyMatch.js';
-import BuddyMessage from '../models/BuddyMessage.js';
-import Consultation from '../models/Consultation.js';
-import ConsultationMessage from '../models/ConsultationMessage.js';
-import Community from '../models/Community.js';
-import CommunityLike from '../models/CommunityLike.js';
-import Comment from '../models/Comment.js';
-import Document from '../models/Document.js';
-import DocumentChatMessage from '../models/DocumentChatMessage.js';
-import Notification from '../models/Notification.js';
-import RewardTransaction from '../models/RewardTransaction.js';
-import ScreeningAssessment from '../models/ScreeningAssessment.js';
-import UserSession from '../models/UserSession.js';
-import Partner from '../models/Partner.js';
 import { comparePassword, hashPassword } from '../utils/password.js';
 import { generateToken } from '../utils/jwt.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
@@ -51,6 +35,12 @@ import {
   notifySuspendedLoginAttempt,
   sendAccountSuspendedError,
 } from '../utils/accountStatus.js';
+import {
+  findAccountsByOriginalEmail,
+  isSelfDeletionBlocked,
+  purgeAccount,
+  softDeleteAccount,
+} from '../utils/accountLifecycle.js';
 
 const sendOtpEmail = async ({ email, firstName, otp }) => {
   await sendMail({
@@ -552,9 +542,14 @@ export const deleteAccount = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.UNAUTHORIZED, 'Password is incorrect');
     }
 
-    user.isActive = false;
-    user.email = `deleted_${user._id}_${user.email}`;
-    await user.save();
+    if (isSelfDeletionBlocked(user)) {
+      return sendError(res, HTTP_STATUS.FORBIDDEN, SELF_DELETION_BLOCKED_MESSAGE);
+    }
+
+    // Soft delete: the row stays (so the public purge can still find it),
+    // but posts are hidden and every partner/buddy/community link, push
+    // token, reminder and check-in call is torn down — utils/accountLifecycle.js.
+    await softDeleteAccount(user);
 
     await recordAudit({
       req,
@@ -662,47 +657,8 @@ export const updateFcmToken = async (req, res, next) => {
 
 const SELF_DELETE_RESEND_COOLDOWN_SECONDS = OTP_RESEND_COOLDOWN_SECONDS;
 
-/**
- * Purges every collection that stores per-user data, then removes the User
- * document itself. Used only after the deletion OTP has been confirmed.
- * Kept as one helper so the set of collections touched has a single home —
- * update this list, not each call site, when a new per-user model is added.
- */
-const purgeAllUserData = async (userId) => {
-  const [ownedConsultations, ownedMatches] = await Promise.all([
-    Consultation.find({ userId }).select('_id'),
-    // Buddy pairings are shared rows keyed by `members` (both participants), not
-    // a per-user `userId` — deleting the account removes the whole pairing and
-    // its message stream for both sides.
-    BuddyMatch.find({ members: userId }).select('_id'),
-  ]);
-  const consultationIds = ownedConsultations.map((c) => c._id);
-  const matchIds = ownedMatches.map((m) => m._id);
-
-  await Promise.all([
-    CycleLog.deleteMany({ userId }),
-    CycleSettings.deleteMany({ userId }),
-    Habit.deleteMany({ userId }),
-    HabitCompletion.deleteMany({ userId }),
-    ForestLog.deleteMany({ userId }),
-    BuddyMatch.deleteMany({ members: userId }),
-    BuddyMessage.deleteMany({ matchId: { $in: matchIds } }),
-    Consultation.deleteMany({ userId }),
-    ConsultationMessage.deleteMany({ consultationId: { $in: consultationIds } }),
-    Community.deleteMany({ userId }),
-    CommunityLike.deleteMany({ userId }),
-    Comment.deleteMany({ userId }),
-    Document.deleteMany({ userId }),
-    DocumentChatMessage.deleteMany({ userId }),
-    Notification.deleteMany({ userId }),
-    RewardTransaction.deleteMany({ userId }),
-    ScreeningAssessment.deleteMany({ userId }),
-    UserSession.deleteMany({ userId }),
-    Partner.deleteMany({ userId }),
-  ]);
-
-  await User.deleteOne({ _id: userId });
-};
+const SELF_DELETION_BLOCKED_MESSAGE =
+  'Workspace and clinician accounts are removed by an administrator. Please contact support.';
 
 /**
  * Self-service deletion, step 1 — public/unauthenticated (used by the
@@ -716,45 +672,59 @@ export const requestSelfDeletion = async (req, res, next) => {
   try {
     const { email } = req.body;
     const normalizedEmail = String(email).trim().toLowerCase();
+    const genericResponse = () =>
+      sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.SELF_DELETE_OTP_SENT, {
+        email: normalizedEmail,
+        expiresInMinutes: OTP_EXPIRY_MINUTES,
+      });
 
-    const user = await User.findOne({ email: normalizedEmail }).select('+selfDeleteLastSentAt');
+    // The live account plus any the owner already deleted in the app (those
+    // are renamed to deleted_<id>_<email> but still hold their data until
+    // purged here). Staff/clinician accounts are silently skipped — same
+    // response either way, so this can't be used to probe roles.
+    const accounts = (
+      await findAccountsByOriginalEmail(normalizedEmail, '+selfDeleteLastSentAt role')
+    ).filter((account) => !isSelfDeletionBlocked(account));
 
-    if (user) {
-      if (user.selfDeleteLastSentAt) {
-        const secondsSinceLastSend = (Date.now() - user.selfDeleteLastSentAt.getTime()) / 1000;
-        if (secondsSinceLastSend < SELF_DELETE_RESEND_COOLDOWN_SECONDS) {
-          // Still respond with the generic success message — don't leak timing/existence.
-          return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.SELF_DELETE_OTP_SENT, {
-            email: normalizedEmail,
-            expiresInMinutes: OTP_EXPIRY_MINUTES,
-          });
-        }
+    if (accounts.length > 0) {
+      const lastSent = Math.max(
+        ...accounts.map((account) => account.selfDeleteLastSentAt?.getTime() || 0),
+      );
+      if (lastSent && (Date.now() - lastSent) / 1000 < SELF_DELETE_RESEND_COOLDOWN_SECONDS) {
+        // Still respond with the generic success message — don't leak timing/existence.
+        return genericResponse();
       }
 
       const otp = generateOtp();
-      user.selfDeleteOtpHash = await hashOtp(otp);
-      user.selfDeleteOtpExpiresAt = getOtpExpiry();
-      user.selfDeleteOtpAttempts = 0;
-      user.selfDeleteLastSentAt = new Date();
-      await user.save();
+      // One code covers every account for this address, so a single
+      // confirmation erases them all.
+      await User.updateMany(
+        { _id: { $in: accounts.map((account) => account._id) } },
+        {
+          selfDeleteOtpHash: await hashOtp(otp),
+          selfDeleteOtpExpiresAt: getOtpExpiry(),
+          selfDeleteOtpAttempts: 0,
+          selfDeleteLastSentAt: new Date(),
+        },
+      );
 
       await sendMail({
         to: normalizedEmail,
         subject: 'Confirm deletion of your Nura account',
         html: getAccountDeletionOtpEmailTemplate({
-          firstName: user.firstName,
+          firstName: accounts[0].firstName,
           otp,
           expiryMinutes: OTP_EXPIRY_MINUTES,
         }),
       });
 
-      logger.info('self_delete_requested', { userId: user._id, email: normalizedEmail });
+      logger.info('self_delete_requested', {
+        userIds: accounts.map((account) => account._id),
+        email: normalizedEmail,
+      });
     }
 
-    return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.SELF_DELETE_OTP_SENT, {
-      email: normalizedEmail,
-      expiresInMinutes: OTP_EXPIRY_MINUTES,
-    });
+    return genericResponse();
   } catch (error) {
     next(error);
   }
@@ -769,41 +739,47 @@ export const confirmSelfDeletion = async (req, res, next) => {
     const { email, code } = req.body;
     const normalizedEmail = String(email).trim().toLowerCase();
 
-    const user = await User.findOne({ email: normalizedEmail }).select(
-      '+selfDeleteOtpHash +selfDeleteOtpExpiresAt +selfDeleteOtpAttempts',
-    );
+    const accounts = (
+      await findAccountsByOriginalEmail(
+        normalizedEmail,
+        '+selfDeleteOtpHash +selfDeleteOtpExpiresAt +selfDeleteOtpAttempts role',
+      )
+    ).filter((account) => account.selfDeleteOtpHash && !isSelfDeletionBlocked(account));
 
-    if (!user || !user.selfDeleteOtpHash) {
+    if (accounts.length === 0) {
       return sendError(res, HTTP_STATUS.NOT_FOUND, ERROR_MESSAGES.SELF_DELETE_NO_REQUEST);
     }
 
-    if (user.selfDeleteOtpExpiresAt < new Date()) {
+    // All accounts for this address share one code (see requestSelfDeletion).
+    const [primary] = accounts;
+    const accountIds = accounts.map((account) => account._id);
+
+    if (primary.selfDeleteOtpExpiresAt < new Date()) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.SELF_DELETE_OTP_EXPIRED);
     }
 
-    if (user.selfDeleteOtpAttempts >= OTP_MAX_ATTEMPTS) {
+    if (primary.selfDeleteOtpAttempts >= OTP_MAX_ATTEMPTS) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.SELF_DELETE_OTP_MAX_ATTEMPTS);
     }
 
-    const isValid = await compareOtp(String(code), user.selfDeleteOtpHash);
+    const isValid = await compareOtp(String(code), primary.selfDeleteOtpHash);
     if (!isValid) {
-      user.selfDeleteOtpAttempts += 1;
-      await user.save();
+      await User.updateMany({ _id: { $in: accountIds } }, { $inc: { selfDeleteOtpAttempts: 1 } });
       return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.SELF_DELETE_OTP_INVALID);
     }
 
-    const userId = user._id;
-    logger.info('self_delete_confirmed', { userId, email: normalizedEmail });
+    logger.info('self_delete_confirmed', { userIds: accountIds, email: normalizedEmail });
 
-    await purgeAllUserData(userId);
-
-    await recordAudit({
-      req,
-      action: AUDIT_ACTIONS.ACCOUNT_DELETED,
-      resourceType: 'user',
-      resourceId: userId,
-      metadata: { mode: 'self_service' },
-    });
+    for (const userId of accountIds) {
+      await purgeAccount(userId);
+      await recordAudit({
+        req,
+        action: AUDIT_ACTIONS.ACCOUNT_DELETED,
+        resourceType: 'user',
+        resourceId: userId,
+        metadata: { mode: 'self_service' },
+      });
+    }
     return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.SELF_DELETE_COMPLETE);
   } catch (error) {
     next(error);

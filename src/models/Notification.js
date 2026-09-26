@@ -45,10 +45,19 @@ notificationSchema.index({ userId: 1, createdAt: -1 });
 
 notificationSchema.post('save', async function (doc) {
   try {
-    const user = await User.findById(doc.userId).select('notificationToken notificationsEnabled');
+    const user = await User.findById(doc.userId).select(
+      'notificationToken notificationsEnabled isActive deletedAt',
+    );
     // notificationsEnabled is the app's Profile → Notifications toggle. The
-    // in-app row is still saved; only the device push is skipped.
-    if (user && user.notificationToken && user.notificationsEnabled !== false) {
+    // in-app row is still saved; only the device push is skipped. A
+    // suspended/deleted account's device never gets a push either.
+    if (
+      user &&
+      user.isActive &&
+      !user.deletedAt &&
+      user.notificationToken &&
+      user.notificationsEnabled !== false
+    ) {
       await sendPushNotification(user.notificationToken, {
         title: doc.title,
         body: doc.body,

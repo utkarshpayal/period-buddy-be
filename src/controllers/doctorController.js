@@ -28,6 +28,30 @@ import { getDoctorInviteTemplate } from '../templates/emailTemplates.js';
 import { userRoleEnum } from '../enums/enums.js';
 import { INVITE_EXPIRY_HOURS, buildInviteUrl } from '../utils/invite.js';
 import { describeAccess, isStaffRole } from '../config/permissions.js';
+import { isDeletedAccount } from '../utils/accountStatus.js';
+import { retireDoctorProfiles, suspendAccount } from '../utils/accountLifecycle.js';
+
+/**
+ * Populate the patient on a consultation, but never expose a deleted
+ * account's (renamed) email or profile: soft-deleted patients and purged ones
+ * (whose paid consultations are kept for earnings, with a dangling userId)
+ * both come back as a neutral placeholder instead of their details or null.
+ */
+const patientPopulate = (select) => ({
+  path: 'userId',
+  select: `${select} deletedAt`,
+  transform: (doc, id) =>
+    doc && !isDeletedAccount(doc)
+      ? doc
+      : {
+          _id: doc?._id ?? id,
+          firstName: 'Deleted',
+          lastName: 'patient',
+          email: null,
+          profilePicture: null,
+          isDeleted: true,
+        },
+});
 
 /** Jitsi room per consultation — free, no keys, deterministic so both sides
  * of a booking land in the same room. */
@@ -249,6 +273,14 @@ export const resendInvite = async (req, res, next) => {
 
     const user = await User.findById(doctor.userId);
     if (!user) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor account not found');
+    // The invite link would otherwise be a way back in for a deactivated doctor.
+    if (!user.isActive || isDeletedAccount(user)) {
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        'This doctor account is deactivated — reactivate it before resending the invite',
+      );
+    }
 
     const rawToken = crypto.randomBytes(32).toString('hex');
     user.inviteTokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
@@ -286,16 +318,22 @@ export const deactivateDoctor = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid doctor id');
     }
 
-    const doctor = await Doctor.findByIdAndUpdate(
-      req.params.id,
-      { isAvailable: false },
-      { new: true },
-    );
-    if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor not found');
+    const existing = await Doctor.findById(req.params.id).select('_id userId');
+    if (!existing) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor not found');
 
-    if (doctor.userId) {
-      await User.findByIdAndUpdate(doctor.userId, { isActive: false });
+    // Hidden from booking, slots and reels off, open consultations cancelled
+    // (patients notified, paid ones logged for refund).
+    await retireDoctorProfiles({ _id: existing._id }, { reason: 'doctor_deactivated' });
+
+    if (existing.userId) {
+      const user = await User.findByIdAndUpdate(
+        existing.userId,
+        { isActive: false, $unset: { inviteTokenHash: 1, inviteTokenExpiresAt: 1 } },
+        { new: true },
+      );
+      if (user) await suspendAccount(user);
     }
+    const doctor = await Doctor.findById(existing._id);
 
     await recordAudit({
       req,
@@ -330,7 +368,9 @@ export const setPasswordFromInvite = async (req, res, next) => {
       '+password +inviteTokenHash +inviteTokenExpiresAt',
     );
 
-    if (!user || !user.inviteTokenHash) {
+    // A suspended/deactivated account's link must not reactivate it — only an
+    // admin restoring access can (this used to force isActive back to true).
+    if (!user || !user.inviteTokenHash || !user.isActive || isDeletedAccount(user)) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'This invite link is no longer valid');
     }
     if (!user.inviteTokenExpiresAt || user.inviteTokenExpiresAt.getTime() < Date.now()) {
@@ -347,7 +387,6 @@ export const setPasswordFromInvite = async (req, res, next) => {
     user.inviteTokenExpiresAt = undefined;
     user.mustSetPassword = false;
     user.isEmailVerified = true;
-    user.isActive = true;
     user.lastLogin = new Date();
     await user.save();
 
@@ -428,7 +467,7 @@ export const getDashboard = async (req, res, next) => {
         { $group: { _id: null, total: { $sum: '$amountPaid' }, count: { $sum: 1 } } },
       ]),
       Consultation.find({ doctorId: doctor._id })
-        .populate('userId', 'firstName lastName email profilePicture')
+        .populate(patientPopulate('firstName lastName email profilePicture'))
         .sort({ createdAt: -1 })
         .limit(6),
     ]);
@@ -508,7 +547,7 @@ export const getConsultations = async (req, res, next) => {
     }
 
     const query = Consultation.find(filter)
-      .populate('userId', 'firstName lastName email profilePicture')
+      .populate(patientPopulate('firstName lastName email profilePicture'))
       .sort({ createdAt: -1, _id: -1 });
 
     // Opt-in paging (?page=&limit=, default 20, max 100); `pagination` rides
@@ -583,7 +622,7 @@ export const getConsultationPatient = async (req, res, next) => {
     const patientId = consultation.userId;
     const [user, cycleSettings, recentLogs, screenings] = await Promise.all([
       User.findById(patientId).select(
-        'firstName lastName email profilePicture dateOfBirth gender country language',
+        'firstName lastName email profilePicture dateOfBirth gender country language deletedAt',
       ),
       CycleSettings.findOne({ userId: patientId }).select(
         'lastPeriodStartDate cycleLength periodLength pregnancyMode trackingGoal',
@@ -599,6 +638,9 @@ export const getConsultationPatient = async (req, res, next) => {
     ]);
 
     if (!user) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Patient not found');
+    if (isDeletedAccount(user)) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'This patient has deleted their account');
+    }
 
     // Keep only the most recent screening per condition.
     const latestByCondition = {};
@@ -818,7 +860,7 @@ export const getPayments = async (req, res, next) => {
 
     const filter = { doctorId: doctor._id, paymentStatus: 'paid' };
     const query = Consultation.find(filter)
-      .populate('userId', 'firstName lastName email')
+      .populate(patientPopulate('firstName lastName email'))
       .sort({ startedAt: -1, createdAt: -1, _id: -1 });
 
     if (!isPaginatedRequest(req.query)) {

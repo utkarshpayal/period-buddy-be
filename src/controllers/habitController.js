@@ -142,7 +142,8 @@ export const toggleHabit = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid habit id');
     }
 
-    const habit = await Habit.findOne({ _id: req.params.id, userId: req.userId });
+    // A deleted (soft-deleted) habit can't be completed or earn tokens.
+    const habit = await Habit.findOne({ _id: req.params.id, userId: req.userId, isActive: true });
     if (!habit) {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Habit not found');
     }

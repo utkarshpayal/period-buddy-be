@@ -326,6 +326,17 @@ export const deleteScheme = async (req, res, next) => {
     if (!isValidObjectId(req.params.id)) {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Scheme not found');
     }
+    // Applications point at the scheme; deleting it would leave users (and
+    // reviewers) looking at applications for a scheme that no longer exists.
+    const applications = await SchemeApplication.countDocuments({ schemeId: req.params.id });
+    if (applications > 0) {
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        `${applications} application(s) reference this scheme. Deactivate it instead of deleting it.`,
+      );
+    }
+
     const scheme = await GovernmentBenefit.findByIdAndDelete(req.params.id);
     if (!scheme) {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Scheme not found');

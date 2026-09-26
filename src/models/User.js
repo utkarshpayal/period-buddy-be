@@ -98,8 +98,13 @@ const userSchema = new mongoose.Schema(
     // Admin Workspace staff — who invited this account (Team & Access).
     invitedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 
-    // Soft delete
+    // Soft delete — set by accountLifecycle.softDeleteAccount (the in-app
+    // "Delete account" action). A deleted account can't be reactivated.
     deletedAt: { type: Date, default: null },
+    // Set when an admin removes someone from the workspace (staffController.
+    // removeStaff demotes them to a plain `user`), so the app-users screen can
+    // still treat the account as staff-managed.
+    staffRemovedAt: { type: Date },
 
     // Self-service account deletion (marketing site "delete my data" page).
     // Hashed like password/OTP elsewhere — never returned in API responses.

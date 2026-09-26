@@ -464,11 +464,14 @@ export const toggleSave = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid post id');
     }
 
-    const post = await CommunityPost.findOne({ _id: req.params.id, isActive: true });
-    if (!post) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Post not found');
-
+    const post = await CommunityPost.findById(req.params.id).select('_id isActive');
     const user = await User.findById(req.userId).select('savedCommunityPosts walletBalance');
-    const alreadySaved = user.savedCommunityPosts.some((id) => String(id) === String(post._id));
+    const alreadySaved =
+      Boolean(post) && user.savedCommunityPosts.some((id) => String(id) === String(post._id));
+    // A deleted/hidden post can still be unsaved, just not newly saved.
+    if (!post || (!post.isActive && !alreadySaved)) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'Post not found');
+    }
 
     if (alreadySaved) {
       user.savedCommunityPosts = user.savedCommunityPosts.filter(
@@ -555,7 +558,9 @@ export const deleteComment = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid comment id');
     }
 
-    const post = await CommunityPost.findOne({ _id: id, isActive: true });
+    // Not filtered on isActive: an author must still be able to remove their
+    // own comment after the post was deleted or auto-hidden.
+    const post = await CommunityPost.findById(id);
     if (!post) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Post not found');
 
     const comment = post.comments.id(commentId);

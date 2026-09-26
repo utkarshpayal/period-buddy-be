@@ -186,7 +186,7 @@ Payload:
 { "password": "SecurePass123!" }
 ```
 
-Response: account is deactivated.
+Response: the account is soft-deleted. The user row is kept (email renamed to `deleted_<id>_<email>`, `deletedAt` set, can never be reactivated), and everything linked to it is torn down right away: the user's community posts are hidden, their comments, likes and poll votes on other people's posts and reels are removed (counts adjusted), partner and buddy links are ended (the other side gets a `partner_disconnected` / `buddy_ended` socket event), nominations are removed, open consultations are cancelled, and push tokens, reminders and check-in calls are switched off. Health data stays until the owner runs the public self-service purge (`POST /api/auth/account/delete/request` → `/confirm`), which also finds accounts that were already soft-deleted and hard-deletes the data and uploaded files. `403` for staff and doctor accounts, which are offboarded by an admin.
 
 ### GET `/api/auth/dashboard`
 

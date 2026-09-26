@@ -146,6 +146,19 @@ export const approveChangeRequest = async (req, res, next) => {
       outcome = { ok: false, statusCode: 500, body: { message: error.message } };
     }
 
+    if (!outcome.ok && outcome.cancel) {
+      // The requester lost their access — this can never be applied.
+      await ChangeRequest.updateOne(
+        { _id: claimed._id },
+        { status: 'cancelled', reviewNote: outcome.body?.message, reviewedAt: new Date() },
+      );
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        `This request was withdrawn: ${outcome.body?.message}`,
+      );
+    }
+
     if (!outcome.ok) {
       // Put it back so the reviewer can reject it (or retry after a fix).
       await ChangeRequest.updateOne(

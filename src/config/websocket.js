@@ -6,6 +6,7 @@ import Consultation from '../models/Consultation.js';
 import Doctor from '../models/Doctor.js';
 import BuddyMatch from '../models/BuddyMatch.js';
 import Partner from '../models/Partner.js';
+import User from '../models/User.js';
 
 // Global map to track active rooms and client connections
 // Room Name -> Set of WebSocket clients
@@ -23,8 +24,14 @@ const clientMetadata = new Map();
  * Any room name that doesn't match a known, ownership-checked shape is
  * denied by default.
  */
+const isLiveAccount = async (userId) =>
+  Boolean(await User.exists({ _id: userId, isActive: true, deletedAt: null }));
+
 const isAuthorizedForRoom = async (userId, room) => {
   if (!userId) return false;
+  // A suspended/deleted account keeps a signature-valid JWT until it expires,
+  // so re-check the account itself on every join, not just at connect time.
+  if (!(await isLiveAccount(userId))) return false;
 
   // `user_<id>` personal rooms are auto-joined server-side on connect (see
   // wss.on('connection') below); the client also explicitly (re-)joins its
@@ -77,7 +84,7 @@ const isAuthorizedForRoom = async (userId, room) => {
 export const initWebSocket = (server) => {
   const wss = new WebSocketServer({ noServer: true });
 
-  server.on('upgrade', (request, socket, head) => {
+  server.on('upgrade', async (request, socket, head) => {
     const parsedUrl = url.parse(request.url, true);
     const token = parsedUrl.query.token;
 
@@ -92,6 +99,21 @@ export const initWebSocket = (server) => {
           message: 'Failed to verify token on upgrade',
           error: err.message,
         });
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+
+      // Same rule as the REST `authenticate` middleware: a valid signature
+      // isn't enough once the account has been suspended or deleted.
+      let live = false;
+      try {
+        live = await isLiveAccount(userId);
+      } catch (err) {
+        logger.error('ws_account_check_failed', { userId, error: err.message });
+      }
+      if (!live) {
+        logger.warn('ws_auth_inactive_account', { userId });
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
@@ -244,6 +266,29 @@ export const initWebSocket = (server) => {
     message: 'WebSocket Server initialized and attached to HTTP Server',
   });
   return wss;
+};
+
+/**
+ * Closes every open socket belonging to `userId` — called when an account is
+ * suspended, deleted or purged (utils/accountLifecycle.js), so it stops
+ * receiving buddy/partner/consultation traffic immediately rather than when
+ * the client next reconnects. The 'close' handler tears down room membership.
+ */
+export const disconnectUser = (userId) => {
+  if (!userId) return 0;
+  let closed = 0;
+  for (const [client, metadata] of clientMetadata) {
+    if (String(metadata.userId) === String(userId)) {
+      try {
+        client.close(4001, 'Account unavailable');
+      } catch (err) {
+        logger.warn('ws_disconnect_user_failed', { userId, error: err.message });
+      }
+      closed += 1;
+    }
+  }
+  if (closed > 0) logger.info('ws_user_disconnected', { userId, sockets: closed });
+  return closed;
 };
 
 /**

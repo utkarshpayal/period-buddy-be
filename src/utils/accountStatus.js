@@ -17,15 +17,58 @@ export const SUSPENSION_NOTICE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 export const supportEmail = () => process.env.SUPPORT_EMAIL || 'hello@thenura.care';
 
+export const DELETED_EMAIL_PREFIX = 'deleted_';
+
+/** The placeholder email a self-deleted account is renamed to, which frees
+ * the real address for a new signup while keeping it recoverable for the
+ * later purge (see originalEmailOf). */
+export const deletedEmailFor = (userId, email) => `${DELETED_EMAIL_PREFIX}${userId}_${email}`;
+
+/** Inverse of deletedEmailFor — the address the owner signed up with. */
+export const originalEmailOf = (user) => {
+  const email = String(user?.email || '');
+  const match = email.match(/^deleted_[0-9a-f]{24}_(.+)$/);
+  return match ? match[1] : email;
+};
+
+/**
+ * Self-deleted (authController.deleteAccount → accountLifecycle.softDeleteAccount).
+ * `deletedAt` is the source of truth; the `deleted_` email prefix also counts
+ * so accounts deleted before `deletedAt` was written are still recognised.
+ */
+export const isDeletedAccount = (user) =>
+  Boolean(user) &&
+  (Boolean(user.deletedAt) || String(user.email || '').startsWith(DELETED_EMAIL_PREFIX));
+
 /**
  * `isActive: false` means one of two things: an admin suspended the account
- * (PATCH /api/admin/users/:id/status), or the user deleted it themselves
- * (authController.deleteAccount, which also rewrites the email to
- * `deleted_<id>_...`). Only the first is a suspension — a deleted account
- * should keep looking like it doesn't exist.
+ * (PATCH /api/admin/users/:id/status), or the user deleted it themselves.
+ * Only the first is a suspension — a deleted account should keep looking
+ * like it doesn't exist.
  */
 export const isSuspended = (user) =>
-  Boolean(user) && user.isActive === false && !String(user.email || '').startsWith('deleted_');
+  Boolean(user) && user.isActive === false && !isDeletedAccount(user);
+
+/** 'active' | 'suspended' | 'deleted' — for admin listings. */
+export const accountStateOf = (user) =>
+  isDeletedAccount(user) ? 'deleted' : user?.isActive === false ? 'suspended' : 'active';
+
+/** Mongo filter for accounts that are live (not suspended, not deleted). */
+export const ACTIVE_ACCOUNT_FILTER = { isActive: true, deletedAt: null };
+
+/**
+ * The subset of `ids` that belong to live accounts, as a Set of strings.
+ * Background jobs (reminders, check-in calls) iterate other collections keyed
+ * by userId, so they use this to skip suspended/deleted accounts.
+ */
+export const activeUserIdSet = async (ids) => {
+  const unique = [...new Set((ids || []).filter(Boolean).map(String))];
+  if (unique.length === 0) return new Set();
+  const rows = await User.find({ _id: { $in: unique }, ...ACTIVE_ACCOUNT_FILTER })
+    .select('_id')
+    .lean();
+  return new Set(rows.map((row) => String(row._id)));
+};
 
 export const shouldSendSuspensionNotice = (user, now = Date.now()) => {
   const last = user?.suspensionNoticeSentAt ? new Date(user.suspensionNoticeSentAt).getTime() : 0;

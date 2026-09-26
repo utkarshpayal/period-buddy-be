@@ -18,18 +18,28 @@ import {
 import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
 import { userRoleEnum } from '../enums/enums.js';
 import logger from '../utils/logger.js';
+import { accountStateOf, isDeletedAccount } from '../utils/accountStatus.js';
+import { suspendAccount } from '../utils/accountLifecycle.js';
 
 // Safe, non-sensitive projection for user listings/detail. Sensitive fields
 // (password, OTP hashes, invite tokens) are already `select: false` on the
 // schema; we additionally omit push tokens and other noise.
 const USER_LIST_FIELDS =
   'firstName lastName email phone role isActive isEmailVerified authProvider ' +
-  'subscriptionPlan country state language lastLogin createdAt deletedAt profilePicture';
+  'subscriptionPlan country state language lastLogin createdAt deletedAt profilePicture ' +
+  'staffRemovedAt';
+
+const withAccountState = (user) => ({ ...user, accountStatus: accountStateOf(user) });
+
+// Deleted accounts carry `deletedAt` (older ones only the renamed email).
+const DELETED_FILTER = { $or: [{ deletedAt: { $ne: null } }, { email: /^deleted_/ }] };
+const NOT_DELETED_FILTER = { deletedAt: null, email: { $not: /^deleted_/ } };
 
 /**
  * GET /api/admin/users — Super Admin: paginated, searchable, filterable user
  * directory. Never returns health data — only account metadata.
- * Query: ?search= &role= &status=active|suspended &page= &limit=
+ * Query: ?search= &role= &status=active|suspended|deleted &page= &limit=
+ * Each row carries `accountStatus` ('active' | 'suspended' | 'deleted').
  */
 export const listUsers = async (req, res, next) => {
   try {
@@ -45,8 +55,15 @@ export const listUsers = async (req, res, next) => {
     if (role && Object.values(userRoleEnum).includes(role)) {
       filter.role = role;
     }
-    if (status === 'active') filter.isActive = true;
-    else if (status === 'suspended') filter.isActive = false;
+    // `suspended` means an admin locked the account; `deleted` means the
+    // owner deleted it — those used to show up as "suspended" too.
+    if (status === 'active') Object.assign(filter, { isActive: true, ...NOT_DELETED_FILTER });
+    else if (status === 'suspended')
+      Object.assign(filter, { isActive: false, ...NOT_DELETED_FILTER });
+    else if (status === 'deleted') {
+      filter.$and = [DELETED_FILTER, ...(filter.$or ? [{ $or: filter.$or }] : [])];
+      delete filter.$or;
+    }
 
     const [users, total] = await Promise.all([
       User.find(filter)
@@ -59,7 +76,7 @@ export const listUsers = async (req, res, next) => {
     ]);
 
     return sendResponse(res, HTTP_STATUS.OK, 'Users fetched', {
-      users,
+      users: users.map(withAccountState),
       pagination: buildPagination({ page, limit, total }),
     });
   } catch (error) {
@@ -89,7 +106,7 @@ export const getUser = async (req, res, next) => {
     ]);
 
     return sendResponse(res, HTTP_STATUS.OK, 'User fetched', {
-      user,
+      user: withAccountState(user),
       activity: { cycleLogs, documents, consultations },
     });
   } catch (error) {
@@ -114,9 +131,27 @@ export const setUserStatus = async (req, res, next) => {
 
     // Staff accounts are managed from Team & Access (staffController), where
     // the role hierarchy is enforced — never from the app-users screen.
-    const target = await User.findById(req.params.id).select('role').lean();
-    if (target && isStaffRole(target.role) && req.user.role !== userRoleEnum.ADMIN) {
+    // Removed staff (demoted to `user` by removeStaff) stay staff-managed too,
+    // so a lower-tier admin can't quietly reactivate someone who was offboarded.
+    const target = await User.findById(req.params.id)
+      .select('role email deletedAt staffRemovedAt')
+      .lean();
+    if (
+      target &&
+      (isStaffRole(target.role) || target.staffRemovedAt) &&
+      req.user.role !== userRoleEnum.ADMIN
+    ) {
       return sendError(res, HTTP_STATUS.FORBIDDEN, 'Staff accounts are managed from Team & Access');
+    }
+
+    // The owner deleted it: their content and links are already torn down and
+    // the email is released, so it can't come back.
+    if (target && isDeletedAccount(target)) {
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        'This account was deleted by its owner and cannot be reactivated',
+      );
     }
 
     // An admin can't suspend their own account (would lock themselves out).
@@ -131,6 +166,8 @@ export const setUserStatus = async (req, res, next) => {
     ).select(USER_LIST_FIELDS);
 
     if (!user) return sendError(res, HTTP_STATUS.NOT_FOUND, 'User not found');
+
+    if (!isActive) await suspendAccount(user);
 
     await recordAudit({
       req,
@@ -169,6 +206,7 @@ export const getAnalytics = async (req, res, next) => {
       totalUsers,
       activeUsers,
       usersByRole,
+      deletedUsers,
       newUsers7,
       newUsers30,
       totalDoctors,
@@ -180,9 +218,13 @@ export const getAnalytics = async (req, res, next) => {
       totalBlogs,
       totalReels,
     ] = await Promise.all([
-      User.countDocuments({}),
-      User.countDocuments({ isActive: true }),
-      User.aggregate([{ $group: { _id: '$role', count: { $sum: 1 } } }]),
+      User.countDocuments(NOT_DELETED_FILTER),
+      User.countDocuments({ isActive: true, ...NOT_DELETED_FILTER }),
+      User.aggregate([
+        { $match: NOT_DELETED_FILTER },
+        { $group: { _id: '$role', count: { $sum: 1 } } },
+      ]),
+      User.countDocuments(DELETED_FILTER),
       User.countDocuments({ createdAt: { $gte: last7 } }),
       User.countDocuments({ createdAt: { $gte: last30 } }),
       Doctor.countDocuments({}),
@@ -193,7 +235,7 @@ export const getAnalytics = async (req, res, next) => {
         { $group: { _id: null, total: { $sum: '$amountPaid' } } },
       ]),
       GovernmentBenefit.countDocuments({}),
-      GovernmentBenefit.countDocuments({ status: 'active' }),
+      GovernmentBenefit.countDocuments({ isActive: true }),
       Blog.countDocuments({}),
       Reel.countDocuments({}),
     ]);
@@ -209,6 +251,7 @@ export const getAnalytics = async (req, res, next) => {
         total: totalUsers,
         active: activeUsers,
         suspended: totalUsers - activeUsers,
+        deleted: deletedUsers,
         byRole: roleMap,
         newLast7Days: newUsers7,
         newLast30Days: newUsers30,

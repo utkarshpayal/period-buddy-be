@@ -306,6 +306,23 @@ export const deletePlan = async (req, res, next) => {
     if (!isValidObjectId(req.params.id)) {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Plan not found');
     }
+    // Paying subscribers' access resolves through the plan document
+    // (subscriptionAccess.js skips entitlements whose plan is gone), so a
+    // plan with live entitlements is retired with isActive: false instead —
+    // that hides it from sale but keeps existing buyers' features.
+    const activeBuyers = await Entitlement.countDocuments({
+      plan: req.params.id,
+      status: 'active',
+      $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+    });
+    if (activeBuyers > 0) {
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        `${activeBuyers} active subscription(s) use this plan. Deactivate it instead of deleting it.`,
+      );
+    }
+
     const plan = await SubscriptionPlan.findByIdAndDelete(req.params.id);
     if (!plan) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Plan not found');
 
