@@ -200,6 +200,43 @@ export const FEATURE_CATALOG = [
     placement: 'explore_hub',
     colorKey: 'secondary',
   },
+  // Gen Z pack — on Home's Shortcuts block by default
+  {
+    key: 'wrapped',
+    title: 'Cycle Wrapped',
+    description: 'Your month, story-style',
+    icon: 'sparkles',
+    route: '/(app)/wrapped',
+    placement: 'home',
+    colorKey: 'rose',
+  },
+  {
+    key: 'cycleEra',
+    title: 'Your Era',
+    description: 'Phase vibes & cycle syncing',
+    icon: 'planet-outline',
+    route: '/(app)/era',
+    placement: 'home',
+    colorKey: 'lavender',
+  },
+  {
+    key: 'badges',
+    title: 'Streaks & Badges',
+    description: 'Collect them all',
+    icon: 'trophy-outline',
+    route: '/(app)/badges',
+    placement: 'home',
+    colorKey: 'gold',
+  },
+  {
+    key: 'circles',
+    title: 'Bestie Circles',
+    description: 'Your squad, your vibes',
+    icon: 'people-circle-outline',
+    route: '/(app)/circles',
+    placement: 'home',
+    colorKey: 'mint',
+  },
 ].map((f, i) => ({ size: LARGE_BY_DEFAULT.has(f.key) ? 'large' : 'small', ...f, order: i }));
 
 export const FEATURE_KEYS = FEATURE_CATALOG.map((f) => f.key);

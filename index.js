@@ -53,6 +53,8 @@ import companyFolderRoutes from './src/routes/companyFolderRoutes.js';
 import adminRoutes from './src/routes/adminRoutes.js';
 import appConfigRoutes from './src/routes/appConfigRoutes.js';
 import cmsRoutes from './src/routes/cmsRoutes.js';
+import genzRoutes from './src/routes/genzRoutes.js';
+import circleRoutes from './src/routes/circleRoutes.js';
 import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
 import adminSubscriptionRoutes from './src/routes/adminSubscriptionRoutes.js';
 import { setupSwagger } from './src/docs/swagger.js';
@@ -224,6 +226,8 @@ app.use('/api/admin/subscriptions', adminSubscriptionRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/app-config', appConfigRoutes);
 app.use('/api/cms', cmsRoutes);
+app.use('/api/genz', genzRoutes);
+app.use('/api/circles', circleRoutes);
 
 /* ──────────────────────────────────────────────────────────
    Error Handling
