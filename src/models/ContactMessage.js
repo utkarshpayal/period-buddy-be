@@ -13,6 +13,9 @@ const contactMessageSchema = new mongoose.Schema(
         'Privacy & data',
         'Bug report',
         'Partnership / press',
+        'Billing (Premium)',
+        'Apply for Nura Professional',
+        // Legacy value, kept so older saved messages still validate.
         'Billing (Nura Plus)',
       ],
     },
