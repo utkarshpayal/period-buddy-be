@@ -346,6 +346,8 @@ function determineTag(r) {
   if (g === 'companyAsset') return 'Company Assets';
   if (g === 'companyFolder') return 'Company Folders';
   if (g === 'appConfig') return 'App Config';
+  if (g === 'genz') return 'Gen Z Pack';
+  if (g === 'circle') return 'Bestie Circles';
   if (g === 'cms') return 'App CMS';
   console.warn(`No tag mapping for route group "${g}" (${r.method} ${r.path}) — add one`);
   return 'System & Health';

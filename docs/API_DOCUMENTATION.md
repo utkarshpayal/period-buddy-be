@@ -1311,5 +1311,55 @@ Returns `{ version, features, customTiles, homeSections, theme, settings, banner
 | GET | `/api/cms/banners` | All banners, with `status`, `clickCount` and `impressionCount` |
 | POST / PUT / DELETE | `/api/cms/banners[/:id]` | `{ title, subtitle?, ctaLabel?, imageUrl?, placement, layout, action, audience?, backgroundColor?, textColor?, priority?, active?, dismissible?, startAt?, endAt? }` |
 | POST | `/api/cms/upload` | multipart `file` (image, ≤ 5 MB) → `{ url, key }` under `cms/banners/` |
+| GET | `/api/cms/cycle-sync-tips` | Phase Era tips (`usingDefaults: true` while none are saved), `phases`, `categories`, `categoryLabels`, `eras` |
+| POST | `/api/cms/cycle-sync-tips/seed` | Copy the built-in defaults into the database (`409` once tips exist) |
+| POST / PUT / DELETE | `/api/cms/cycle-sync-tips[/:id]` | `{ phase, category: move\|fuel\|selfCare\|vibe, title (≤60), body? (≤200), emoji?, active?, order? }`. The first create also copies the defaults in |
 
 **Locking:** each section has its own counter in `sectionVersions`. Send the counter for the section you loaded as `version`; a save on top of a newer save of the same section gets `409`. Saves to other sections, and banner changes, never conflict.
+
+---
+
+## Gen Z pack (Cycle Wrapped, Phase Era, Streaks & Badges, Bestie Circles)
+
+All private (`Authorization: Bearer`). Pure logic lives in `src/utils/genz.js` (unit-tested).
+
+### GET `/api/genz/wrapped?period=month|year&value=YYYY-MM|YYYY&tz=-330`
+
+Story-style recap of a month or year (default: the current one; `tz` is `getTimezoneOffset()` so a month in progress is scored against the days so far).
+
+```json
+{ "wrapped": { "period": "month", "label": "September 2026", "fromKey": "2026-09-01", "toKey": "2026-09-30",
+  "daysLogged": 12, "daysInRange": 26, "consistency": 46, "longestStreak": 12, "periodsStarted": 1, "periodDays": 3,
+  "avgCycleLength": 26, "topMoods": [{ "value": "happy", "count": 6 }], "topSymptoms": [{ "value": "cramps", "count": 8 }],
+  "flowBreakdown": [{ "value": "heavy", "count": 3 }], "avgSleepHours": 8, "avgWaterMl": 2200, "avgStress": null,
+  "persona": { "title": "Sunshine Main Character", "emoji": "☀️" }, "isEmpty": false } }
+```
+
+### GET `/api/genz/era`
+
+Today's phase as an "era" (`era: { name, emoji, tagline, aura: [hex, hex], statusEmoji }`), `cycleDay`, `daysLeftInPhase`, `nextPhase`/`nextEra`, `nextPeriodDaysAway`, `isEstimate`, and that phase's tips grouped as `tips: { move, fuel, selfCare, vibe }` (each `{ id?, emoji, title, body }`). Also returns every era as `eras`. `404` until cycle settings exist. Tips come from `CycleSyncTip` (edited in the App CMS), or `constants/cycleSync.js` defaults while that collection is empty.
+
+### GET `/api/genz/badges`
+
+`{ streak: { current, longest, nextMilestone }, earnedCount, badges: [{ key, emoji, title, description, earned, progress: { current, target } }] }`. Badges are computed from existing data on every call (cycle logs, habit completions, community posts, circles), so there is nothing to backfill; the catalog is `BADGE_CATALOG` in `utils/genz.js`.
+
+### Bestie Circles — `/api/circles`
+
+Private friend groups of up to 8 (max 5 circles per user) that share a status emoji ("vibe", ≤ 80 chars), optionally the poster's phase emoji, reactions and hype. Vibes expire after 7 days (TTL index). Every route answers `404` for a circle the caller isn't in.
+
+| Method | Path | Body / notes |
+|---|---|---|
+| GET | `/api/circles` | `{ circles: [{ id, name, emoji, memberCount, isOwner, latestVibe }], limits }` |
+| POST | `/api/circles` | `{ name (≤30), emoji? }` → `{ circle }` with `inviteCode` |
+| POST | `/api/circles/join` | `{ code }` (case/space-insensitive). `409` when full or at the 5-circle cap; members are pushed |
+| GET | `/api/circles/:id` | `{ circle: { ..., inviteCode, members: [{ userId, name, profilePicture, isYou, isOwner, vibe }], feed }, reactions, limits }` |
+| PATCH | `/api/circles/:id` | `{ name, emoji? }` (owner) |
+| POST | `/api/circles/:id/invite-code` | New code (owner); the old one stops working |
+| DELETE | `/api/circles/:id/members/:userId` | `me` = leave; another id = remove (owner). Owner leaving hands over to the longest-standing member; last one out deletes the circle |
+| POST | `/api/circles/:id/vibes` | `{ emoji, text?, sharePhase?, askForSupport? }`. `askForSupport` pushes the other members (`type: system`, `data.route: /circles?id=`) |
+| DELETE | `/api/circles/:id/vibes/:vibeId` | Own vibe only |
+| POST | `/api/circles/:id/vibes/:vibeId/react` | `{ emoji }` from `🫶 🔥 😭 💅 🍫 🫂`; toggles |
+| POST | `/api/circles/:id/hype/:userId` | Push to one member; `429` within 6h of the last hype to them |
+
+Account deletion leaves every circle (`utils/circleMembership.js#leaveAllCircles`, called from `accountLifecycle.js`).
+
