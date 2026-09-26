@@ -1214,3 +1214,53 @@ A queued broadcast is cancelled at once; a running one stops after its current b
 ### POST `/api/admin/notifications/broadcasts/:id/retry`
 
 Resumes a `failed` broadcast from the batch where it stopped.
+
+### Scheduled and repeating pushes
+
+A schedule sends the same message later, once or on repeat. Each time it comes due, the server creates an ordinary broadcast for that send (it has `scheduleId` set), so progress, cancel and retry work as above. Times are interpreted in **IST**. A send that is more than 1 hour overdue (for example, the server was down) is skipped, not sent late. Approval follows the broadcast rule: anything wider than 25 hand-picked users needs `push.broadcast` or goes to approval.
+
+#### POST `/api/admin/notifications/schedules`
+
+Same message/recipient fields as a broadcast, plus timing. Returns `201` with `schedule`.
+
+```json
+{
+  "title": "Log today",
+  "body": "Take a minute to log how you feel",
+  "audience": "user",
+  "route": "/tracker",
+  "startAt": "2026-10-01T03:30:00.000Z",
+  "repeat": "weekly",
+  "interval": 1,
+  "daysOfWeek": [1, 4],
+  "endAt": "2026-12-31T18:29:59.000Z",
+  "maxRuns": null
+}
+```
+
+- `startAt` (required, not in the past): the first send. It also sets the time of day, and for `monthly`, the day of the month (the 31st falls back to a short month's last day).
+- `repeat`: `none` (default) | `daily` | `weekly` | `monthly`. `interval`: every N days/weeks/months (1–30).
+- `daysOfWeek` (weekly only): `0` = Sunday … `6` = Saturday, in IST. Defaults to `startAt`'s weekday.
+- `endAt` / `maxRuns` (optional): end the series after that time, or after that many sends.
+
+Each schedule has `status` (`active` | `paused` | `completed` | `cancelled`), `nextRunAt`, `runCount`, `skippedCount`, `lastRunAt`, `lastBroadcastId`, `lastError`, and a readable `description` (for example, "Weekly on Mon, Thu at 09:00 IST").
+
+#### GET `/api/admin/notifications/schedules?status=active,paused&page=1&limit=20`
+
+Paginated, newest first.
+
+#### GET `/api/admin/notifications/schedules/:id`
+
+One schedule, its last 10 sends (`recentSends`), and for a hand-picked schedule the `recipients` (same shape as `/recipients`).
+
+#### PUT `/api/admin/notifications/schedules/:id`
+
+Replaces the message, recipients and timing of an `active` or `paused` schedule (same body as create). You can keep an already-past `startAt` unchanged. Sends already made still count toward `maxRuns`.
+
+#### POST `/api/admin/notifications/schedules/:id/pause` · `/resume`
+
+Resuming continues from the next occurrence after now. Sends missed while paused are not made up.
+
+#### DELETE `/api/admin/notifications/schedules/:id`
+
+Cancels the schedule for good (the record is kept). A send that has already started is not stopped. Cancel that broadcast instead.

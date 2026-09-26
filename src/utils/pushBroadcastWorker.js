@@ -47,6 +47,20 @@ export const buildAudienceFilter = (audience, userIds) => {
   return filter;
 };
 
+/** How many users an audience reaches, and how many of them can get a device push. */
+export const countAudience = async (audience, userIds) => {
+  const filter = buildAudienceFilter(audience, userIds);
+  const [totalUsers, totalWithToken] = await Promise.all([
+    User.countDocuments(filter),
+    User.countDocuments({
+      ...filter,
+      notificationToken: { $nin: [null, ''] },
+      notificationsEnabled: { $ne: false },
+    }),
+  ]);
+  return { totalUsers, totalWithToken };
+};
+
 const sendWithRetry = async (tokens, payload, broadcastId) => {
   let lastError;
   for (let attempt = 1; attempt <= SEND_RETRIES; attempt += 1) {

@@ -13,8 +13,15 @@ import {
 } from '../utils/apiHelpers.js';
 import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
 import { isFcmReady, sendPushNotification } from '../utils/fcm.js';
-import { buildAudienceFilter, enqueueBroadcast, laneFor } from '../utils/pushBroadcastWorker.js';
+import {
+  buildAudienceFilter,
+  countAudience,
+  enqueueBroadcast,
+  laneFor,
+} from '../utils/pushBroadcastWorker.js';
 import { parseNotificationRoute } from '../utils/notificationRoute.js';
+import PushSchedule from '../models/PushSchedule.js';
+import { describeSchedule, nextOccurrence, parseScheduleInput } from '../utils/pushSchedule.js';
 
 const TITLE_MAX = 100;
 const BODY_MAX = 500;
@@ -51,19 +58,6 @@ const parseUserIds = (value) => {
 const displayName = (u) =>
   [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email || String(u._id);
 
-const countAudience = async (audience, userIds) => {
-  const filter = buildAudienceFilter(audience, userIds);
-  const [totalUsers, totalWithToken] = await Promise.all([
-    User.countDocuments(filter),
-    User.countDocuments({
-      ...filter,
-      notificationToken: { $nin: [null, ''] },
-      notificationsEnabled: { $ne: false },
-    }),
-  ]);
-  return { totalUsers, totalWithToken };
-};
-
 /**
  * GET /api/admin/notifications/audience?audience=all|user|partner|doctor —
  * how many users a broadcast would reach, shown before sending.
@@ -85,6 +79,16 @@ export const getAudienceCount = async (req, res, next) => {
   }
 };
 
+const RECIPIENT_FIELDS =
+  'firstName lastName email phone role profilePicture notificationToken notificationsEnabled';
+
+const toRecipient = ({ notificationToken, notificationsEnabled, ...u }) => ({
+  ...u,
+  // "Can receive a push": has a registered device and hasn't turned
+  // notifications off in the app.
+  hasDevice: Boolean(notificationToken) && notificationsEnabled !== false,
+});
+
 /**
  * GET /api/admin/notifications/recipients?search= — find users to hand-pick
  * as recipients. Returns whether each has a registered device, never the
@@ -101,20 +105,13 @@ export const searchRecipients = async (req, res, next) => {
       ...buildAudienceFilter('all'),
       $or: [{ firstName: rx }, { lastName: rx }, { email: rx }, { phone: rx }],
     })
-      .select(
-        'firstName lastName email phone role profilePicture notificationToken notificationsEnabled',
-      )
+      .select(RECIPIENT_FIELDS)
       .sort({ createdAt: -1 })
       .limit(20)
       .lean();
 
     return sendResponse(res, HTTP_STATUS.OK, 'Recipients fetched', {
-      users: users.map(({ notificationToken, notificationsEnabled, ...u }) => ({
-        ...u,
-        // "Can receive a push": has a registered device and hasn't turned
-        // notifications off in the app.
-        hasDevice: Boolean(notificationToken) && notificationsEnabled !== false,
-      })),
+      users: users.map(toRecipient),
     });
   } catch (error) {
     next(error);
@@ -394,6 +391,384 @@ export const retryBroadcast = async (req, res, next) => {
     enqueueBroadcast(broadcast._id, broadcast.audience);
 
     return sendResponse(res, HTTP_STATUS.ACCEPTED, 'Broadcast resumed', { broadcast });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/* ----------------------- Scheduled / repeating pushes ----------------------- */
+
+const SCHEDULE_HIDDEN_FIELDS = '-userIds';
+
+const withDescription = (schedule) => ({ ...schedule, description: describeSchedule(schedule) });
+
+/**
+ * The first send at or after `startAt` that's still ahead of `now`, counting
+ * sends already made. Null when the series has nothing left.
+ */
+const firstRunFrom = (timing, runCount, now) => {
+  const justBefore = new Date(Math.max(now.getTime(), new Date(timing.startAt).getTime()) - 1);
+  return nextOccurrence({ ...timing, runCount }, justBefore);
+};
+
+/**
+ * Validate message + recipients + timing from a create/update body into the
+ * fields a PushSchedule stores. `{ fields }` or `{ status, error }`.
+ */
+const buildScheduleFields = async (body, { allowPastStart }) => {
+  const msg = parseMessage(body);
+  if (msg.error) return { status: HTTP_STATUS.BAD_REQUEST, error: msg.error };
+
+  const timing = parseScheduleInput(body, new Date(), { allowPastStart });
+  if (timing.error) return { status: HTTP_STATUS.BAD_REQUEST, error: timing.error };
+
+  const parsedRoute = parseNotificationRoute(body.route);
+  if (parsedRoute.error) return { status: HTTP_STATUS.BAD_REQUEST, error: parsedRoute.error };
+
+  const audience = parseAudience(body.audience);
+  let userIds;
+  let recipientPreview;
+  if (audience === 'selected') {
+    const parsed = parseUserIds(body.userIds);
+    if (parsed.error) return { status: HTTP_STATUS.BAD_REQUEST, error: parsed.error };
+    userIds = parsed.ids;
+    const preview = await User.find(buildAudienceFilter('selected', userIds))
+      .select('firstName lastName email')
+      .limit(3)
+      .lean();
+    recipientPreview = preview.map(displayName);
+  }
+
+  const counts = await countAudience(audience, userIds);
+  if (counts.totalUsers === 0) {
+    return { status: HTTP_STATUS.BAD_REQUEST, error: 'No active users match these recipients' };
+  }
+
+  return {
+    fields: {
+      title: msg.title,
+      body: msg.body,
+      audience,
+      userIds,
+      recipientPreview,
+      data: parsedRoute.route ? { route: parsedRoute.route } : undefined,
+      saveToInbox: body.saveToInbox !== false,
+      ...timing.schedule,
+    },
+    counts,
+  };
+};
+
+const loadSchedule = async (id) => {
+  if (!isValidObjectId(id))
+    return { status: HTTP_STATUS.BAD_REQUEST, error: 'Invalid schedule id' };
+  const schedule = await PushSchedule.findById(id);
+  if (!schedule) return { status: HTTP_STATUS.NOT_FOUND, error: 'Schedule not found' };
+  return { schedule };
+};
+
+const scheduleResponse = async (id) => {
+  const schedule = await PushSchedule.findById(id)
+    .select(SCHEDULE_HIDDEN_FIELDS)
+    .populate('createdBy', 'firstName lastName email')
+    .lean();
+  return withDescription(schedule);
+};
+
+/**
+ * POST /api/admin/notifications/schedules — send a push later, once or on
+ * repeat. Body: the same message/recipient fields as a broadcast, plus
+ * { startAt, repeat: none|daily|weekly|monthly, interval?, daysOfWeek?,
+ * endAt?, maxRuns? } (see utils/pushSchedule.js; wall-clock rules are IST).
+ */
+export const createSchedule = async (req, res, next) => {
+  try {
+    if (!isFcmReady()) {
+      return sendError(
+        res,
+        HTTP_STATUS.SERVICE_UNAVAILABLE,
+        'Push notifications are not configured',
+      );
+    }
+    // A repeating schedule approved after its first slot simply starts at the
+    // next one; a one-time send approved too late is refused instead.
+    const built = await buildScheduleFields(req.body || {}, {
+      allowPastStart: req.method === 'REPLAY' && (req.body?.repeat ?? 'none') !== 'none',
+    });
+    if (built.error) return sendError(res, built.status, built.error);
+
+    const nextRunAt = firstRunFrom(built.fields, 0, new Date());
+    if (!nextRunAt) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'These settings never send anything');
+    }
+
+    const schedule = await PushSchedule.create({
+      ...built.fields,
+      nextRunAt,
+      createdBy: req.userId,
+      updatedBy: req.userId,
+    });
+
+    recordAudit({
+      req,
+      action: AUDIT_ACTIONS.PUSH_SCHEDULE_CREATED,
+      resourceType: 'push_schedule',
+      resourceId: schedule._id,
+      metadata: {
+        title: schedule.title,
+        audience: schedule.audience,
+        when: describeSchedule(schedule),
+        ...built.counts,
+      },
+    });
+
+    return sendResponse(res, HTTP_STATUS.CREATED, 'Push scheduled', {
+      schedule: await scheduleResponse(schedule._id),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** GET /api/admin/notifications/schedules?status=&page=&limit= — newest first. */
+export const listSchedules = async (req, res, next) => {
+  try {
+    const { page, limit, skip } = getPagination(req.query, { limit: 20, maxLimit: 100 });
+    const filter = {};
+    if (typeof req.query.status === 'string' && req.query.status) {
+      filter.status = { $in: req.query.status.split(',') };
+    }
+    const [schedules, total] = await Promise.all([
+      PushSchedule.find(filter)
+        .select(SCHEDULE_HIDDEN_FIELDS)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('createdBy', 'firstName lastName email')
+        .lean(),
+      PushSchedule.countDocuments(filter),
+    ]);
+    return sendResponse(res, HTTP_STATUS.OK, 'Schedules fetched', {
+      schedules: schedules.map(withDescription),
+      pagination: buildPagination({ page, limit, total }),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** GET /api/admin/notifications/schedules/:id — one schedule plus its recent sends. */
+export const getSchedule = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid schedule id');
+    }
+    const schedule = await PushSchedule.findById(req.params.id)
+      .populate('createdBy', 'firstName lastName email')
+      .lean();
+    if (!schedule) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Schedule not found');
+    const { userIds, ...rest } = schedule;
+    const [recentSends, recipients] = await Promise.all([
+      PushBroadcast.find({ scheduleId: schedule._id })
+        .select(HIDDEN_FIELDS)
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean(),
+      // So the editor can prefill "specific people" for a hand-picked send.
+      rest.audience === 'selected' && userIds?.length
+        ? User.find(buildAudienceFilter('selected', userIds)).select(RECIPIENT_FIELDS).lean()
+        : [],
+    ]);
+    return sendResponse(res, HTTP_STATUS.OK, 'Schedule fetched', {
+      schedule: withDescription(rest),
+      recentSends,
+      recipients: recipients.map(toRecipient),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /api/admin/notifications/schedules/:id — replace the message,
+ * recipients and timing of an active or paused schedule. Sends already made
+ * still count toward `maxRuns`.
+ */
+export const updateSchedule = async (req, res, next) => {
+  try {
+    const loaded = await loadSchedule(req.params.id);
+    if (loaded.error) return sendError(res, loaded.status, loaded.error);
+    const { schedule } = loaded;
+    if (!['active', 'paused'].includes(schedule.status)) {
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        'Only an active or paused schedule can be edited',
+      );
+    }
+
+    // Keeping the original start (already in the past for a running series)
+    // is fine; moving it somewhere in the past is not.
+    const keepsStart =
+      new Date(req.body?.startAt).getTime() === new Date(schedule.startAt).getTime();
+    const built = await buildScheduleFields(req.body || {}, {
+      allowPastStart: keepsStart || req.method === 'REPLAY',
+    });
+    if (built.error) return sendError(res, built.status, built.error);
+
+    const nextRunAt = firstRunFrom(built.fields, schedule.runCount, new Date());
+    if (!nextRunAt) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'With these settings nothing is left to send');
+    }
+
+    const updated = await PushSchedule.findOneAndUpdate(
+      { _id: schedule._id, status: { $in: ['active', 'paused'] }, updatedAt: schedule.updatedAt },
+      {
+        $set: {
+          ...built.fields,
+          userIds: built.fields.userIds ?? null,
+          recipientPreview: built.fields.recipientPreview ?? null,
+          data: built.fields.data ?? null,
+          daysOfWeek: built.fields.daysOfWeek ?? null,
+          nextRunAt,
+          lastError: null,
+          updatedBy: req.userId,
+        },
+      },
+      { new: true },
+    );
+    if (!updated) {
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        'This schedule changed while you were editing it — reload and try again',
+      );
+    }
+
+    recordAudit({
+      req,
+      action: AUDIT_ACTIONS.PUSH_SCHEDULE_UPDATED,
+      resourceType: 'push_schedule',
+      resourceId: updated._id,
+      metadata: {
+        title: updated.title,
+        audience: updated.audience,
+        when: describeSchedule(updated),
+      },
+    });
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Schedule updated', {
+      schedule: await scheduleResponse(updated._id),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/admin/notifications/schedules/:id/pause — stop sending until resumed. */
+export const pauseSchedule = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid schedule id');
+    }
+    const schedule = await PushSchedule.findOneAndUpdate(
+      { _id: req.params.id, status: 'active' },
+      { $set: { status: 'paused', updatedBy: req.userId } },
+      { new: true },
+    );
+    if (!schedule) {
+      return sendError(res, HTTP_STATUS.CONFLICT, 'Only an active schedule can be paused');
+    }
+    recordAudit({
+      req,
+      action: AUDIT_ACTIONS.PUSH_SCHEDULE_PAUSED,
+      resourceType: 'push_schedule',
+      resourceId: schedule._id,
+    });
+    return sendResponse(res, HTTP_STATUS.OK, 'Schedule paused', {
+      schedule: await scheduleResponse(schedule._id),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/admin/notifications/schedules/:id/resume — continue from the next
+ * occurrence after now; sends missed while paused are not made up.
+ */
+export const resumeSchedule = async (req, res, next) => {
+  try {
+    const loaded = await loadSchedule(req.params.id);
+    if (loaded.error) return sendError(res, loaded.status, loaded.error);
+    const { schedule } = loaded;
+    if (schedule.status !== 'paused') {
+      return sendError(res, HTTP_STATUS.CONFLICT, 'Only a paused schedule can be resumed');
+    }
+
+    const nextRunAt = firstRunFrom(schedule.toObject(), schedule.runCount, new Date());
+    if (!nextRunAt) {
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        'Nothing is left to send on this schedule — edit its timing first',
+      );
+    }
+
+    const resumed = await PushSchedule.findOneAndUpdate(
+      { _id: schedule._id, status: 'paused' },
+      { $set: { status: 'active', nextRunAt, lastError: null, updatedBy: req.userId } },
+      { new: true },
+    );
+    if (!resumed) {
+      return sendError(res, HTTP_STATUS.CONFLICT, 'Only a paused schedule can be resumed');
+    }
+
+    recordAudit({
+      req,
+      action: AUDIT_ACTIONS.PUSH_SCHEDULE_RESUMED,
+      resourceType: 'push_schedule',
+      resourceId: resumed._id,
+    });
+    return sendResponse(res, HTTP_STATUS.OK, 'Schedule resumed', {
+      schedule: await scheduleResponse(resumed._id),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * DELETE /api/admin/notifications/schedules/:id — cancel for good. The record
+ * stays for history; a send already in progress is not stopped (cancel that
+ * broadcast separately).
+ */
+export const cancelSchedule = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid schedule id');
+    }
+    const schedule = await PushSchedule.findOneAndUpdate(
+      { _id: req.params.id, status: { $in: ['active', 'paused'] } },
+      { $set: { status: 'cancelled', nextRunAt: null, updatedBy: req.userId } },
+      { new: true },
+    );
+    if (!schedule) {
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        'Only an active or paused schedule can be cancelled',
+      );
+    }
+    recordAudit({
+      req,
+      action: AUDIT_ACTIONS.PUSH_SCHEDULE_CANCELLED,
+      resourceType: 'push_schedule',
+      resourceId: schedule._id,
+    });
+    return sendResponse(res, HTTP_STATUS.OK, 'Schedule cancelled', {
+      schedule: await scheduleResponse(schedule._id),
+    });
   } catch (error) {
     next(error);
   }
