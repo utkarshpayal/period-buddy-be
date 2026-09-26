@@ -1,5 +1,6 @@
 import logger from './logger.js';
 import { generateToken } from './jwt.js';
+import { checkinDateKey, describePeriodTiming, weekdayOf } from './checkinCall.js';
 
 // "Samvaad" (the informal name used for this feature elsewhere in this
 // codebase) is Sarvam's OWN outbound-calling product — Instant Outbound,
@@ -24,12 +25,13 @@ const SARVAM_AGENT_PHONE_NUMBER = process.env.SARVAM_AGENT_PHONE_NUMBER;
 // links already use (see newsletter unsubscribe links).
 const API_BASE_URL = process.env.API_BASE_URL;
 
-// How long the per-call auth token stays valid — comfortably longer than a
-// typical check-in call, short enough that a leaked token is low-risk. Only
-// used if the agent is configured with a tool that calls back into our API
-// mid-call (see agent_variables.user_auth_token below) — the primary data
-// path is the webhook + agent_variables extraction, not this token.
-const CALL_TOKEN_TTL = process.env.SAMVAAD_CALL_TOKEN_TTL || '30m';
+// How long the per-call auth token stays valid. The agent's in-call
+// log_cycle_entry tool uses it to save the check-in through /api/cycle/log
+// (see agent_variables.user_auth_token below), so it has to outlive the
+// call itself (15 min max) plus any time Sarvam spends queueing or retrying
+// a no-answer attempt, while staying short enough that a leaked token is
+// low-risk. The webhook is the backup save path if it does expire.
+const CALL_TOKEN_TTL = process.env.SAMVAAD_CALL_TOKEN_TTL || '2h';
 
 // The webhook correlation token (see webhook_config.metadata below) is
 // intentionally longer-lived than CALL_TOKEN_TTL — that one bounds a token
@@ -124,8 +126,8 @@ export const issueCallToken = (userId) => generateToken({ userId }, { expiresIn:
  * see WEBHOOK_TOKEN_TTL above for why this is a separate, longer-lived
  * token from issueCallToken rather than reusing it.
  */
-export const issueWebhookToken = (userId) =>
-  generateToken({ userId }, { expiresIn: WEBHOOK_TOKEN_TTL });
+export const issueWebhookToken = (userId, dateKey) =>
+  generateToken({ userId, dateKey }, { expiresIn: WEBHOOK_TOKEN_TTL });
 
 /**
  * Triggers a single outbound cycle check-in call for one user via Sarvam's
@@ -133,10 +135,17 @@ export const issueWebhookToken = (userId) =>
  *
  * @param {object} user - plain object with the fields the call needs:
  *   { id, phone, name, gender, expectedPeriodDate, lastCycleSummary }
+ *
+ * The call's date is fixed here, once, in IST (checkinDateKey). The agent
+ * logs against `call_date` and the webhook against the `dateKey` claim in
+ * its callToken, so a call that crosses midnight, or a webhook that
+ * arrives late, still lands on the day the call was placed. Neither path
+ * lets the voice session pick the date.
  * @returns {Promise<{ attempt_id: string }>}
  */
 export const startCheckinCall = async (user) => {
   const userPhoneNumber = toE164(user.phone);
+  const callDate = checkinDateKey();
   const payload = {
     app_config: {
       app_id: SARVAM_APP_ID,
@@ -146,9 +155,14 @@ export const startCheckinCall = async (user) => {
         agent_phone_number: SARVAM_AGENT_PHONE_NUMBER,
       },
       agent_variables: {
-        user_name: user.name,
-        expected_period_date: user.expectedPeriodDate,
+        // Always sent, even blank: an omitted variable falls back to the agent's
+        // own default, and a stale test default would greet the wrong name.
+        user_name: user.name || '',
+        expected_period_date: user.expectedPeriodDate || '',
+        period_timing: describePeriodTiming(user.expectedPeriodDate, callDate),
         last_cycle_summary: user.lastCycleSummary || '',
+        call_date: callDate,
+        call_weekday: weekdayOf(callDate),
         gender: user.gender || 'female',
         user_auth_token: issueCallToken(user.id),
       },
@@ -167,7 +181,7 @@ export const startCheckinCall = async (user) => {
       // same signed-JWT pattern as issueCallToken but with its own longer
       // TTL — see WEBHOOK_TOKEN_TTL) is what checkinCallWebhook actually
       // verifies against.
-      metadata: { userId: String(user.id), callToken: issueWebhookToken(user.id) },
+      metadata: { userId: String(user.id), callToken: issueWebhookToken(user.id, callDate) },
     },
   };
 

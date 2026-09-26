@@ -5,11 +5,12 @@ import { createChatCompletion, isAiConfigured } from '../utils/sarvamClient.js';
 import { isSamvaadConfigured, startCheckinCall } from '../utils/samvaadClient.js';
 import { verifyToken } from '../utils/jwt.js';
 import { computeCyclePredictions } from '../utils/cycle.js';
-import { pickDefined } from '../utils/apiHelpers.js';
+import { pickDefined, validateDateKey } from '../utils/apiHelpers.js';
 import CycleSettings from '../models/CycleSettings.js';
 import CycleLog from '../models/CycleLog.js';
 import User from '../models/User.js';
 import { upsertCycleLog } from './cycleController.js';
+import { buildCheckinBackfill, checkinDateKey } from '../utils/checkinCall.js';
 
 // Actions the voice agent is currently allowed to perform. Kept to a single
 // action for now (per the initial "log today's entry" use case) so the
@@ -351,9 +352,12 @@ export const saveCheckinCallSchedule = async (req, res, next) => {
  * JWT minted per-call by samvaadClient.js's issueWebhookToken) is verified
  * instead, and userId is taken only from its decoded claim.
  *
- * If the call collected any cycle data (`final_agent_variables`), saves it
- * through the same `upsertCycleLog` the REST endpoint and the in-app voice
- * agent use, so all three entry points stay consistent.
+ * The agent's in-call `log_cycle_entry` tool is the main save path. This
+ * webhook is the backup: any cycle field in `final_agent_variables` that
+ * today's log is still missing (tool never ran, failed, or its token had
+ * expired) is saved through the same `upsertCycleLog` the REST endpoint and
+ * the in-app voice agent use. Fields already on the log are never
+ * overwritten (see utils/checkinCall.js#buildCheckinBackfill).
  */
 export const checkinCallWebhook = async (req, res) => {
   try {
@@ -366,9 +370,11 @@ export const checkinCallWebhook = async (req, res) => {
       webhook_config: webhookConfig,
     } = req.body || {};
     let userId;
+    let callDate;
     try {
       const decoded = verifyToken(webhookConfig?.metadata?.callToken);
       userId = decoded?.userId;
+      callDate = decoded?.dateKey;
     } catch (error) {
       logger.warn('checkin_call_webhook_token_invalid', {
         action: 'checkin_call_webhook_token_invalid',
@@ -389,25 +395,39 @@ export const checkinCallWebhook = async (req, res) => {
     });
 
     if (userId && finalVars && typeof finalVars === 'object') {
-      const payload = Object.fromEntries(
-        Object.entries(finalVars).filter(
-          // Exclude 'dateKey' explicitly, even though it's in CYCLE_LOG_FIELDS
-          // for the /converse action-confirm path above — a webhook must never
-          // let the voice session's own variables pick which day it writes to
-          // (a hallucinated/misheard date from STT would silently overwrite an
-          // unrelated day's log); the day this call happened is always
-          // `todayDateKey()` below, never taken from `finalVars`.
-          ([key]) => CYCLE_LOG_FIELDS.includes(key) && key !== 'dateKey',
-        ),
-      );
-      // Only bother saving if the agent actually extracted something beyond
-      // the context (user_name/expected_period_date/...) we seeded it with.
-      if (Object.keys(payload).length > 0) {
-        try {
-          await upsertCycleLog(userId, { dateKey: todayDateKey(), ...payload });
-        } catch (error) {
-          logger.error('checkin_call_log_save_failed', { userId, attemptId, error: error.message });
+      // The day comes from the signed token (fixed when the call was placed),
+      // never from the voice session: a misheard date from STT must not
+      // overwrite an unrelated day's log. Tokens minted before the claim
+      // existed fall back to today in IST.
+      const dateKey = validateDateKey(callDate) ? callDate : checkinDateKey();
+      try {
+        const existing = await CycleLog.findOne({ userId, dateKey }).lean();
+        const backfill = buildCheckinBackfill(finalVars, existing);
+        const fields = Object.keys(backfill);
+        if (fields.length > 0) {
+          await upsertCycleLog(userId, {
+            dateKey,
+            ...backfill,
+            timezoneOffsetMinutes: -330,
+          });
         }
+        logger.info('checkin_call_log_backfill', {
+          action: 'checkin_call_log_backfill',
+          userId,
+          attemptId,
+          dateKey,
+          logExisted: Boolean(existing),
+          backfilledFields: fields,
+          agentLogStatus: finalVars.cycle_log_status,
+          disposition: finalVars.call_disposition,
+        });
+      } catch (error) {
+        logger.error('checkin_call_log_save_failed', {
+          action: 'checkin_call_log_save_failed',
+          userId,
+          attemptId,
+          error: error.message,
+        });
       }
     }
   } catch (error) {
