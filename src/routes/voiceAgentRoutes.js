@@ -31,6 +31,14 @@ router.post('/checkin-call', authenticate, voiceAgentController.triggerCheckinCa
 router.get('/checkin-call/schedule', authenticate, voiceAgentController.getCheckinCallSchedule);
 
 /**
+ * @route   GET /api/voice-agent/checkin-call/history
+ * @desc    The logged-in user's recent check-in calls (outcome, duration,
+ *          summary), newest first
+ * @access  Private
+ */
+router.get('/checkin-call/history', authenticate, voiceAgentController.getCheckinCallHistory);
+
+/**
  * @route   PUT /api/voice-agent/checkin-call/schedule
  * @desc    Save the logged-in user's recurring check-in call preference —
  *          fired automatically by utils/checkinCallScheduler.js

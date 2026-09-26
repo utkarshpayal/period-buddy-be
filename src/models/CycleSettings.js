@@ -32,22 +32,26 @@ const cycleSettingsSchema = new mongoose.Schema(
 
     // Recurring "Buddy" cycle check-in phone call (see
     // utils/checkinCallScheduler.js) — distinct from remindersEnabled above,
-    // which is a push-notification reminder, not an outbound call. Fires
-    // every cycle on the day computed as (predicted period start date +
-    // checkinCallDayOffset), at checkinCallTime local time — recurs
-    // naturally each cycle since it's re-derived from the live prediction,
-    // no separate "next occurrence" bookkeeping needed.
+    // which is a push-notification reminder, not an outbound call. Days are
+    // re-derived from the live prediction every tick, so it recurs each
+    // cycle with no "next occurrence" bookkeeping. Each attempt, retries
+    // included, is a CheckinCall document.
     checkinCallEnabled: { type: Boolean, default: false },
-    // Days relative to the predicted period start: 0 = on period day,
-    // negative = N days before, positive = N days after.
+    // 'period_daily' = one answered call on each day of the period
+    // (periodLength days). 'once' = one call per cycle, on period start +
+    // checkinCallDayOffset. Existing schedules predate the field, so the
+    // default stays 'once'.
+    checkinCallMode: { type: String, enum: ['once', 'period_daily'], default: 'once' },
+    // 'once' mode only. Days relative to the period start: 0 = on period
+    // day, negative = N days before, positive = N days after.
     checkinCallDayOffset: { type: Number, default: 0, min: -10, max: 10 },
     // Local time of day, 'HH:mm' (24h) — paired with
     // checkinCallTimezoneOffsetMinutes to resolve to the user's actual local
     // moment (same tzOffset convention as cycleController.js's upsertCycleLog).
     checkinCallTime: { type: String, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
     checkinCallTimezoneOffsetMinutes: { type: Number },
-    // Guards against firing twice in the same local day if the cron tick
-    // overlaps a slow call or the server restarts mid-day.
+    // Legacy once-a-day guard from before CheckinCall existed. No longer
+    // read or written.
     checkinCallLastFiredDateKey: { type: String },
 
     // Tracking goals
