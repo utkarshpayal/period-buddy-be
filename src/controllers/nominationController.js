@@ -50,7 +50,11 @@ export const nominateBuddy = async (req, res, next) => {
     }
 
     // Find if nominee is registered
-    const nomineeUser = await User.findOne({ email: nomineeEmail });
+    const nomineeUser = await User.findOne({
+      email: nomineeEmail,
+      isActive: true,
+      deletedAt: null,
+    });
     if (nomineeUser && String(nomineeUser._id) === String(req.userId)) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'You cannot nominate yourself');
     }

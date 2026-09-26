@@ -9,6 +9,7 @@ import { escapeRegex, isValidObjectId } from '../utils/apiHelpers.js';
 import { scoreBuddyCompatibility } from '../utils/buddyMatching.js';
 import { broadcastToRoom } from '../config/websocket.js';
 import logger from '../utils/logger.js';
+import { userRoleEnum } from '../enums/enums.js';
 
 /**
  * Buddy pairing — one canonical BuddyMatch document per pairing (see the model).
@@ -155,6 +156,12 @@ const projectMessage = (msg, requesterId) => ({
   sentAt: msg.sentAt,
 });
 
+const BUDDY_ELIGIBLE_FILTER = {
+  isActive: true,
+  deletedAt: null,
+  role: { $in: [userRoleEnum.USER, userRoleEnum.PARTNER] },
+};
+
 // How many raw candidates to pull before scoring. Bounded so this endpoint is
 // O(pool) — never a function of the total number of pairings in the system.
 const CANDIDATE_POOL = 60;
@@ -166,9 +173,10 @@ export const getBuddyMatches = async (req, res, next) => {
     const viewerSettings = await CycleSettings.findOne({ userId: req.userId });
 
     // Pull a bounded pool of active users (indexed on isActive), excluding self.
-    // Not filtered by `role` — a 'partner'-role account (a viewer of someone
-    // else's cycle) can still track their own cycle and is a valid buddy.
-    const pool = await User.find({ _id: { $ne: req.userId }, isActive: true })
+    // App accounts only: a 'partner'-role account (a viewer of someone else's
+    // cycle) can still track their own cycle and is a valid buddy, but
+    // clinicians and workspace staff must never be offered as Period Buddies.
+    const pool = await User.find({ _id: { $ne: req.userId }, ...BUDDY_ELIGIBLE_FILTER })
       .select('firstName lastName lastLogin')
       .limit(CANDIDATE_POOL);
     const poolIds = pool.map((u) => u._id);
@@ -259,7 +267,7 @@ export const nominateBuddy = async (req, res, next) => {
       );
     }
 
-    const candidate = await User.findOne({ _id: matchId, isActive: true }).select(
+    const candidate = await User.findOne({ _id: matchId, ...BUDDY_ELIGIBLE_FILTER }).select(
       'firstName lastName lastLogin',
     );
     if (!candidate) {

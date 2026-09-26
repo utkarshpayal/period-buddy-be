@@ -7,6 +7,7 @@ import { isSamvaadConfigured } from './samvaadClient.js';
 import { sendResponse, sendError } from './sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from './logger.js';
+import { activeUserIdSet } from './accountStatus.js';
 
 const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -32,10 +33,13 @@ const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
 export const runCheckinCallSchedulerTick = async () => {
   if (!isSamvaadConfigured()) return { candidates: 0, fired: 0 }; // nothing to do until configured
 
-  const candidates = await CycleSettings.find({
+  const allCandidates = await CycleSettings.find({
     checkinCallEnabled: true,
     checkinCallTime: { $regex: TIME_REGEX },
   });
+  // Never phone a suspended or deleted account.
+  const liveIds = await activeUserIdSet(allCandidates.map((settings) => settings.userId));
+  const candidates = allCandidates.filter((settings) => liveIds.has(String(settings.userId)));
 
   let fired = 0;
 

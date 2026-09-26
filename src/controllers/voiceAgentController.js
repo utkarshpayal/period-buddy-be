@@ -185,7 +185,7 @@ export const runCheckinCallForUser = async (userId) => {
   }
 
   const user = await User.findById(userId);
-  if (!user) {
+  if (!user || !user.isActive || user.deletedAt) {
     throw Object.assign(new Error('User not found'), { status: HTTP_STATUS.NOT_FOUND });
   }
   if (!user.phone) {

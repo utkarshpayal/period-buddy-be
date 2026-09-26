@@ -18,6 +18,13 @@ import {
   sendPaginatedList,
 } from '../utils/apiHelpers.js';
 import { generateCareSuggestions } from '../utils/careSuggestionsAi.js';
+import { ACTIVE_ACCOUNT_FILTER } from '../utils/accountStatus.js';
+
+/** Whether the other side of a pairing is a live account. Deleting an
+ * account severs the pairing (utils/accountLifecycle.js), but a suspended
+ * one keeps it — so readers must refuse inactive counterparts themselves. */
+const isLiveAccount = async (userId) =>
+  Boolean(userId) && Boolean(await User.exists({ _id: userId, ...ACTIVE_ACCOUNT_FILTER }));
 
 const CARE_SUGGESTIONS_CACHE_MS = 24 * 60 * 60 * 1000;
 
@@ -89,8 +96,11 @@ export const connectPartner = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Invalid or expired invite code');
     }
 
-    const ownerUser = await User.findById(partnerProfile.userId);
-    if (!ownerUser || ownerUser.role === 'partner') {
+    const ownerUser = await User.findOne({ _id: partnerProfile.userId, ...ACTIVE_ACCOUNT_FILTER });
+    if (!ownerUser) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'Invalid or expired invite code');
+    }
+    if (ownerUser.role === 'partner') {
       return sendError(
         res,
         HTTP_STATUS.BAD_REQUEST,
@@ -242,7 +252,10 @@ export const getPartnerSharedData = async (req, res, next) => {
     }
 
     const partnerProfile = await Partner.findOne({ userId: myProfile.partnerId });
-    const perms = partnerProfile?.permissions || {};
+    if (!partnerProfile || !(await isLiveAccount(myProfile.partnerId))) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'No partner connected');
+    }
+    const perms = partnerProfile.permissions || {};
 
     const data = {
       permissions: perms,
@@ -410,7 +423,7 @@ export const sendMessage = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Message must be 1000 characters or fewer');
 
     const myProfile = await Partner.findOne({ userId: req.userId });
-    if (!myProfile?.isConnected) {
+    if (!myProfile?.isConnected || !(await isLiveAccount(myProfile.partnerId))) {
       return sendError(res, HTTP_STATUS.FORBIDDEN, 'No connected partner');
     }
 
@@ -568,7 +581,7 @@ export const markNotificationAsRead = async (req, res, next) => {
 export const createPartnerNotification = async (ownerId, type, title, body) => {
   try {
     const connection = await Partner.findOne({ userId: ownerId, isConnected: true });
-    if (connection && connection.partnerId) {
+    if (connection && connection.partnerId && (await isLiveAccount(connection.partnerId))) {
       const partnerId = connection.partnerId;
 
       const notification = await Notification.create({

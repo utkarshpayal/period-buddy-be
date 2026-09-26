@@ -6,6 +6,7 @@ import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
+import { activeUserIdSet } from '../utils/accountStatus.js';
 import { escapeRegex, isValidObjectId } from '../utils/apiHelpers.js';
 import { broadcastToRoom } from '../config/websocket.js';
 import {
@@ -14,6 +15,23 @@ import {
   isPaymentConfigured,
   cashfreeMode,
 } from '../utils/cashfreeClient.js';
+
+/**
+ * Doctors are only bookable while their login account is live — a suspended
+ * or deleted clinician can't run the session. Seeded demo doctors have no
+ * linked account and stay listed.
+ */
+const onlyBookableDoctors = async (doctors) => {
+  const liveIds = await activeUserIdSet(doctors.map((doctor) => doctor.userId));
+  return doctors.filter((doctor) => !doctor.userId || liveIds.has(String(doctor.userId)));
+};
+
+const findBookableDoctor = async (filter) => {
+  const doctor = await Doctor.findOne(filter);
+  if (!doctor) return null;
+  const [bookable] = await onlyBookableDoctors([doctor]);
+  return bookable || null;
+};
 
 const doctorGreeting = (doctor) =>
   `Hello! I am ${doctor.name}. Your confidential dashboard log has been successfully shared. How can I guide your wellness milestones today?`;
@@ -31,7 +49,7 @@ export const getDoctors = async (req, res, next) => {
       ];
     }
 
-    const doctors = await Doctor.find(filter).sort({ rating: -1 });
+    const doctors = await onlyBookableDoctors(await Doctor.find(filter).sort({ rating: -1 }));
 
     logger.info('doctors_listed', {
       action: 'doctors_listed',
@@ -56,7 +74,7 @@ export const getDoctorAvailability = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid doctor id');
     }
 
-    const doctor = await Doctor.findById(req.params.id);
+    const doctor = await findBookableDoctor({ _id: req.params.id });
     if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor not found');
 
     const slots = await DoctorAvailability.find({
@@ -110,7 +128,7 @@ export const createConsultationOrder = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Valid doctorId is required');
     }
 
-    const doctor = await Doctor.findOne({ _id: doctorId, isAvailable: true });
+    const doctor = await findBookableDoctor({ _id: doctorId, isAvailable: true });
     if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor not found');
 
     // Check if already booked (not cancelled)

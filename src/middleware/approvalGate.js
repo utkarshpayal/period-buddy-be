@@ -1,9 +1,25 @@
 import ChangeRequest from '../models/ChangeRequest.js';
 import User from '../models/User.js';
-import { hasPermission } from '../config/permissions.js';
+import { hasPermission, isStaffRole } from '../config/permissions.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { sendResponse } from '../utils/sendResponse.js';
 import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
+
+/**
+ * Why a stored request can no longer be replayed as its requester, or null.
+ * Approval replays the change *as them*, so it must still be someone who
+ * holds the access they had when they asked — never a removed, suspended or
+ * re-roled account, and never silently the reviewer instead.
+ */
+export const requesterIneligibilityReason = (requester, changeRequest) => {
+  if (!requester) return 'The requester no longer exists';
+  if (!requester.isActive || requester.deletedAt) return 'The requester no longer has access';
+  if (!isStaffRole(requester.role)) return 'The requester is no longer on the workspace team';
+  if (changeRequest.requesterRole && requester.role !== changeRequest.requesterRole) {
+    return "The requester's role has changed since this was requested";
+  }
+  return null;
+};
 
 /** key -> controller handler, so a stored ChangeRequest can be replayed. */
 const handlers = new Map();
@@ -136,7 +152,13 @@ export const replayChangeRequest = async (changeRequest, reviewerReq) => {
     };
   }
 
-  const requester = (await User.findById(changeRequest.requestedBy)) || reviewerReq.user;
+  const requester = await User.findById(changeRequest.requestedBy);
+  const ineligible = requesterIneligibilityReason(requester, changeRequest);
+  if (ineligible) {
+    // `cancel` tells the approver endpoint to close the request rather than
+    // put it back in the queue — it can never succeed.
+    return { ok: false, cancel: true, statusCode: 409, body: { message: ineligible } };
+  }
   const fakeReq = {
     params: { ...(changeRequest.params || {}) },
     query: { ...(changeRequest.query || {}) },

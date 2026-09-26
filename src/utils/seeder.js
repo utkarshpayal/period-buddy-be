@@ -10,6 +10,7 @@ import SubscriptionSettings from '../models/SubscriptionSettings.js';
 import { governmentBenefitData } from './schemeSeedData.js';
 import { subscriptionFeatureData } from './subscriptionSeedData.js';
 import logger from './logger.js';
+import { backfillLegacyDeletedAccounts } from './accountLifecycle.js';
 
 const qaData = [
   {
@@ -556,6 +557,22 @@ export const seedDatabase = async () => {
         action: 'seeder_subscription_settings_seeded',
       });
     }
+
+    // One-time data repairs; both are no-ops once applied.
+    // Blogs whose status/isPublished drifted apart before Blog.js kept them in
+    // sync — isPublished is what the Admin Workspace set, so it wins. Raw
+    // collection writes: the Blog update hooks would otherwise rewrite them.
+    await Blog.collection.updateMany(
+      { isPublished: true, status: { $ne: 'published' } },
+      { $set: { status: 'published' } },
+    );
+    await Blog.collection.updateMany(
+      { isPublished: { $ne: true }, status: 'published' },
+      { $set: { status: 'draft' } },
+    );
+    // Accounts deleted in-app before accountLifecycle existed: set deletedAt
+    // and tear down what they left behind (visible posts, partner links…).
+    await backfillLegacyDeletedAccounts();
 
     logger.info('seeder_complete', { action: 'seeder_complete' });
   } catch (error) {

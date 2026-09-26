@@ -5,6 +5,8 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
+  ListObjectsV2Command,
   HeadBucketCommand,
   CreateBucketCommand,
   PutPublicAccessBlockCommand,
@@ -200,6 +202,49 @@ export const deleteFromS3 = async (key) => {
   } catch (error) {
     logger.error('s3_delete_failed', { action: 's3_delete_failed', key, error: error.message });
   }
+};
+
+/**
+ * Deletes every object under `prefix` (e.g. `medical-documents/<userId>/`).
+ * Used by the account purge, so it must never be handed a short or
+ * user-supplied prefix — callers build it from a server-side id. Never
+ * throws: a storage failure is logged and must not abort the purge.
+ */
+export const deleteS3Prefix = async (prefix) => {
+  const client = getClient();
+  if (!client || !prefix || !prefix.endsWith('/') || prefix.split('/').length < 3) return 0;
+
+  let deleted = 0;
+  try {
+    let ContinuationToken;
+    do {
+      const page = await client.send(
+        new ListObjectsV2Command({
+          Bucket: process.env.AWS_S3_BUCKET,
+          Prefix: prefix,
+          ContinuationToken,
+        }),
+      );
+      const objects = (page.Contents || []).map((item) => ({ Key: item.Key }));
+      if (objects.length > 0) {
+        await client.send(
+          new DeleteObjectsCommand({
+            Bucket: process.env.AWS_S3_BUCKET,
+            Delete: { Objects: objects, Quiet: true },
+          }),
+        );
+        deleted += objects.length;
+      }
+      ContinuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (ContinuationToken);
+  } catch (error) {
+    logger.error('s3_prefix_delete_failed', {
+      action: 's3_prefix_delete_failed',
+      prefix,
+      error: error.message,
+    });
+  }
+  return deleted;
 };
 
 export const isS3Configured = isConfigured;

@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { withApproval, getApprovalHandler } from '../../middleware/approvalGate.js';
+import {
+  withApproval,
+  getApprovalHandler,
+  requesterIneligibilityReason,
+} from '../../middleware/approvalGate.js';
 
 const run = (middleware, role) =>
   new Promise((resolve, reject) => {
@@ -52,4 +56,16 @@ test('handlers are registered for replay and keys are unique', () => {
       handler,
     ),
   );
+});
+
+test('a request is only replayable while its requester keeps the same workspace access', () => {
+  const request = { requesterRole: 'content_admin' };
+  const staff = { isActive: true, role: 'content_admin' };
+  assert.equal(requesterIneligibilityReason(staff, request), null);
+  assert.ok(requesterIneligibilityReason(null, request));
+  assert.ok(requesterIneligibilityReason({ ...staff, isActive: false }, request));
+  assert.ok(requesterIneligibilityReason({ ...staff, deletedAt: new Date() }, request));
+  // removeStaff demotes to a plain app user
+  assert.ok(requesterIneligibilityReason({ ...staff, role: 'user' }, request));
+  assert.ok(requesterIneligibilityReason({ ...staff, role: 'content_super_admin' }, request));
 });

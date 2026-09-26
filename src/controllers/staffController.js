@@ -15,6 +15,7 @@ import {
   getAssignableRoles,
   isStaffRole,
 } from '../config/permissions.js';
+import { cancelPendingChangeRequests, suspendAccount } from '../utils/accountLifecycle.js';
 
 const STAFF_FIELDS =
   'firstName lastName email role isActive mustSetPassword lastLogin invitedBy createdAt updatedAt';
@@ -212,6 +213,10 @@ export const resendStaffInvite = async (req, res, next) => {
     if (!user.mustSetPassword) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'This person has already accepted the invite');
     }
+    // The invite link would otherwise be a way back in for a suspended account.
+    if (!user.isActive) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Restore access before resending the invite');
+    }
 
     const { rawToken, inviteTokenHash, inviteTokenExpiresAt } = createInviteToken();
     user.inviteTokenHash = inviteTokenHash;
@@ -287,8 +292,14 @@ export const setStaffStatus = async (req, res, next) => {
     }
 
     user.isActive = isActive;
+    if (!isActive) {
+      // An unused invite link must not outlive the suspension.
+      user.inviteTokenHash = undefined;
+      user.inviteTokenExpiresAt = undefined;
+    }
     user.$locals.skipPasswordHash = true;
     await user.save();
+    if (!isActive) await suspendAccount(user);
 
     await recordAudit({
       req,
@@ -330,8 +341,11 @@ export const removeStaff = async (req, res, next) => {
     user.isActive = false;
     user.inviteTokenHash = undefined;
     user.inviteTokenExpiresAt = undefined;
+    user.staffRemovedAt = new Date();
     user.$locals.skipPasswordHash = true;
     await user.save();
+    await cancelPendingChangeRequests(user._id, 'Requester was removed from the workspace');
+    await suspendAccount(user);
 
     await recordAudit({
       req,

@@ -6,6 +6,7 @@ import { dateToDateKey, timingSafeEqualStrings, todayDateKey } from './apiHelper
 import { sendResponse, sendError } from './sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from './logger.js';
+import { activeUserIdSet } from './accountStatus.js';
 
 // A few rotating variants so the daily nudge doesn't read as the exact same
 // canned line every day.
@@ -54,9 +55,12 @@ const DAILY_NUDGE_MESSAGES = [
  * chosen time-of-day, which does track a real per-user timezone offset).
  */
 export const runDailyNotificationTick = async () => {
-  const candidates = await CycleSettings.find({
+  const allCandidates = await CycleSettings.find({
     $or: [{ remindersEnabled: true }, { ovulationReminder: true }, { fertilityReminder: true }],
   });
+  // Suspended/deleted accounts get no reminders (or inbox rows).
+  const liveIds = await activeUserIdSet(allCandidates.map((settings) => settings.userId));
+  const candidates = allCandidates.filter((settings) => liveIds.has(String(settings.userId)));
 
   let periodRemindersSent = 0;
   let ovulationRemindersSent = 0;

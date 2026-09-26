@@ -61,6 +61,53 @@ blogSchema.index({ slug: 1 });
 blogSchema.index({ tags: 1 });
 blogSchema.index({ authorId: 1 });
 
+/*
+ * `isPublished` (what the Admin Workspace's contentController toggles) and
+ * `status` (what the public blogController reads) used to drift apart, so a
+ * blog "unpublished" in the workspace stayed readable by slug and in
+ * bookmarks, and workspace-created blogs 404'd by slug. Keep them in lockstep
+ * whichever one a writer sets; `isPublished` wins if both disagree on create.
+ */
+const statusForPublished = (isPublished, currentStatus) => {
+  if (isPublished) return blogStatusEnum.PUBLISHED;
+  return currentStatus === blogStatusEnum.ARCHIVED ? blogStatusEnum.ARCHIVED : blogStatusEnum.DRAFT;
+};
+
+blogSchema.pre('save', function (next) {
+  const publishedChanged = this.isNew || this.isModified('isPublished');
+  const statusChanged = this.isModified('status');
+  if (this.isNew) {
+    const published = Boolean(this.isPublished) || this.status === blogStatusEnum.PUBLISHED;
+    this.isPublished = published;
+    this.status = statusForPublished(published, this.status);
+  } else if (publishedChanged && !statusChanged) {
+    this.status = statusForPublished(this.isPublished, this.status);
+  } else if (statusChanged && !publishedChanged) {
+    this.isPublished = this.status === blogStatusEnum.PUBLISHED;
+  }
+  next();
+});
+
+blogSchema.pre(['findOneAndUpdate', 'updateOne', 'updateMany'], function (next) {
+  const update = this.getUpdate();
+  if (!update || Array.isArray(update)) return next();
+  // Fields can sit at the top level or under $set (timestamps adds a $set
+  // for updatedAt even when the caller wrote plain fields).
+  const has = (field) =>
+    Object.prototype.hasOwnProperty.call(update, field) ||
+    Object.prototype.hasOwnProperty.call(update.$set || {}, field);
+  const read = (field) => (field in update ? update[field] : update.$set?.[field]);
+  if (has('isPublished') && !has('status')) {
+    update.$set = {
+      ...update.$set,
+      status: read('isPublished') ? blogStatusEnum.PUBLISHED : blogStatusEnum.DRAFT,
+    };
+  } else if (has('status') && !has('isPublished')) {
+    update.$set = { ...update.$set, isPublished: read('status') === blogStatusEnum.PUBLISHED };
+  }
+  next();
+});
+
 blogSchema.virtual('viewsCount').get(function () {
   return this.viewCount;
 });
