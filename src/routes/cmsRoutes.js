@@ -1,6 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import * as appConfigController from '../controllers/appConfigController.js';
+import * as genzController from '../controllers/genzController.js';
 import { authenticate } from '../middleware/authMiddleware.js';
 import { requirePermission, requireStaff } from '../middleware/rbac.js';
 import { PERMISSIONS as P } from '../config/permissions.js';
@@ -104,5 +105,36 @@ router.post(
   imageUpload.single('file'),
   appConfigController.uploadCmsImage,
 );
+
+/**
+ * @route   GET /api/cms/cycle-sync-tips
+ * @desc    Phase Era cycle-syncing tips (the built-in defaults while none are saved, flagged usingDefaults), plus phases, categories and era definitions
+ * @access  Private (cms.read)
+ */
+router.get('/cycle-sync-tips', requirePermission(P.CMS_READ), genzController.listTips);
+/**
+ * @route   POST /api/cms/cycle-sync-tips/seed
+ * @desc    Copy the built-in default tips into the database so they can be edited (409 once tips are saved)
+ * @access  Private (cms.manage)
+ */
+router.post('/cycle-sync-tips/seed', requirePermission(P.CMS_MANAGE), genzController.seedTips);
+/**
+ * @route   POST /api/cms/cycle-sync-tips
+ * @desc    Add a tip. Body: { phase, category: move|fuel|selfCare|vibe, title, body?, emoji?, active?, order? }. The first one also copies the defaults in
+ * @access  Private (cms.manage)
+ */
+router.post('/cycle-sync-tips', requirePermission(P.CMS_MANAGE), genzController.createTip);
+/**
+ * @route   PUT /api/cms/cycle-sync-tips/:id
+ * @desc    Replace a tip (same body as create)
+ * @access  Private (cms.manage)
+ */
+router.put('/cycle-sync-tips/:id', requirePermission(P.CMS_MANAGE), genzController.updateTip);
+/**
+ * @route   DELETE /api/cms/cycle-sync-tips/:id
+ * @desc    Delete a tip
+ * @access  Private (cms.manage)
+ */
+router.delete('/cycle-sync-tips/:id', requirePermission(P.CMS_MANAGE), genzController.deleteTip);
 
 export default router;

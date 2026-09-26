@@ -7,8 +7,8 @@
  *   still be purged later through the public "delete my data" flow; every
  *   relationship other people can see is torn down now: posts are hidden,
  *   comments/likes/votes on other people's content are removed, partner and
- *   buddy links are ended (the other side is told), and no more pushes,
- *   reminders or check-in calls go out.
+ *   buddy links are ended (the other side is told), Bestie Circles are left
+ *   (with their vibes), and no more pushes, reminders or check-in calls go out.
  * - suspendAccount: admin suspension. Reversible, so it only cuts what would
  *   otherwise keep running against a locked account (sockets, buddy pairing,
  *   pending workspace approvals) — partner links and content are left alone
@@ -22,6 +22,7 @@
  * (e.g. the startup backfill for accounts deleted before this existed) is safe.
  */
 import mongoose from 'mongoose';
+import { leaveAllCircles } from './circleMembership.js';
 import User from '../models/User.js';
 import Partner from '../models/Partner.js';
 import PartnerMessage from '../models/PartnerMessage.js';
@@ -343,6 +344,7 @@ const teardownForRemoval = async (user, { reason, dropReports = false }) => {
   await silenceAccount(userId);
   await severPartnerLinks(userId);
   await endBuddyMatches(userId);
+  await leaveAllCircles(userId);
   await removeNominations(userId);
   await scrubCommunityFootprint(userId, { dropReports });
   await cancelPendingChangeRequests(userId, 'Requester account was deleted');
