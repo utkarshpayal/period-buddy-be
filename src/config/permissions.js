@@ -34,6 +34,9 @@ export const PERMISSIONS = {
   SCHEME_APPLICATIONS_REVIEW: 'scheme_applications.review',
   MARKETING_READ: 'marketing.read',
   APP_APPROVE: 'app.approve',
+  // App CMS (The-Nura-CMS): features, home layout, banners, theme
+  CMS_READ: 'cms.read',
+  CMS_MANAGE: 'cms.manage',
 
   // Clinical
   DOCTORS_READ: 'doctors.read',
@@ -102,6 +105,8 @@ export const STAFF_ROLES = {
       P.SCHEME_APPLICATIONS_REVIEW,
       P.MARKETING_READ,
       P.APP_APPROVE,
+      P.CMS_READ,
+      P.CMS_MANAGE,
       P.STAFF_MANAGE,
     ],
   },
@@ -119,6 +124,7 @@ export const STAFF_ROLES = {
       P.SCHEME_APPLICATIONS_READ,
       P.SCHEME_APPLICATIONS_REVIEW,
       P.MARKETING_READ,
+      P.CMS_READ,
     ],
   },
   [userRoleEnum.CLINICAL_ADMIN]: {

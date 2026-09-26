@@ -27,6 +27,7 @@ Each domain has its own router under `/api/<domain>`:
 - **Engagement:** habits, forest/rewards, reminders, push notifications, newsletter
 - **Subscriptions:** per-feature paywall, plans, coupons, Cashfree payments
 - **Admin Workspace:** staff roles/permissions, approval workflow, audit log, push broadcasts
+- **App CMS:** remote app layout (feature tiles, home sections, theme, promo banners) for the separate The-Nura-CMS portal
 
 Full endpoint reference: [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md).
 Interactive Swagger UI: `/api-docs` (off in production unless `SWAGGER_ENABLED=true`).

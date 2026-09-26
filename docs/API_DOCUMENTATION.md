@@ -1264,3 +1264,52 @@ Resuming continues from the next occurrence after now. Sends missed while paused
 #### DELETE `/api/admin/notifications/schedules/:id`
 
 Cancels the schedule for good (the record is kept). A send that has already started is not stopped. Cancel that broadcast instead.
+
+## App CMS (app layout, banners, theme, settings)
+
+Managed from the separate **The-Nura-CMS** portal. The app reads one public endpoint; the portal writes through `/api/cms/*`. What can be controlled, and the app's defaults, live in `src/constants/appCatalog.js` (mirrored in the app's `lib/appConfig.ts`). With nothing saved, the app looks exactly as it ships.
+
+### GET `/api/app-config` (public, `Cache-Control: no-cache` + ETag)
+
+Returns `{ version, features, customTiles, homeSections, theme, settings, banners }`.
+
+- **`features[]`** (built-in, one per catalog key): `{ key, enabled, placement, size, colorKey, order, title, description, badge, audience }`.
+  - `placement`: `care_hub` | `wellness_hub` | `explore_hub` | `home` | `profile`. The last two are the **Shortcuts** blocks on the Home and Profile screens, so a feature can be moved to any of these five places.
+  - `size`: `small` (grid tile) or `large` (full-width row).
+- **`customTiles[]`** (admin link tiles, sharing each placement's `order` with features): `{ id, title, description, icon, colorKey, placement, size, order, enabled, badge, action, audience }`.
+- **`action`**: `{ type, value, fallbackUrl }`, where `type` is:
+  - `route`: an in-app path.
+  - `url`: an https website, opened in the in-app browser.
+  - `app`: another app's link such as `whatsapp://…` or `youtube://…`, with an optional https `fallbackUrl` for when that app isn't installed. The `javascript:`, `data:`, `file:`, `vbscript:`, `blob:` and `about:` schemes are refused.
+- **`audience`**: `{ segment: all|signed_in|premium|free, platforms: [android|ios|web] (empty = all), minAppVersion, maxAppVersion }`. It's evaluated in the app.
+- **`homeSections[]`**: `{ key, visible, order }` with keys `statPills`, `weekStrip`, `promo_top`, `phaseHero`, `quickActions`, `shortcuts`, `promo_middle`, `insights`, `moreForYou`.
+- **`theme`**: overridden colours only, `{ light: {…}, dark: {…} }`. Only brand, surface and text tokens can be changed.
+- **`settings`**: `{ maintenance: { enabled, title, message }, update: { minVersion, latestVersion, title, message, androidUrl, iosUrl } }`.
+  - Maintenance blocks the app.
+  - Below `minVersion` the app is blocked until it's updated.
+  - Below `latestVersion` the app shows a dismissible prompt. Store builds only.
+- **`banners[]`**: live ones only, highest priority first. `placement` is `home_top` | `home_middle` | `popup` (shown once per device over Home) | a hub | `profile`. Each banner also carries `action` and `audience`.
+
+### Beacons (public)
+
+- `POST /api/app-config/banners/:id/click`: counts a tap.
+- `POST /api/app-config/banners/impressions`: body `{ ids: [...] }` (≤ 20). Counts a view. The app sends each id once per session.
+
+### CMS endpoints (staff; `cms.read` to view, `cms.manage` to change)
+
+`cms.read`: App Admin and up. `cms.manage`: App Super Admin and Super Admin. Every change is audited (`cms.*`) and bumps the global `version`.
+
+| Method | Path | Body / notes |
+|---|---|---|
+| GET | `/api/cms/config` | Editable state, `sectionVersions`, and a `catalog` (placements, sizes, colour keys, icons, actions, audiences, theme tokens with defaults, banner placements/layouts) |
+| PUT | `/api/cms/features` | `{ features: [...], customTiles: [...], version }` |
+| PUT | `/api/cms/home` | `{ homeSections: [{ key, visible, order }], version }` |
+| PUT | `/api/cms/theme` | `{ theme: { light, dark }, version }` |
+| PUT | `/api/cms/settings` | `{ settings: { maintenance, update }, version }` |
+| GET | `/api/cms/revisions?section=` | Publish history (last 50 per section) |
+| POST | `/api/cms/revisions/:id/restore` | Republish a past revision of its section (re-validated against today's catalog) |
+| GET | `/api/cms/banners` | All banners, with `status`, `clickCount` and `impressionCount` |
+| POST / PUT / DELETE | `/api/cms/banners[/:id]` | `{ title, subtitle?, ctaLabel?, imageUrl?, placement, layout, action, audience?, backgroundColor?, textColor?, priority?, active?, dismissible?, startAt?, endAt? }` |
+| POST | `/api/cms/upload` | multipart `file` (image, ≤ 5 MB) → `{ url, key }` under `cms/banners/` |
+
+**Locking:** each section has its own counter in `sectionVersions`. Send the counter for the section you loaded as `version`; a save on top of a newer save of the same section gets `409`. Saves to other sections, and banner changes, never conflict.

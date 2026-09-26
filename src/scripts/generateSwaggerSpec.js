@@ -294,6 +294,15 @@ const TAGS_METADATA = [
     name: 'Company Folders',
     description: 'Directory hierarchy for company documents and internal assets',
   },
+  {
+    name: 'App Config',
+    description:
+      'Public app layout the mobile app reads: feature tiles, home sections, theme and promo banners',
+  },
+  {
+    name: 'App CMS',
+    description: 'Admin API for The-Nura-CMS portal (cms.read / cms.manage)',
+  },
 ];
 
 function determineTag(r) {
@@ -336,6 +345,8 @@ function determineTag(r) {
   if (g === 'audit') return 'Audit Trail';
   if (g === 'companyAsset') return 'Company Assets';
   if (g === 'companyFolder') return 'Company Folders';
+  if (g === 'appConfig') return 'App Config';
+  if (g === 'cms') return 'App CMS';
   console.warn(`No tag mapping for route group "${g}" (${r.method} ${r.path}) — add one`);
   return 'System & Health';
 }

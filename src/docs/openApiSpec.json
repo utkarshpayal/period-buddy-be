@@ -163,6 +163,14 @@
     {
       "name": "Company Folders",
       "description": "Directory hierarchy for company documents and internal assets"
+    },
+    {
+      "name": "App Config",
+      "description": "Public app layout the mobile app reads: feature tiles, home sections, theme and promo banners"
+    },
+    {
+      "name": "App CMS",
+      "description": "Admin API for The-Nura-CMS portal (cms.read / cms.manage)"
     }
   ],
   "components": {
@@ -21576,6 +21584,1134 @@
             "application/json": {
               "schema": {
                 "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/app-config": {
+      "get": {
+        "tags": [
+          "App Config"
+        ],
+        "summary": "App layout managed from the App CMS: feature tiles and admin link tiles",
+        "description": "App layout managed from the App CMS: feature tiles and admin link tiles (hub, order, size, colour, text, badge, audience), home sections, theme colour overrides, app settings (maintenance mode, update prompts) and live promo banners. Sent with Cache-Control: no-cache (ETag revalidation)\n\n**Access:** Public",
+        "operationId": "get__api_app_config",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/app-config/banners/{id}/click": {
+      "post": {
+        "tags": [
+          "App Config"
+        ],
+        "summary": "Count a tap on a promo banner",
+        "description": "Count a tap on a promo banner (fire-and-forget beacon from the app)\n\n**Access:** Public",
+        "operationId": "post__api_app_config_banners__id_click",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/app-config/banners/impressions": {
+      "post": {
+        "tags": [
+          "App Config"
+        ],
+        "summary": "Count banner views.",
+        "description": "Count banner views. Body: { ids: [...] } (up to 20), sent once per banner per app session\n\n**Access:** Public",
+        "operationId": "post__api_app_config_banners_impressions",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cms/config": {
+      "get": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Editable app config",
+        "description": "Editable app config (features with their defaults, home sections, theme overrides) plus the catalog of placements, colours and default theme values\n\n**Access:** Private (cms.read)\n\n**Permission:** `cms.read` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "get__api_cms_config",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/cms/features": {
+      "put": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Save the full feature list and admin link tiles.",
+        "description": "Save the full feature list and admin link tiles. Body: { features: [{ key, enabled, placement, order, size, colorKey, title?, description?, badge?, audience? }], customTiles?: [{ id?, title, description?, icon, colorKey, placement, size, order, enabled, badge?, action: { type: route|url|app, value, fallbackUrl? }, audience? }], version? } — version (this section's) guards against overwriting a newer save (409)\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "put__api_cms_features",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cms/home": {
+      "put": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Save home screen section visibility and order.",
+        "description": "Save home screen section visibility and order. Body: { homeSections: [{ key, visible, order }], version? }\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "put__api_cms_home",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cms/theme": {
+      "put": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Save theme colour overrides.",
+        "description": "Save theme colour overrides. Body: { theme: { light: { token: color }, dark: { token: color } }, version? }; an empty value restores the app default\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "put__api_cms_theme",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cms/settings": {
+      "put": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Save app settings.",
+        "description": "Save app settings. Body: { settings: { maintenance: { enabled, title, message }, update: { minVersion, latestVersion, title, message, androidUrl, iosUrl } }, version? }\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "put__api_cms_settings",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cms/revisions": {
+      "get": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Publish history, newest first.",
+        "description": "Publish history, newest first. Query: section (features | homeSections | theme | settings)\n\n**Access:** Private (cms.read)\n\n**Permission:** `cms.read` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "get__api_cms_revisions",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/cms/revisions/{id}/restore": {
+      "post": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Republish a past revision of its section as the current state",
+        "description": "Republish a past revision of its section as the current state\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "post__api_cms_revisions__id_restore",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cms/banners": {
+      "get": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Every promo banner with its status",
+        "description": "Every promo banner with its status (live, scheduled, expired, inactive) and click count\n\n**Access:** Private (cms.read)\n\n**Permission:** `cms.read` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "get__api_cms_banners",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Create a promo banner.",
+        "description": "Create a promo banner. Body: { title, subtitle?, ctaLabel?, imageUrl?, placement, layout, action: { type: none|route|url, value }, backgroundColor?, textColor?, priority?, active?, dismissible?, startAt?, endAt? }\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "post__api_cms_banners",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cms/banners/{id}": {
+      "put": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Replace a banner's editable fields",
+        "description": "Replace a banner's editable fields (same body as create)\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "put__api_cms_banners__id",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Delete a banner",
+        "description": "Delete a banner\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "delete__api_cms_banners__id",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/cms/upload": {
+      "post": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Upload a banner image",
+        "description": "Upload a banner image (multipart field \"file\", images up to 5MB) to S3 under cms/banners/. Returns { url, key }\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "post__api_cms_upload",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "File to upload"
+                  },
+                  "folder": {
+                    "type": "string",
+                    "description": "Destination category/folder (optional)"
+                  },
+                  "title": {
+                    "type": "string",
+                    "description": "Asset title (optional)"
+                  }
+                }
               }
             }
           }
