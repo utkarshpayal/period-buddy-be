@@ -39,6 +39,7 @@ import Consultation from '../models/Consultation.js';
 import ConsultationMessage from '../models/ConsultationMessage.js';
 import ChangeRequest from '../models/ChangeRequest.js';
 import CycleLog from '../models/CycleLog.js';
+import CheckinCall from '../models/CheckinCall.js';
 import CycleSettings from '../models/CycleSettings.js';
 import Habit from '../models/Habit.js';
 import HabitCompletion from '../models/HabitCompletion.js';
@@ -430,6 +431,7 @@ export const purgeAccount = async (userId) => {
   await Promise.all([
     CycleLog.deleteMany({ userId }),
     CycleSettings.deleteMany({ userId }),
+    CheckinCall.deleteMany({ userId }),
     Habit.deleteMany({ userId }),
     HabitCompletion.deleteMany({ userId }),
     ForestLog.deleteMany({ userId }),

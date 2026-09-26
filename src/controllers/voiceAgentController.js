@@ -5,12 +5,30 @@ import { createChatCompletion, isAiConfigured } from '../utils/sarvamClient.js';
 import { isSamvaadConfigured, startCheckinCall } from '../utils/samvaadClient.js';
 import { verifyToken } from '../utils/jwt.js';
 import { computeCyclePredictions } from '../utils/cycle.js';
-import { pickDefined, validateDateKey } from '../utils/apiHelpers.js';
+import { dateFromDateKey, pickDefined, validateDateKey } from '../utils/apiHelpers.js';
 import CycleSettings from '../models/CycleSettings.js';
 import CycleLog from '../models/CycleLog.js';
 import User from '../models/User.js';
 import { upsertCycleLog } from './cycleController.js';
-import { buildCheckinBackfill, checkinDateKey } from '../utils/checkinCall.js';
+import {
+  CALL_LIMITS,
+  DEFAULT_TZ_OFFSET_MINUTES,
+  addDaysToKey,
+  buildCheckinBackfill,
+  checkManualCallLimit,
+  checkinDateKey,
+  classifyCallOutcome,
+  describeCycleContext,
+  localClock,
+  localMomentToDate,
+  parseTimeOfDay,
+  planRetry,
+  planScheduledAttempt,
+  resolveCallDay,
+  summarizeRecentLog,
+} from '../utils/checkinCall.js';
+import CheckinCall from '../models/CheckinCall.js';
+import Notification from '../models/Notification.js';
 
 // Actions the voice agent is currently allowed to perform. Kept to a single
 // action for now (per the initial "log today's entry" use case) so the
@@ -168,44 +186,50 @@ export const converse = async (req, res, next) => {
   }
 };
 
-/**
- * Core logic for triggering one outbound "Buddy" cycle check-in call for a
- * user (Sarvam's Instant Outbound API, see samvaadClient.js) — shared by the
- * HTTP route (triggerCheckinCall, below) and the recurring cron scheduler
- * (utils/checkinCallScheduler.js), so both build the call's context
- * (expected period date, cycle summary) identically. Throws an Error with
- * `.status` set for expected failure cases (not configured / no phone / no
- * settings) so an HTTP caller can map it straight to a response; the cron
- * caller just logs and skips that user (see checkinCallScheduler.js).
- */
-export const runCheckinCallForUser = async (userId) => {
-  if (!isSamvaadConfigured()) {
-    throw Object.assign(new Error('Check-in calling is not configured on the server'), {
-      status: HTTP_STATUS.SERVICE_UNAVAILABLE,
-    });
-  }
+/* ──────────────────────────────────────────────
+   Outbound "Buddy" check-in calls
+────────────────────────────────────────────── */
 
+const httpError = (message, status, extra = {}) =>
+  Object.assign(new Error(message), { status, ...extra });
+
+// What the app shows when Sarvam itself refuses or fails the call.
+const CALLING_UNAVAILABLE_MESSAGE = 'Calling is busy right now. Please try again in a few minutes.';
+
+const CALL_HISTORY_FIELDS =
+  'source dateKey status outcome durationSeconds summary loggedFields retryAt endedAt createdAt';
+
+/** Throws the expected, user-fixable reasons a call can't be placed. */
+const loadCallableUser = async (userId) => {
+  if (!isSamvaadConfigured()) {
+    throw httpError(
+      'Check-in calling is not configured on the server',
+      HTTP_STATUS.SERVICE_UNAVAILABLE,
+    );
+  }
   const user = await User.findById(userId);
   if (!user || !user.isActive || user.deletedAt) {
-    throw Object.assign(new Error('User not found'), { status: HTTP_STATUS.NOT_FOUND });
+    throw httpError('User not found', HTTP_STATUS.NOT_FOUND);
   }
   if (!user.phone) {
-    throw Object.assign(new Error('Add a phone number to your account first'), {
-      status: HTTP_STATUS.BAD_REQUEST,
-    });
+    throw httpError('Add a phone number to your account first', HTTP_STATUS.BAD_REQUEST);
   }
-
   const settings = await CycleSettings.findOne({ userId });
   if (!settings) {
-    throw Object.assign(new Error('Please set up your cycle settings first'), {
-      status: HTTP_STATUS.NOT_FOUND,
-    });
+    throw httpError('Please set up your cycle settings first', HTTP_STATUS.NOT_FOUND);
   }
+  return { user, settings };
+};
 
+/**
+ * What the agent knows going into the call: where the user is in their
+ * cycle today, their most recent log, and what they said on the last call.
+ */
+const buildCallContext = async (userId, settings, dateKey) => {
   // Same query shape as getPredictions — ascending by dateKey so the last
   // element is the most recent log.
   const logs = await CycleLog.find({ userId }).sort({ dateKey: 1 });
-  const predictions = computeCyclePredictions(settings, logs);
+  const predictions = computeCyclePredictions(settings, logs, { today: dateFromDateKey(dateKey) });
   const lastLog = logs[logs.length - 1];
 
   const summaryParts = [`${settings.cycleLength || 28}-day cycle`];
@@ -215,76 +239,282 @@ export const runCheckinCallForUser = async (userId) => {
     summaryParts.push(`${lastLog.flow} flow last time`);
   }
 
-  await startCheckinCall({
-    id: userId,
-    phone: user.phone,
-    name: user.firstName,
-    gender: user.gender,
-    expectedPeriodDate: predictions.nextPeriodDateKey,
-    lastCycleSummary: summaryParts.join(', '),
+  const periodDay = resolveCallDay({
+    mode: 'period_daily',
+    periodLength: settings.periodLength,
+    predictions,
+    dateKey,
   });
 
-  logger.info('checkin_call_triggered', { action: 'checkin_call_triggered', userId });
+  const lastCall = await CheckinCall.findOne({ userId, summary: { $nin: [null, ''] } })
+    .sort({ createdAt: -1 })
+    .select('dateKey summary')
+    .lean();
 
-  return { expectedPeriodDate: predictions.nextPeriodDateKey };
+  return {
+    expectedPeriodDate: predictions.nextPeriodDateKey,
+    lastCycleSummary: summaryParts.join(', '),
+    cycleContext: describeCycleContext({
+      predictions,
+      periodDay: periodDay?.periodDay,
+      periodLength: settings.periodLength,
+    }),
+    recentLog: summarizeRecentLog(lastLog, dateKey),
+    lastCallSummary: lastCall
+      ? `${lastCall.dateKey === dateKey ? 'Earlier today' : `On ${lastCall.dateKey}`}: ${lastCall.summary}`
+      : '',
+    // A call on a period day counts toward that cycle's calls, whoever
+    // placed it.
+    periodCycleKey: periodDay?.cycleKey,
+  };
 };
 
 /**
- * POST /api/voice-agent/checkin-call — the logged-in user requests an
- * outbound "call me now" cycle check-in right away. The call's outcome (and
- * any data it collects) comes back later via checkinCallWebhook below, not
- * synchronously in this response.
+ * Places one outbound check-in call (Sarvam Instant Outbound, see
+ * samvaadClient.js) and records it as a CheckinCall. Shared by "call me
+ * now" (source 'manual') and the scheduler ('scheduled' / 'retry').
+ *
+ * Manual calls are validated before anything is written, so a missing
+ * phone number doesn't use up one of the day's calls. Automatic calls are
+ * recorded first: the unique (userId, dateKey, attemptNumber) index is what
+ * stops two overlapping scheduler ticks from both dialing, and a failure is
+ * kept on the record so the scheduler doesn't retry it every minute.
+ *
+ * Throws an Error with `.status` for expected failures. A Sarvam refusal
+ * becomes a 503 with a friendly message.
+ */
+export const placeCheckinCall = async ({
+  userId,
+  source,
+  dateKey,
+  cycleKey,
+  attemptNumber,
+  callReason,
+}) => {
+  let loaded = source === 'manual' ? await loadCallableUser(userId) : null;
+
+  const call = await CheckinCall.create({
+    userId,
+    source,
+    dateKey,
+    cycleKey,
+    ...(attemptNumber ? { attemptNumber } : {}),
+    status: 'dialing',
+  });
+
+  try {
+    loaded = loaded || (await loadCallableUser(userId));
+    const { user, settings } = loaded;
+    const context = await buildCallContext(userId, settings, dateKey);
+    if (!call.cycleKey && context.periodCycleKey) call.cycleKey = context.periodCycleKey;
+
+    const data = await startCheckinCall({
+      id: userId,
+      phone: user.phone,
+      name: user.firstName,
+      gender: user.gender,
+      callId: call._id,
+      callDate: dateKey,
+      callReason: callReason || source,
+      ...context,
+    });
+
+    call.status = 'requested';
+    call.attemptId = data?.attempt_id;
+    await call.save();
+
+    logger.info('checkin_call_placed', {
+      action: 'checkin_call_placed',
+      userId,
+      callId: String(call._id),
+      source,
+      attemptNumber,
+      dateKey,
+    });
+    return { call, expectedPeriodDate: context.expectedPeriodDate };
+  } catch (error) {
+    call.status = 'failed';
+    call.outcome = 'failed';
+    call.failureReason = String(error.message || '').slice(0, 500);
+    call.endedAt = new Date();
+    // Only a Sarvam-side failure is worth retrying; "no phone number" won't
+    // fix itself in ten minutes.
+    if (error.upstream && source !== 'manual') {
+      const settings = loaded?.settings;
+      const now = new Date();
+      call.retryAt = planRetry({
+        outcome: 'failed',
+        source,
+        attemptNumber,
+        now,
+        clock: localClock(now, settings?.checkinCallTimezoneOffsetMinutes),
+      });
+    }
+    await call.save();
+
+    logger.error('checkin_call_place_failed', {
+      action: 'checkin_call_place_failed',
+      userId,
+      callId: String(call._id),
+      source,
+      error: error.message,
+    });
+    if (error.upstream) {
+      throw httpError(CALLING_UNAVAILABLE_MESSAGE, HTTP_STATUS.SERVICE_UNAVAILABLE);
+    }
+    throw error;
+  }
+};
+
+/**
+ * POST /api/voice-agent/checkin-call — "call me now" from the app. Limited
+ * to a few calls a day, a cooldown between them, and none while a call is
+ * still ringing or in progress (see checkManualCallLimit). The call's
+ * outcome comes back later via checkinCallWebhook.
  */
 export const triggerCheckinCall = async (req, res, next) => {
   try {
-    const result = await runCheckinCallForUser(req.userId);
-    return sendResponse(res, HTTP_STATUS.OK, 'Check-in call started', result);
-  } catch (error) {
-    if (error.status) {
-      return sendError(res, error.status, error.message);
+    const settings = await CycleSettings.findOne({ userId: req.userId }).select(
+      'checkinCallTimezoneOffsetMinutes',
+    );
+    const now = new Date();
+    const clock = localClock(now, settings?.checkinCallTimezoneOffsetMinutes);
+    const todaysCalls = await CheckinCall.find({
+      userId: req.userId,
+      dateKey: clock.dateKey,
+    }).lean();
+
+    const limit = checkManualCallLimit({ calls: todaysCalls, now });
+    if (limit) {
+      if (limit.retryAfterSeconds) res.set('Retry-After', String(limit.retryAfterSeconds));
+      return sendResponse(res, limit.statusCode, limit.message, {
+        retryAfterSeconds: limit.retryAfterSeconds,
+      });
     }
+
+    const { call, expectedPeriodDate } = await placeCheckinCall({
+      userId: req.userId,
+      source: 'manual',
+      dateKey: clock.dateKey,
+    });
+    const manualUsed = todaysCalls.filter((c) => c.source === 'manual').length + 1;
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Check-in call started', {
+      callId: call._id,
+      expectedPeriodDate,
+      callsLeftToday: Math.max(0, CALL_LIMITS.manualPerDay - manualUsed),
+    });
+  } catch (error) {
+    if (error.status) return sendError(res, error.status, error.message);
     logger.error('checkin_call_error', { userId: req.userId, error: error.message });
     next(error);
   }
 };
 
-const CHECKIN_CALL_TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
+/**
+ * When the scheduler will next ring this user, or null (off / no time /
+ * nothing within ~6 weeks). Walks forward day by day using the same
+ * resolveCallDay + planScheduledAttempt the scheduler uses.
+ */
+const computeNextCallAt = async (userId, settings, now) => {
+  const scheduledMinutes = parseTimeOfDay(settings.checkinCallTime);
+  if (!settings.checkinCallEnabled || scheduledMinutes === null) return null;
+
+  const clock = localClock(now, settings.checkinCallTimezoneOffsetMinutes);
+  const logs = await CycleLog.find({ userId })
+    .sort({ dateKey: 1 })
+    .select('dateKey flow date')
+    .lean();
+  const todaysCalls = await CheckinCall.find({ userId, dateKey: clock.dateKey }).lean();
+
+  for (let i = 0; i <= 45; i += 1) {
+    const dateKey = addDaysToKey(clock.dateKey, i);
+    const predictions = computeCyclePredictions(settings, logs, {
+      today: dateFromDateKey(dateKey),
+    });
+    const callDay = resolveCallDay({
+      mode: settings.checkinCallMode,
+      dayOffset: settings.checkinCallDayOffset,
+      periodLength: settings.periodLength,
+      predictions,
+      dateKey,
+    });
+    if (!callDay) continue;
+    if (i > 0) return localMomentToDate(dateKey, scheduledMinutes, clock.tzOffset);
+
+    const plan = planScheduledAttempt({ calls: todaysCalls, scheduledMinutes, now, clock });
+    if (plan.due) return now;
+    if (plan.reason === 'not_yet')
+      return localMomentToDate(dateKey, scheduledMinutes, clock.tzOffset);
+    if (plan.reason === 'retry_pending') {
+      const retries = todaysCalls.filter((c) => c.retryAt).map((c) => new Date(c.retryAt));
+      if (retries.length) return new Date(Math.max(...retries));
+    }
+  }
+  return null;
+};
+
+const buildScheduleResponse = async (userId, settings) => {
+  const lastCall = await CheckinCall.findOne({ userId })
+    .sort({ createdAt: -1 })
+    .select(CALL_HISTORY_FIELDS)
+    .lean();
+  const nextCallAt = await computeNextCallAt(userId, settings, new Date());
+  return {
+    enabled: settings.checkinCallEnabled || false,
+    mode: settings.checkinCallMode || 'once',
+    dayOffset: settings.checkinCallDayOffset ?? 0,
+    time: settings.checkinCallTime || null,
+    periodLength: settings.periodLength || 5,
+    nextCallAt: nextCallAt ? nextCallAt.toISOString() : null,
+    lastCall: lastCall || null,
+    limits: {
+      maxCallMinutes: 5,
+      manualCallsPerDay: CALL_LIMITS.manualPerDay,
+      manualCooldownMinutes: CALL_LIMITS.manualCooldownMinutes,
+    },
+  };
+};
 
 /**
  * GET /api/voice-agent/checkin-call/schedule — this user's recurring
- * check-in call preference (see CycleSettings.checkinCall* fields and
- * utils/checkinCallScheduler.js, which actually fires it).
+ * check-in call preference, when the next call is due and the last call's
+ * outcome (see CycleSettings.checkinCall* and utils/checkinCallScheduler.js).
  */
 export const getCheckinCallSchedule = async (req, res, next) => {
   try {
-    const settings = await CycleSettings.findOne({ userId: req.userId }).select(
-      'checkinCallEnabled checkinCallDayOffset checkinCallTime',
-    );
+    const settings = await CycleSettings.findOne({ userId: req.userId });
     if (!settings) {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Please set up your cycle settings first');
     }
-    return sendResponse(res, HTTP_STATUS.OK, 'Check-in call schedule fetched', {
-      enabled: settings.checkinCallEnabled || false,
-      dayOffset: settings.checkinCallDayOffset ?? 0,
-      time: settings.checkinCallTime || null,
-    });
+    return sendResponse(
+      res,
+      HTTP_STATUS.OK,
+      'Check-in call schedule fetched',
+      await buildScheduleResponse(req.userId, settings),
+    );
   } catch (error) {
     next(error);
   }
 };
 
+const CHECKIN_CALL_MODES = ['once', 'period_daily'];
+
 /**
  * PUT /api/voice-agent/checkin-call/schedule — save this user's recurring
- * check-in call preference. Body: { enabled, dayOffset, time: "HH:mm",
+ * check-in call preference. Body: { enabled, mode, dayOffset, time: "HH:mm",
  * timezoneOffsetMinutes }. `time`/`timezoneOffsetMinutes` are required when
  * enabling (the scheduler needs both to resolve the user's local moment).
+ * `mode` is 'period_daily' (every period day) or 'once' (one day per cycle,
+ * picked by dayOffset); omitted, the stored mode is kept, so older app
+ * builds that only send dayOffset keep working.
  */
 export const saveCheckinCallSchedule = async (req, res, next) => {
   try {
-    const { enabled, dayOffset, time, timezoneOffsetMinutes } = req.body;
+    const { enabled, mode, dayOffset, time, timezoneOffsetMinutes } = req.body;
 
     if (enabled) {
-      if (!time || !CHECKIN_CALL_TIME_REGEX.test(time)) {
+      if (parseTimeOfDay(time) === null) {
         return sendError(
           res,
           HTTP_STATUS.BAD_REQUEST,
@@ -299,12 +529,16 @@ export const saveCheckinCallSchedule = async (req, res, next) => {
         );
       }
     }
+    if (mode !== undefined && !CHECKIN_CALL_MODES.includes(mode)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'mode must be "once" or "period_daily"');
+    }
 
     const settings = await CycleSettings.findOneAndUpdate(
       { userId: req.userId },
       pickDefined(
         {
           checkinCallEnabled: typeof enabled === 'boolean' ? enabled : undefined,
+          checkinCallMode: mode,
           checkinCallDayOffset: dayOffset !== undefined ? Number(dayOffset) : undefined,
           checkinCallTime: time,
           checkinCallTimezoneOffsetMinutes:
@@ -312,6 +546,7 @@ export const saveCheckinCallSchedule = async (req, res, next) => {
         },
         [
           'checkinCallEnabled',
+          'checkinCallMode',
           'checkinCallDayOffset',
           'checkinCallTime',
           'checkinCallTimezoneOffsetMinutes',
@@ -328,16 +563,74 @@ export const saveCheckinCallSchedule = async (req, res, next) => {
       action: 'checkin_call_schedule_saved',
       userId: req.userId,
       enabled: settings.checkinCallEnabled,
+      mode: settings.checkinCallMode,
     });
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Check-in call schedule saved', {
-      enabled: settings.checkinCallEnabled || false,
-      dayOffset: settings.checkinCallDayOffset ?? 0,
-      time: settings.checkinCallTime || null,
-    });
+    return sendResponse(
+      res,
+      HTTP_STATUS.OK,
+      'Check-in call schedule saved',
+      await buildScheduleResponse(req.userId, settings),
+    );
   } catch (error) {
     next(error);
   }
+};
+
+/**
+ * GET /api/voice-agent/checkin-call/history — this user's recent check-in
+ * calls, newest first (`?limit=`, default 20, max 50).
+ */
+export const getCheckinCallHistory = async (req, res, next) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+    const calls = await CheckinCall.find({ userId: req.userId })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .select(CALL_HISTORY_FIELDS)
+      .lean();
+    return sendResponse(res, HTTP_STATUS.OK, 'Check-in call history fetched', { calls });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const SARVAM_CALL_STATUSES = new Set(['connected', 'no_answer', 'busy', 'failed']);
+
+/** The one push a finished call deserves, if any. */
+const notifyCallOutcome = async ({ userId, call }) => {
+  let message = null;
+  if (call.outcome === 'opted_out') {
+    message = {
+      title: 'Check-in calls turned off',
+      body: 'Buddy won’t call again. You can turn calls back on any time in the app.',
+      route: '/checkin-call',
+    };
+  } else if (call.outcome === 'completed' && call.loggedFields?.length) {
+    message = {
+      title: 'Today’s check-in is saved ✓',
+      body: 'Thanks for chatting with Buddy. Tap to see today in your tracker.',
+      route: '/tracker',
+    };
+  } else if (
+    call.source !== 'manual' &&
+    !call.retryAt &&
+    ['no_answer', 'failed', 'callback'].includes(call.outcome)
+  ) {
+    message = {
+      title: 'We missed you today',
+      body: 'Buddy couldn’t reach you. Log today in a few taps whenever you’re free.',
+      route: '/tracker',
+    };
+  }
+  if (!message) return;
+  await Notification.create({
+    userId,
+    type: 'system',
+    title: message.title,
+    body: message.body,
+    data: { route: message.route, checkinCallId: String(call._id) },
+  });
 };
 
 /**
@@ -350,14 +643,20 @@ export const saveCheckinCallSchedule = async (req, res, next) => {
  * scheme for verifying a request actually came from them, the raw
  * `metadata.userId` alone isn't trusted — `metadata.callToken` (a signed
  * JWT minted per-call by samvaadClient.js's issueWebhookToken) is verified
- * instead, and userId is taken only from its decoded claim.
+ * instead, and userId, the call's date and its CheckinCall id are taken
+ * only from its claims.
  *
- * The agent's in-call `log_cycle_entry` tool is the main save path. This
- * webhook is the backup: any cycle field in `final_agent_variables` that
- * today's log is still missing (tool never ran, failed, or its token had
- * expired) is saved through the same `upsertCycleLog` the REST endpoint and
- * the in-app voice agent use. Fields already on the log are never
- * overwritten (see utils/checkinCall.js#buildCheckinBackfill).
+ * Three jobs:
+ * 1. Backup save. The agent's in-call `log_cycle_entry` tool is the main
+ *    save path; any cycle field in `final_agent_variables` that today's log
+ *    is still missing is saved through the same `upsertCycleLog` the REST
+ *    endpoint and the in-app voice agent use, never overwriting a field
+ *    that's already there (utils/checkinCall.js#buildCheckinBackfill).
+ * 2. Record the outcome on the CheckinCall and, for an automatic call that
+ *    wasn't answered or where the user asked to be called back, when to
+ *    try again (planRetry). The scheduler places the retry.
+ * 3. Side effects: turn the schedule off on an opt-out, and send at most
+ *    one push (saved / missed you / calls turned off).
  */
 export const checkinCallWebhook = async (req, res) => {
   try {
@@ -371,10 +670,12 @@ export const checkinCallWebhook = async (req, res) => {
     } = req.body || {};
     let userId;
     let callDate;
+    let callId;
     try {
       const decoded = verifyToken(webhookConfig?.metadata?.callToken);
       userId = decoded?.userId;
       callDate = decoded?.dateKey;
+      callId = decoded?.callId;
     } catch (error) {
       logger.warn('checkin_call_webhook_token_invalid', {
         action: 'checkin_call_webhook_token_invalid',
@@ -388,27 +689,33 @@ export const checkinCallWebhook = async (req, res) => {
     logger.info('checkin_call_completed', {
       action: 'checkin_call_completed',
       userId,
+      callId,
       attemptId,
       status,
       failureReason,
       duration,
+      disposition: finalVars?.call_disposition,
     });
 
-    if (userId && finalVars && typeof finalVars === 'object') {
-      // The day comes from the signed token (fixed when the call was placed),
-      // never from the voice session: a misheard date from STT must not
-      // overwrite an unrelated day's log. Tokens minted before the claim
-      // existed fall back to today in IST.
-      const dateKey = validateDateKey(callDate) ? callDate : checkinDateKey();
+    // The day comes from the signed token (fixed when the call was placed),
+    // never from the voice session: a misheard date from STT must not
+    // overwrite an unrelated day's log. Tokens minted before the claim
+    // existed fall back to today in IST.
+    const dateKey = validateDateKey(callDate) ? callDate : checkinDateKey();
+    const vars = finalVars && typeof finalVars === 'object' ? finalVars : {};
+    // The cycle fields the call actually captured (placeholders dropped).
+    const loggedFields = Object.keys(buildCheckinBackfill(vars, null));
+
+    if (userId && status === 'connected' && loggedFields.length > 0) {
       try {
         const existing = await CycleLog.findOne({ userId, dateKey }).lean();
-        const backfill = buildCheckinBackfill(finalVars, existing);
+        const backfill = buildCheckinBackfill(vars, existing);
         const fields = Object.keys(backfill);
         if (fields.length > 0) {
           await upsertCycleLog(userId, {
             dateKey,
             ...backfill,
-            timezoneOffsetMinutes: -330,
+            timezoneOffsetMinutes: DEFAULT_TZ_OFFSET_MINUTES,
           });
         }
         logger.info('checkin_call_log_backfill', {
@@ -418,8 +725,7 @@ export const checkinCallWebhook = async (req, res) => {
           dateKey,
           logExisted: Boolean(existing),
           backfilledFields: fields,
-          agentLogStatus: finalVars.cycle_log_status,
-          disposition: finalVars.call_disposition,
+          agentLogStatus: vars.cycle_log_status,
         });
       } catch (error) {
         logger.error('checkin_call_log_save_failed', {
@@ -428,6 +734,93 @@ export const checkinCallWebhook = async (req, res) => {
           attemptId,
           error: error.message,
         });
+      }
+    }
+
+    if (userId && (callId || attemptId)) {
+      const settings = await CycleSettings.findOne({ userId }).select(
+        'checkinCallTimezoneOffsetMinutes',
+      );
+      const now = new Date();
+      const clock = localClock(now, settings?.checkinCallTimezoneOffsetMinutes);
+      const outcome = classifyCallOutcome({
+        status,
+        disposition: vars.call_disposition,
+        durationSeconds: duration,
+        logStatus: vars.cycle_log_status,
+      });
+      const existingCall = await CheckinCall.findOne(
+        callId ? { _id: callId, userId } : { attemptId, userId },
+      ).lean();
+      const retryAt =
+        existingCall && existingCall.dateKey === clock.dateKey
+          ? planRetry({
+              outcome,
+              source: existingCall.source,
+              attemptNumber: existingCall.attemptNumber,
+              now,
+              clock,
+              callbackTime: vars.callback_time,
+            })
+          : null;
+
+      // Only the first webhook for a call applies, so a redelivered one
+      // can't send a second push or move the retry.
+      const call = await CheckinCall.findOneAndUpdate(
+        {
+          ...(callId ? { _id: callId } : { attemptId }),
+          userId,
+          outcome: { $exists: false },
+        },
+        {
+          $set: pickDefined(
+            {
+              status: SARVAM_CALL_STATUSES.has(status) ? status : undefined,
+              outcome,
+              attemptId,
+              disposition: vars.call_disposition,
+              logStatus: vars.cycle_log_status,
+              durationSeconds: Number.isFinite(Number(duration)) ? Number(duration) : undefined,
+              summary:
+                typeof vars.call_summary === 'string'
+                  ? vars.call_summary.slice(0, 1000)
+                  : undefined,
+              loggedFields: status === 'connected' ? loggedFields : [],
+              failureReason: failureReason ? String(failureReason).slice(0, 500) : undefined,
+              retryAt: retryAt || undefined,
+              endedAt: now,
+            },
+            [
+              'status',
+              'outcome',
+              'attemptId',
+              'disposition',
+              'logStatus',
+              'durationSeconds',
+              'summary',
+              'loggedFields',
+              'failureReason',
+              'retryAt',
+              'endedAt',
+            ],
+          ),
+        },
+        { new: true },
+      );
+
+      if (call) {
+        if (outcome === 'opted_out') {
+          await CycleSettings.updateOne({ userId }, { $set: { checkinCallEnabled: false } });
+        }
+        try {
+          await notifyCallOutcome({ userId, call });
+        } catch (error) {
+          logger.error('checkin_call_notify_failed', {
+            action: 'checkin_call_notify_failed',
+            userId,
+            error: error.message,
+          });
+        }
       }
     }
   } catch (error) {

@@ -1,36 +1,45 @@
 import CycleSettings from '../models/CycleSettings.js';
 import CycleLog from '../models/CycleLog.js';
-import { computeCyclePredictions, addDays } from './cycle.js';
-import { dateToDateKey, timingSafeEqualStrings } from './apiHelpers.js';
-import { runCheckinCallForUser } from '../controllers/voiceAgentController.js';
+import CheckinCall from '../models/CheckinCall.js';
+import { computeCyclePredictions } from './cycle.js';
+import { dateFromDateKey, timingSafeEqualStrings } from './apiHelpers.js';
+import { placeCheckinCall } from '../controllers/voiceAgentController.js';
 import { isSamvaadConfigured } from './samvaadClient.js';
 import { sendResponse, sendError } from './sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from './logger.js';
 import { activeUserIdSet } from './accountStatus.js';
+import { localClock, parseTimeOfDay, planScheduledAttempt, resolveCallDay } from './checkinCall.js';
 
 const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+// Mongo duplicate-key: another tick already claimed this attempt.
+const isDuplicateKey = (error) => error?.code === 11000;
+
 /**
- * One scheduler tick — finds users with a recurring check-in call enabled
- * (CycleSettings.checkinCall*, set via PUT /api/voice-agent/checkin-call/
- * schedule) whose local time-of-day matches checkinCallTime AND whose local
- * date matches (predicted period start + checkinCallDayOffset), then fires
- * their call via the same runCheckinCallForUser the manual "call me now"
- * endpoint uses. Recurs every cycle for free — nextPeriodDateKey is
- * re-derived fresh from live predictions each tick, so there's no separate
- * "next occurrence" state to maintain, just checkinCallLastFiredDateKey to
- * guard against firing twice in the same local day.
+ * One scheduler tick. For every user with a recurring check-in call
+ * enabled (CycleSettings.checkinCall*, set via PUT /api/voice-agent/
+ * checkin-call/schedule):
  *
- * Triggered externally, once a minute, by an AWS EventBridge Scheduler
- * calling POST /api/voice-agent/checkin-call/scheduler-tick (see
- * voiceAgentController.js's runSchedulerTick + voiceAgentRoutes.js) —
- * deliberately NOT an in-process timer (node-cron etc.), since that only
- * fires correctly on exactly one running instance; if this backend ever
- * scales to more than one process, an in-process timer would place the same
- * call multiple times. An external, single scheduled trigger avoids that.
+ * 1. Is today (the user's local date) a call day? 'period_daily' = each day
+ *    of the period, 'once' = period start + dayOffset (resolveCallDay).
+ *    Predictions are computed for that local date, so a period starting
+ *    today counts as day 1.
+ * 2. Has this cycle already had periodLength answered calls ('once': one)?
+ * 3. Is an attempt due (planScheduledAttempt)? The day's first call goes out
+ *    any time in the 2 hours after the chosen time, so a restart or slow
+ *    tick doesn't lose it. Later attempts only follow a no-answer or a
+ *    callback request, at the retryAt the webhook set, up to 3 a day.
+ *    A day with an answered call (manual ones included) is done.
+ * 4. Claim the attempt by inserting its CheckinCall; the unique
+ *    (userId, dateKey, attemptNumber) index makes a concurrent tick's
+ *    insert fail instead of dialing twice.
+ *
+ * Driven once a minute, either by the in-process timer (inProcessScheduler.js)
+ * or an external AWS EventBridge Scheduler calling POST /api/voice-agent/
+ * checkin-call/scheduler-tick. Never both on a multi-instance deployment.
  */
-export const runCheckinCallSchedulerTick = async () => {
+export const runCheckinCallSchedulerTick = async (now = new Date()) => {
   if (!isSamvaadConfigured()) return { candidates: 0, fired: 0 }; // nothing to do until configured
 
   const allCandidates = await CycleSettings.find({
@@ -42,43 +51,82 @@ export const runCheckinCallSchedulerTick = async () => {
   const candidates = allCandidates.filter((settings) => liveIds.has(String(settings.userId)));
 
   let fired = 0;
+  const skipped = {};
+  const skip = (reason) => {
+    skipped[reason] = (skipped[reason] || 0) + 1;
+  };
 
   for (const settings of candidates) {
     try {
-      const tzOffset = Number(settings.checkinCallTimezoneOffsetMinutes) || 0;
-      const localNow = new Date(Date.now() - tzOffset * 60000);
-      const localTime = localNow.toISOString().slice(11, 16); // 'HH:mm'
-      if (localTime !== settings.checkinCallTime) continue;
+      const { userId } = settings;
+      const clock = localClock(now, settings.checkinCallTimezoneOffsetMinutes);
+      const scheduledMinutes = parseTimeOfDay(settings.checkinCallTime);
 
-      const localDateKey = dateToDateKey(localNow);
-      if (settings.checkinCallLastFiredDateKey === localDateKey) continue; // already fired today
+      const logs = await CycleLog.find({ userId })
+        .sort({ dateKey: 1 })
+        .select('dateKey flow date')
+        .lean();
+      const predictions = computeCyclePredictions(settings, logs, {
+        today: dateFromDateKey(clock.dateKey),
+      });
+      const mode = settings.checkinCallMode || 'once';
+      const callDay = resolveCallDay({
+        mode,
+        dayOffset: settings.checkinCallDayOffset,
+        periodLength: settings.periodLength,
+        predictions,
+        dateKey: clock.dateKey,
+      });
+      if (!callDay) {
+        skip('not_call_day');
+        continue;
+      }
 
-      const logs = await CycleLog.find({ userId: settings.userId }).sort({ dateKey: 1 });
-      const predictions = computeCyclePredictions(settings, logs);
-      const targetDate = addDays(
-        new Date(predictions.nextPeriodDateISO),
-        settings.checkinCallDayOffset || 0,
-      );
-      if (dateToDateKey(targetDate) !== localDateKey) continue; // not the scheduled day yet
+      const cycleCap = mode === 'period_daily' ? settings.periodLength || 5 : 1;
+      const answeredThisCycle = await CheckinCall.countDocuments({
+        userId,
+        cycleKey: callDay.cycleKey,
+        outcome: 'completed',
+        dateKey: { $ne: clock.dateKey },
+      });
+      if (answeredThisCycle >= cycleCap) {
+        skip('cycle_complete');
+        continue;
+      }
 
-      // Claim the "fired today" guard atomically, as part of the same
-      // operation that decides whether to fire — this tick runs every
-      // minute, and a slow outbound call spanning a minute boundary (or two
-      // overlapping ticks) could otherwise both pass the plain in-memory
-      // check above before either persisted the guard, placing the same
-      // call twice. Only the request whose `findOneAndUpdate` actually
-      // matches (guard wasn't already set to today) proceeds to call.
-      const claimed = await CycleSettings.findOneAndUpdate(
-        { userId: settings.userId, checkinCallLastFiredDateKey: { $ne: localDateKey } },
-        { $set: { checkinCallLastFiredDateKey: localDateKey } },
-      );
-      if (!claimed) continue; // another concurrent tick already claimed today
+      const todaysCalls = await CheckinCall.find({ userId, dateKey: clock.dateKey }).lean();
+      const plan = planScheduledAttempt({ calls: todaysCalls, scheduledMinutes, now, clock });
+      if (!plan.due) {
+        skip(plan.reason);
+        continue;
+      }
 
-      await runCheckinCallForUser(settings.userId);
-      fired += 1;
+      const previous = todaysCalls
+        .filter((call) => call.attemptNumber)
+        .sort((a, b) => b.attemptNumber - a.attemptNumber)[0];
+
+      try {
+        await placeCheckinCall({
+          userId,
+          source: plan.source,
+          dateKey: clock.dateKey,
+          cycleKey: callDay.cycleKey,
+          attemptNumber: plan.attemptNumber,
+          // Lets the agent open with "calling back like you asked".
+          callReason: previous?.outcome === 'callback' ? 'callback' : plan.source,
+        });
+        fired += 1;
+      } catch (error) {
+        if (isDuplicateKey(error)) {
+          skip('claimed_elsewhere');
+          continue;
+        }
+        throw error;
+      }
     } catch (error) {
       // One user's failure (no phone, a transient Sarvam error, etc.)
-      // shouldn't stop the rest of this tick from processing.
+      // shouldn't stop the rest of this tick. The failed attempt is on its
+      // CheckinCall, so it isn't retried every minute.
       logger.error('checkin_call_scheduler_tick_error', {
         action: 'checkin_call_scheduler_tick_error',
         userId: settings.userId,
@@ -87,7 +135,7 @@ export const runCheckinCallSchedulerTick = async () => {
     }
   }
 
-  return { candidates: candidates.length, fired };
+  return { candidates: candidates.length, fired, skipped };
 };
 
 /**

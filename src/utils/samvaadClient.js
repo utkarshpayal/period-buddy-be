@@ -107,7 +107,12 @@ async function readJsonOrThrow(response, action) {
       raw ||
       `Sarvam outbound request failed (${response.status})`;
     logger.error(action, { action, status: response.status, error: message });
-    throw new Error(message);
+    // Tagged so callers can tell "Sarvam said no" (a 503 to the app) from
+    // a bug on our side.
+    throw Object.assign(new Error(message), {
+      upstream: 'sarvam',
+      upstreamStatus: response.status,
+    });
   }
   return body;
 }
@@ -126,17 +131,23 @@ export const issueCallToken = (userId) => generateToken({ userId }, { expiresIn:
  * see WEBHOOK_TOKEN_TTL above for why this is a separate, longer-lived
  * token from issueCallToken rather than reusing it.
  */
-export const issueWebhookToken = (userId, dateKey) =>
-  generateToken({ userId, dateKey }, { expiresIn: WEBHOOK_TOKEN_TTL });
+export const issueWebhookToken = (userId, dateKey, callId) =>
+  generateToken(
+    { userId, dateKey, ...(callId ? { callId: String(callId) } : {}) },
+    { expiresIn: WEBHOOK_TOKEN_TTL },
+  );
 
 /**
  * Triggers a single outbound cycle check-in call for one user via Sarvam's
  * Instant Outbound API.
  *
  * @param {object} user - plain object with the fields the call needs:
- *   { id, phone, name, gender, expectedPeriodDate, lastCycleSummary }
+ *   { id, phone, name, gender, expectedPeriodDate, lastCycleSummary,
+ *     callId, callDate, callReason, cycleContext, recentLog, lastCallSummary }
  *
- * The call's date is fixed here, once, in IST (checkinDateKey). The agent
+ * `callId` is the CheckinCall this attempt belongs to, signed into the
+ * webhook token. `callDate` is the user's local date the caller already
+ * resolved (IST today when absent). The agent
  * logs against `call_date` and the webhook against the `dateKey` claim in
  * its callToken, so a call that crosses midnight, or a webhook that
  * arrives late, still lands on the day the call was placed. Neither path
@@ -145,7 +156,7 @@ export const issueWebhookToken = (userId, dateKey) =>
  */
 export const startCheckinCall = async (user) => {
   const userPhoneNumber = toE164(user.phone);
-  const callDate = checkinDateKey();
+  const callDate = user.callDate || checkinDateKey();
   const payload = {
     app_config: {
       app_id: SARVAM_APP_ID,
@@ -163,6 +174,10 @@ export const startCheckinCall = async (user) => {
         last_cycle_summary: user.lastCycleSummary || '',
         call_date: callDate,
         call_weekday: weekdayOf(callDate),
+        call_reason: user.callReason || 'scheduled',
+        cycle_context: user.cycleContext || '',
+        recent_log: user.recentLog || '',
+        last_call_summary: user.lastCallSummary || '',
         gender: user.gender || 'female',
         user_auth_token: issueCallToken(user.id),
       },
@@ -181,7 +196,10 @@ export const startCheckinCall = async (user) => {
       // same signed-JWT pattern as issueCallToken but with its own longer
       // TTL — see WEBHOOK_TOKEN_TTL) is what checkinCallWebhook actually
       // verifies against.
-      metadata: { userId: String(user.id), callToken: issueWebhookToken(user.id, callDate) },
+      metadata: {
+        userId: String(user.id),
+        callToken: issueWebhookToken(user.id, callDate, user.callId),
+      },
     },
   };
 
