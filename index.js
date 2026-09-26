@@ -51,6 +51,8 @@ import auditRoutes from './src/routes/auditRoutes.js';
 import companyAssetRoutes from './src/routes/companyAssetRoutes.js';
 import companyFolderRoutes from './src/routes/companyFolderRoutes.js';
 import adminRoutes from './src/routes/adminRoutes.js';
+import appConfigRoutes from './src/routes/appConfigRoutes.js';
+import cmsRoutes from './src/routes/cmsRoutes.js';
 import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
 import adminSubscriptionRoutes from './src/routes/adminSubscriptionRoutes.js';
 import { setupSwagger } from './src/docs/swagger.js';
@@ -220,6 +222,8 @@ app.use('/api/subscriptions', subscriptionRoutes);
 // subscriptions/* would otherwise fall through its middleware first too).
 app.use('/api/admin/subscriptions', adminSubscriptionRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/app-config', appConfigRoutes);
+app.use('/api/cms', cmsRoutes);
 
 /* ──────────────────────────────────────────────────────────
    Error Handling
