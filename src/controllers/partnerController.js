@@ -577,6 +577,21 @@ export const markNotificationAsRead = async (req, res, next) => {
   }
 };
 
+/** POST /api/partner/notifications/read-all — mark every unread notification read. */
+export const markAllNotificationsAsRead = async (req, res, next) => {
+  try {
+    const result = await Notification.updateMany(
+      { userId: req.userId, isRead: false },
+      { isRead: true, readAt: new Date() },
+    );
+    return sendResponse(res, HTTP_STATUS.OK, 'All notifications marked as read', {
+      updated: result.modifiedCount,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 /** Helper function to create a notification for the connected partner */
 export const createPartnerNotification = async (ownerId, type, title, body) => {
   try {
