@@ -22658,7 +22658,7 @@
           "App CMS"
         ],
         "summary": "Launch stats per item key",
-        "description": "Launch stats per item key (feature key or link:<tileId>): { stats: { [itemKey]: { waiting, lockedTaps } } }\n\n**Access:** Private (cms.read)\n\n**Permission:** `cms.read` (see `config/permissions.js`; Super Admin holds all).",
+        "description": "Launch stats per item key (feature key or link:<tileId>): { stats: { [itemKey]: { waiting, toNotify, deviceOnly, lastNotifiedAt, lockedTaps } } }\n\n**Access:** Private (cms.read)\n\n**Permission:** `cms.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_cms_launches",
         "responses": {
           "200": {
@@ -22785,6 +22785,114 @@
             "bearerAuth": []
           }
         ]
+      }
+    },
+    "/api/cms/launches/{itemKey}/announce": {
+      "post": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Push \"It's here\" to everyone on a launched item's Notify me list who has an account and hasn't been told yet",
+        "description": "Push \"It's here\" to everyone on a launched item's Notify me list who has an account and hasn't been told yet (up to 5000 per send, via the broadcast worker). Body: { title, body }. Returns 202 { broadcastId, recipients, withPush, remaining }\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "post__api_cms_launches__itemKey_announce",
+        "parameters": [
+          {
+            "name": "itemKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: itemKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
       }
     },
     "/api/cms/banners": {

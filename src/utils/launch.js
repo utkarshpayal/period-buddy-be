@@ -284,6 +284,19 @@ export const resolveLaunch = (itemKey, launch, viewer, now = new Date()) => {
   };
 };
 
+/**
+ * A link tile with no tap action is a teaser for something not in the app
+ * yet: fine while it's Coming soon for everyone, but it can't be opened, so
+ * it can't go live, roll out, pause (resume means live) or be scheduled.
+ * Returns the error for the first such tile, or null.
+ */
+export const liveTeaserError = (tiles) => {
+  const t = tiles.find(
+    (x) => x.action.type === 'none' && (x.launch.state !== 'coming_soon' || x.launch.soon.goLiveAt),
+  );
+  return t ? `“${t.title}” needs a tap action before it can go live` : null;
+};
+
 /** Whether "Notify me" is open for an item right now. */
 export const acceptsNotify = (launch, now = new Date()) => {
   const state = effectiveState(launch, now);

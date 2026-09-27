@@ -14,7 +14,6 @@ import {
   HOME_SECTIONS,
   MAX_CUSTOM_TILES,
   THEME_TOKEN_KEYS,
-  TILE_ACTIONS,
   TILE_COLOR_KEYS,
   TILE_ICONS,
 } from '../constants/appCatalog.js';
@@ -278,7 +277,9 @@ export const parseCustomTiles = (value) => {
     if (!Number.isInteger(order) || order < 0 || order > 999) {
       return { error: `Invalid order for "${title.value}"` };
     }
-    const action = parseAction(raw.action, TILE_ACTIONS);
+    // "none" is only for Coming soon teasers; the controller refuses it
+    // on a tile that can open for anyone (it knows the launch state).
+    const action = parseAction(raw.action ?? { type: 'none' }, BANNER_ACTIONS);
     if (action.error) return { error: `${action.error} ("${title.value}")` };
     const audience = parseAudience(raw.audience);
     if (audience.error) return { error: `${audience.error} ("${title.value}")` };

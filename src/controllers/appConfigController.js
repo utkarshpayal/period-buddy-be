@@ -4,6 +4,10 @@ import AppConfigRevision from '../models/AppConfigRevision.js';
 import LaunchInterest from '../models/LaunchInterest.js';
 import LaunchStat from '../models/LaunchStat.js';
 import User from '../models/User.js';
+import PushBroadcast, { MAX_SELECTED_RECIPIENTS } from '../models/PushBroadcast.js';
+import { countAudience, enqueueBroadcast } from '../utils/pushBroadcastWorker.js';
+import { isFcmReady } from '../utils/fcm.js';
+import logger from '../utils/logger.js';
 import { CONFIG_KEY, ensureConfig, saveSection } from '../utils/appConfigStore.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
@@ -18,6 +22,7 @@ import {
   BANNER_LAYOUTS,
   BANNER_PLACEMENTS,
   CONFIG_SECTIONS,
+  FEATURE_CATALOG,
   FEATURE_PLACEMENTS,
   FEATURE_SIZES,
   MAX_CUSTOM_TILES,
@@ -42,8 +47,10 @@ import {
 } from '../utils/appConfig.js';
 import {
   acceptsNotify,
+  effectiveState,
   isDeviceId,
   isItemKey,
+  liveTeaserError,
   mergeLaunch,
   parseLaunch,
   resolveLaunch,
@@ -133,6 +140,7 @@ export const getAppConfig = async (req, res, next) => {
         .select('itemKey')
         .lean();
       viewer.onList = new Set(joined.map((j) => j.itemKey));
+      if (viewer.userId && deviceId) claimDeviceInterests(viewer.userId, deviceId);
     }
     const forViewer = (item, itemKey) => {
       const { launch, ...rest } = item;
@@ -187,6 +195,36 @@ export const trackBannerImpressions = async (req, res, next) => {
     return sendResponse(res, HTTP_STATUS.OK, 'Recorded', {});
   } catch (error) {
     next(error);
+  }
+};
+
+/**
+ * Give a device's signed-out Notify me entries to the account now signed in
+ * on it, so the "It's here" push (sent to accounts) can reach them. Fire and
+ * forget: a failure only means that person hears about the launch in the app.
+ */
+const claimDeviceInterests = async (userId, deviceId) => {
+  try {
+    const orphans = await LaunchInterest.find({ deviceId, user: { $exists: false } })
+      .select('_id')
+      .lean();
+    for (const { _id } of orphans) {
+      try {
+        await LaunchInterest.updateOne(
+          { _id },
+          { $set: { user: userId }, $unset: { deviceId: 1 } },
+        );
+      } catch (error) {
+        // The account already signed up for this one: the device entry is a duplicate.
+        if (error?.code === 11000) await LaunchInterest.deleteOne({ _id });
+        else throw error;
+      }
+    }
+  } catch (error) {
+    logger.warn('launch_interest_claim_failed', {
+      action: 'launch_interest_claim_failed',
+      error: error.message,
+    });
   }
 };
 
@@ -413,6 +451,8 @@ export const updateFeatures = async (req, res, next) => {
       (t) => `link:${t.id}`,
     );
     if (tileLaunches.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, tileLaunches.error);
+    const teaser = liveTeaserError(tiles.tiles);
+    if (teaser) return sendError(res, HTTP_STATUS.BAD_REQUEST, teaser);
 
     const notLive = Object.fromEntries(
       [
@@ -571,18 +611,151 @@ export const restoreRevision = async (req, res, next) => {
 
 /* -------------------------------- Launches -------------------------------- */
 
-/** GET /api/cms/launches — Notify me sign-ups and locked taps per item key. */
+/**
+ * GET /api/cms/launches — per item key: Notify me sign-ups (`waiting`), how
+ * many of them have an account and haven't had the "It's here" push yet
+ * (`toNotify`), how many are signed-out devices a push can't reach
+ * (`deviceOnly`), when the push last went out, and locked taps.
+ */
 export const getLaunchStats = async (req, res, next) => {
   try {
     const [waiting, taps] = await Promise.all([
-      LaunchInterest.aggregate([{ $group: { _id: '$itemKey', count: { $sum: 1 } } }]),
+      LaunchInterest.aggregate([
+        {
+          $group: {
+            _id: '$itemKey',
+            waiting: { $sum: 1 },
+            toNotify: {
+              $sum: {
+                $cond: [
+                  { $and: [{ $gt: ['$user', null] }, { $not: [{ $gt: ['$notifiedAt', null] }] }] },
+                  1,
+                  0,
+                ],
+              },
+            },
+            deviceOnly: { $sum: { $cond: [{ $gt: ['$user', null] }, 0, 1] } },
+            lastNotifiedAt: { $max: '$notifiedAt' },
+          },
+        },
+      ]),
       LaunchStat.find().lean(),
     ]);
     const stats = {};
-    const entry = (key) => (stats[key] ??= { waiting: 0, lockedTaps: 0 });
-    for (const w of waiting) entry(w._id).waiting = w.count;
+    const entry = (key) =>
+      (stats[key] ??= {
+        waiting: 0,
+        toNotify: 0,
+        deviceOnly: 0,
+        lastNotifiedAt: null,
+        lockedTaps: 0,
+      });
+    for (const { _id, ...w } of waiting) Object.assign(entry(_id), w);
     for (const t of taps) entry(t.itemKey).lockedTaps = t.lockedTaps;
     return sendResponse(res, HTTP_STATUS.OK, 'Launch stats fetched', { stats });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** Where tapping the "It's here" push goes: the feature's screen, or the tile's in-app route. */
+const announceRoute = (config, itemKey) => {
+  if (itemKey.startsWith('link:')) {
+    const tile = (config?.customTiles ?? []).find((t) => `link:${t.id}` === itemKey);
+    return tile?.action?.type === 'route' ? tile.action.value : null;
+  }
+  return FEATURE_CATALOG.find((f) => f.key === itemKey)?.route ?? null;
+};
+
+/**
+ * POST /api/cms/launches/:itemKey/announce — body { title, body }. Pushes
+ * "It's here" to everyone on a launched item's waitlist who has an account
+ * and hasn't been told yet, through the normal broadcast worker (so it
+ * shows in the Admin Workspace push history and the app's inbox). Signed-out
+ * devices can't get a push; they see the live tile in the app. Up to
+ * MAX_SELECTED_RECIPIENTS per send; press again for the rest.
+ */
+export const announceLaunch = async (req, res, next) => {
+  try {
+    const { itemKey } = req.params;
+    if (!isItemKey(itemKey)) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Unknown feature');
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+    if (!title || !body)
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Write a title and a message');
+    if (title.length > 100 || body.length > 500) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'The title or message is too long');
+    }
+    if (!isFcmReady()) {
+      return sendError(
+        res,
+        HTTP_STATUS.SERVICE_UNAVAILABLE,
+        'Push notifications are not configured',
+      );
+    }
+
+    const config = await AppConfig.findOne({ key: CONFIG_KEY }).lean();
+    const item = launchItems(config).find((i) => i.itemKey === itemKey);
+    if (!item) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Unknown feature');
+    if (effectiveState(item.launch) !== 'live') {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Launch it to everyone before announcing it');
+    }
+
+    const pending = await LaunchInterest.find({
+      itemKey,
+      user: { $type: 'objectId' },
+      notifiedAt: null,
+    })
+      .sort({ createdAt: 1 })
+      .limit(MAX_SELECTED_RECIPIENTS)
+      .select('_id user')
+      .lean();
+    if (!pending.length) {
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        'Everyone on the list with an account has been told',
+      );
+    }
+    const userIds = pending.map((p) => p.user);
+    const counts = await countAudience('selected', userIds);
+    const route = announceRoute(config, itemKey);
+
+    const broadcast = await PushBroadcast.create({
+      title,
+      body,
+      audience: 'selected',
+      userIds,
+      recipientPreview: [`Waitlist: ${itemKey}`],
+      data: route ? { route } : undefined,
+      saveToInbox: true,
+      ...counts,
+      createdBy: req.userId,
+    });
+    await LaunchInterest.updateMany(
+      { _id: { $in: pending.map((p) => p._id) } },
+      { $set: { notifiedAt: new Date() } },
+    );
+    enqueueBroadcast(broadcast._id, 'selected');
+
+    const remaining = await LaunchInterest.countDocuments({
+      itemKey,
+      user: { $type: 'objectId' },
+      notifiedAt: null,
+    });
+    recordAudit({
+      req,
+      action: AUDIT_ACTIONS.CMS_LAUNCH_ANNOUNCED,
+      resourceType: 'push_broadcast',
+      resourceId: String(broadcast._id),
+      metadata: { itemKey, title, recipients: userIds.length, ...counts },
+    });
+    return sendResponse(res, HTTP_STATUS.ACCEPTED, 'Announcement queued', {
+      broadcastId: String(broadcast._id),
+      recipients: userIds.length,
+      withPush: counts.totalWithToken,
+      remaining,
+    });
   } catch (error) {
     next(error);
   }

@@ -72,7 +72,7 @@ router.post(
 
 /**
  * @route   GET /api/cms/launches
- * @desc    Launch stats per item key (feature key or link:<tileId>): { stats: { [itemKey]: { waiting, lockedTaps } } }
+ * @desc    Launch stats per item key (feature key or link:<tileId>): { stats: { [itemKey]: { waiting, toNotify, deviceOnly, lastNotifiedAt, lockedTaps } } }
  * @access  Private (cms.read)
  */
 router.get('/launches', requirePermission(P.CMS_READ), appConfigController.getLaunchStats);
@@ -85,6 +85,17 @@ router.get(
   '/launches/:itemKey/waitlist',
   requirePermission(P.CMS_MANAGE),
   appConfigController.getWaitlist,
+);
+
+/**
+ * @route   POST /api/cms/launches/:itemKey/announce
+ * @desc    Push "It's here" to everyone on a launched item's Notify me list who has an account and hasn't been told yet (up to 5000 per send, via the broadcast worker). Body: { title, body }. Returns 202 { broadcastId, recipients, withPush, remaining }
+ * @access  Private (cms.manage)
+ */
+router.post(
+  '/launches/:itemKey/announce',
+  requirePermission(P.CMS_MANAGE),
+  appConfigController.announceLaunch,
 );
 
 /**

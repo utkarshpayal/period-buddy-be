@@ -216,7 +216,12 @@ test('parseCustomTiles validates and assigns ids', async () => {
   assert.equal(parseCustomTiles([{ ...base, id: 'keepme123' }]).tiles[0].id, 'keepme123');
   assert.ok(parseCustomTiles([{ ...base, title: '' }]).error);
   assert.ok(parseCustomTiles([{ ...base, icon: 'skull' }]).error);
-  assert.ok(parseCustomTiles([{ ...base, action: { type: 'none' } }]).error);
+  // No action is a Coming soon teaser; utils/launch.js stops it going live.
+  assert.equal(
+    parseCustomTiles([{ ...base, action: { type: 'none' } }]).tiles[0].action.type,
+    'none',
+  );
+  assert.ok(parseCustomTiles([{ ...base, action: { type: 'url', value: 'http://x.co' } }]).error);
   assert.deepEqual(parseCustomTiles(undefined).tiles, []);
 });
 
