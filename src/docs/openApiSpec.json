@@ -4907,6 +4907,93 @@
         ]
       }
     },
+    "/api/partner/notifications/read-all": {
+      "post": {
+        "tags": [
+          "Partner Sync"
+        ],
+        "summary": "Mark all of the signed-in user's notifications as read",
+        "description": "Mark all of the signed-in user's notifications as read\n\n**Access:** Private",
+        "operationId": "post__api_partner_notifications_read_all",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/partner/notifications/{id}/read": {
       "post": {
         "tags": [
@@ -19383,6 +19470,93 @@
         ]
       }
     },
+    "/api/admin/notifications/upload": {
+      "post": {
+        "tags": [
+          "Super Admin"
+        ],
+        "summary": "Upload a push notification's big-picture image",
+        "description": "Upload a push notification's big-picture image (multipart field \"file\"; JPG, PNG or WebP up to 1MB). Returns { url, key }\n\n**Access:** Private (push.send)\n\n**Permission:** `push.send` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "post__api_admin_notifications_upload",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/notifications/test": {
       "post": {
         "tags": [
@@ -21596,7 +21770,7 @@
           "App Config"
         ],
         "summary": "App layout managed from the App CMS: feature tiles and admin link tiles",
-        "description": "App layout managed from the App CMS: feature tiles and admin link tiles (hub, order, size, colour, text, badge, audience), home sections, theme colour overrides, app settings (maintenance mode, update prompts) and live promo banners. Sent with Cache-Control: no-cache (ETag revalidation)\n\n**Access:** Public",
+        "description": "App layout managed from the App CMS: feature tiles and admin link tiles (hub, order, size, colour, text, badge, audience, launch state), home sections, theme colour overrides, app settings (maintenance mode, update prompts) and live promo banners. Launch states are resolved for the caller (token and X-Device-Id header); send X-Nura-Launch: 1 to receive them, otherwise anything not plainly open comes back disabled. Sent with Cache-Control: private, no-cache (ETag revalidation)\n\n**Access:** Public (optional auth)",
         "operationId": "get__api_app_config",
         "responses": {
           "200": {
@@ -21620,7 +21794,12 @@
             }
           }
         },
-        "security": []
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/api/app-config/banners/{id}/click": {
@@ -21770,6 +21949,179 @@
         }
       }
     },
+    "/api/app-config/launch/{itemKey}/notify": {
+      "post": {
+        "tags": [
+          "App Config"
+        ],
+        "summary": "\"Notify me\" on a Coming soon feature",
+        "description": "\"Notify me\" on a Coming soon feature (itemKey = feature key or link:<tileId>). Signed in it's the account's, else the X-Device-Id header's. Body: { platform? }\n\n**Access:** Public (optional auth)",
+        "operationId": "post__api_app_config_launch__itemKey_notify",
+        "parameters": [
+          {
+            "name": "itemKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: itemKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/app-config/launch/{itemKey}/tap": {
+      "post": {
+        "tags": [
+          "App Config"
+        ],
+        "summary": "Count a tap on a locked",
+        "description": "Count a tap on a locked (Coming soon) tile (fire-and-forget beacon from the app)\n\n**Access:** Public",
+        "operationId": "post__api_app_config_launch__itemKey_tap",
+        "parameters": [
+          {
+            "name": "itemKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: itemKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/cms/config": {
       "get": {
         "tags": [
@@ -21833,7 +22185,7 @@
           "App CMS"
         ],
         "summary": "Save the full feature list and admin link tiles.",
-        "description": "Save the full feature list and admin link tiles. Body: { features: [{ key, enabled, placement, order, size, colorKey, title?, description?, badge?, audience? }], customTiles?: [{ id?, title, description?, icon, colorKey, placement, size, order, enabled, badge?, action: { type: route|url|app, value, fallbackUrl? }, audience? }], version? } — version (this section's) guards against overwriting a newer save (409)\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
+        "description": "Save the full feature list and admin link tiles. Body: { features: [{ key, enabled, placement, order, size, colorKey, title?, description?, badge?, audience?, launch? }], customTiles?: [{ id?, title, description?, icon, colorKey, placement, size, order, enabled, badge?, action: { type: route|url|app, value, fallbackUrl? }, audience?, launch? }], version? }. Each item may carry launch: { state: live|coming_soon|rolling_out|paused, resumeTo, rollout, soon, paused, testers: [user id | email | phone] } (see utils/launch.js) — version (this section's) guards against overwriting a newer save (409)\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "put__api_cms_features",
         "responses": {
           "200": {
@@ -22298,6 +22650,141 @@
             }
           }
         }
+      }
+    },
+    "/api/cms/launches": {
+      "get": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Launch stats per item key",
+        "description": "Launch stats per item key (feature key or link:<tileId>): { stats: { [itemKey]: { waiting, lockedTaps } } }\n\n**Access:** Private (cms.read)\n\n**Permission:** `cms.read` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "get__api_cms_launches",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/cms/launches/{itemKey}/waitlist": {
+      "get": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Everyone who tapped \"Notify me\" on an item, newest first",
+        "description": "Everyone who tapped \"Notify me\" on an item, newest first (up to 5000), with their name, email and phone when signed in\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "get__api_cms_launches__itemKey_waitlist",
+        "parameters": [
+          {
+            "name": "itemKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: itemKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/api/cms/banners": {
@@ -23060,6 +23547,180 @@
               "type": "string"
             },
             "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/cms/cycle-sync-eras/{phase}": {
+      "put": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Edit a phase's era card on the Phase Era screen.",
+        "description": "Edit a phase's era card on the Phase Era screen. Body: { name, emoji, tagline, aura: [#RRGGBB, #RRGGBB] }\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "put__api_cms_cycle_sync_eras__phase",
+        "parameters": [
+          {
+            "name": "phase",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: phase"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Restore a phase's built-in era card",
+        "description": "Restore a phase's built-in era card\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "delete__api_cms_cycle_sync_eras__phase",
+        "parameters": [
+          {
+            "name": "phase",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: phase"
           }
         ],
         "responses": {

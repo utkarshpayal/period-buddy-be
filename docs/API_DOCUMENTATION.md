@@ -1269,14 +1269,22 @@ Cancels the schedule for good (the record is kept). A send that has already star
 
 Managed from the separate **The-Nura-CMS** portal. The app reads one public endpoint; the portal writes through `/api/cms/*`. What can be controlled, and the app's defaults, live in `src/constants/appCatalog.js` (mirrored in the app's `lib/appConfig.ts`). With nothing saved, the app looks exactly as it ships.
 
-### GET `/api/app-config` (public, `Cache-Control: no-cache` + ETag)
+### GET `/api/app-config` (public with optional auth, `Cache-Control: private, no-cache` + ETag)
 
 Returns `{ version, features, customTiles, homeSections, theme, settings, banners }`.
 
-- **`features[]`** (built-in, one per catalog key): `{ key, enabled, placement, size, colorKey, order, title, description, badge, audience }`.
+The app sends `Authorization` when signed in (a bad token is ignored, never a 401), `X-Device-Id` (a random per-install id) and `X-Nura-Launch: 1`. Launch states are resolved for that user or device, so the response has `Vary: Authorization, X-Device-Id, X-Nura-Launch`. A request without `X-Nura-Launch: 1` (older app builds) gets no `launch` fields, and every item that isn't plainly open comes back `enabled: false`.
+
+- **`features[]`** (built-in, one per catalog key): `{ key, enabled, placement, size, colorKey, order, title, description, badge, audience, launch }`.
   - `placement`: `care_hub` | `wellness_hub` | `explore_hub` | `home` | `profile`. The last two are the **Shortcuts** blocks on the Home and Profile screens, so a feature can be moved to any of these five places.
   - `size`: `small` (grid tile) or `large` (full-width row).
-- **`customTiles[]`** (admin link tiles, sharing each placement's `order` with features): `{ id, title, description, icon, colorKey, placement, size, order, enabled, badge, action, audience }`.
+- **`customTiles[]`** (admin link tiles, sharing each placement's `order` with features): `{ id, title, description, icon, colorKey, placement, size, order, enabled, badge, action, audience, launch }`.
+- **`launch`** (already decided for this caller; see `src/utils/launch.js`): `{ access: open|soon|paused, beta, openFor: audience|null, fallback: soon|hidden, sheet: { headline, message, notifyMe, onList, alternative, alternativeLabel } }`.
+  - `soon`: show a locked tile; a tap opens the Coming soon sheet.
+  - `paused`: show the tile with a pause mark; a tap opens the Paused sheet.
+  - When `openFor` is set, only viewers matching it get `open`; everyone else gets `fallback`.
+  - Testers always get `open`. A rollout picks people with a stable hash of the item key and user id (or device id when signed out).
+  - An item hidden by a rollout comes back `enabled: false` but keeps a `soon` launch, so the app's route guard still blocks links to it.
 - **`action`**: `{ type, value, fallbackUrl }`, where `type` is:
   - `route`: an in-app path.
   - `url`: an https website, opened in the in-app browser.
@@ -1294,6 +1302,8 @@ Returns `{ version, features, customTiles, homeSections, theme, settings, banner
 
 - `POST /api/app-config/banners/:id/click`: counts a tap.
 - `POST /api/app-config/banners/impressions`: body `{ ids: [...] }` (≤ 20). Counts a view. The app sends each id once per session.
+- `POST /api/app-config/launch/:itemKey/notify` (optional auth, `X-Device-Id`): body `{ platform? }`. Joins the "Notify me" list for a Coming soon item. `itemKey` is a feature key or `link:<tileId>`, URL-encoded. When signed in, it takes over this device's signed-out entry. Returns `{ onList: true }`, or `400` unless the item is taking sign-ups.
+- `POST /api/app-config/launch/:itemKey/tap`: counts a tap on a locked tile.
 
 ### CMS endpoints (staff; `cms.read` to view, `cms.manage` to change)
 
@@ -1302,7 +1312,9 @@ Returns `{ version, features, customTiles, homeSections, theme, settings, banner
 | Method | Path | Body / notes |
 |---|---|---|
 | GET | `/api/cms/config` | Editable state, `sectionVersions`, and a `catalog` (placements, sizes, colour keys, icons, actions, audiences, theme tokens with defaults, banner placements/layouts) |
-| PUT | `/api/cms/features` | `{ features: [...], customTiles: [...], version }` |
+| PUT | `/api/cms/features` | `{ features: [...], customTiles: [...], version }`. Each item may carry `launch: { state: live\|coming_soon\|rolling_out\|paused, resumeTo, rollout: { percent, audience, othersSee, betaLabel }, soon: { headline, customHeadline, message, notifyMe, goLiveAt }, paused: { title, message, alternative, alternativeLabel, resumeAt }, testers: [user id \| email \| phone] }`. Testers are resolved to users; an unknown one gets `400`. A schedule must be in the future, unless it's the one already saved |
+| GET | `/api/cms/launches` | `{ stats: { [itemKey]: { waiting, lockedTaps } } }` |
+| GET | `/api/cms/launches/:itemKey/waitlist` | `cms.manage`. Returns `{ entries: [{ createdAt, platform, user }] }`, newest first, at most 5000 |
 | PUT | `/api/cms/home` | `{ homeSections: [{ key, visible, order }], version }` |
 | PUT | `/api/cms/theme` | `{ theme: { light, dark }, version }` |
 | PUT | `/api/cms/settings` | `{ settings: { maintenance, update }, version }` |
@@ -1314,6 +1326,8 @@ Returns `{ version, features, customTiles, homeSections, theme, settings, banner
 | GET | `/api/cms/cycle-sync-tips` | Phase Era tips (`usingDefaults: true` while none are saved), `phases`, `categories`, `categoryLabels`, `eras` |
 | POST | `/api/cms/cycle-sync-tips/seed` | Copy the built-in defaults into the database (`409` once tips exist) |
 | POST / PUT / DELETE | `/api/cms/cycle-sync-tips[/:id]` | `{ phase, category: move\|fuel\|selfCare\|vibe, title (≤60), body? (≤200), emoji?, active?, order? }`. The first create also copies the defaults in |
+
+**Launch schedules:** `utils/launchScheduleRunner.js` checks once a minute. It publishes a features revision noted "Scheduled: …" when a `goLiveAt` or `resumeAt` has passed. The app already treats a passed time as done on every fetch.
 
 **Locking:** each section has its own counter in `sectionVersions`. Send the counter for the section you loaded as `version`; a save on top of a newer save of the same section gets `409`. Saves to other sections, and banner changes, never conflict.
 
