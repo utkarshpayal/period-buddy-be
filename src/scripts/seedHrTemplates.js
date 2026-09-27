@@ -72,6 +72,8 @@ const para = (id, text, baseline, opts = {}) => ({
   wrap: true,
   lineHeight: opts.lineHeight ?? 1.68, // 15.76 pt at 9.38 pt
   boldColor: NAVY,
+  // lines it has room for before whatever is printed below it
+  ...(opts.maxLines ? { maxLines: opts.maxLines } : {}),
 });
 
 /** A value in a "key terms" table row (label column stays as designed). */
@@ -98,7 +100,7 @@ export const TEMPLATES = [
         width: 174,
         height: 18.5,
         dateX: 452.9,
-        dateY: top(568.3, 8.63),
+        dateY: top(566.3, 8.63),
         noteX: 62.3,
         noteY: 594,
       },
@@ -110,17 +112,21 @@ export const TEMPLATES = [
           color: NAVY,
         }),
         line('name', '{{fullName}}', 181.8, { bold: true, color: NAVY, width: 350 }),
-        line('contact', '{{address}}\n{{email}}', 198.49, {
-          size: 8.63,
-          color: MUTED,
-          width: 350,
-          lineHeight: 1.651, // 14.25 pt, as designed
-        }),
+        {
+          ...line('contact', '{{address}}\n{{email}}', 198.49, {
+            size: 8.63,
+            color: MUTED,
+            width: 350,
+            lineHeight: 1.651, // 14.25 pt, as designed
+          }),
+          optional: true, // no address on file: the email moves up
+        },
         line('greeting', 'Dear {{fullName}},', 258.28),
         para(
           'intro',
           'Congratulations, and welcome. Following your application and interview, we are delighted to offer you an internship at **{{companyName}}** as {{designation}}. We were genuinely impressed by your curiosity and the care you bring to your work — both of which matter a great deal here.',
           284.54,
+          { maxLines: 3 },
         ),
         cell('position', '{{designation}}', 371.01, { bold: true, color: NAVY }),
         cell('department', '{{department}}', 396.75),
@@ -147,9 +153,9 @@ export const TEMPLATES = [
           'acceptBy',
           'please sign and return a copy of this letter by **{{custom.acceptBy}}**.',
           394.44,
-          { page: 1 },
+          { page: 1, maxLines: 1 },
         ),
-        line('acceptName', '{{fullName}}', 568.3, {
+        line('acceptName', '{{fullName}}', 566.3, {
           page: 1,
           size: 8.63,
           x: 257.6,
@@ -180,6 +186,7 @@ Warm regards,
           'certify',
           'This is to certify that **{{fullName}}** has successfully completed an internship with **{{companyName}}** as **{{designation}}** from **{{startDate}}** to **{{endDate}}**.',
           196.66,
+          { maxLines: 2 },
         ),
         cell('internName', '{{fullName}}', 239.6, { bold: true, color: NAVY }),
         cell('position', '{{designation}}, {{department}}', 265.34),
@@ -190,15 +197,12 @@ Warm regards,
         line('scope1', '{{custom.scope1}}', 420.74, { x: 60, width: 489 }),
         line('scope2', '{{custom.scope2}}', 436.5, { x: 60, width: 489 }),
         line('scope3', '{{custom.scope3}}', 452.26, { x: 60, width: 489 }),
+        // One field, so the thanks follows the conduct paragraph however long it runs.
         para(
           'conduct',
-          'Throughout the internship {{firstName}} was {{custom.conduct}}, worked well with the team, and handled sensitive information with the discretion our work requires. We rate the overall performance as **{{custom.rating}}**.',
+          'Throughout the internship {{firstName}} was {{custom.conduct}}, worked well with the team, and handled sensitive information with the discretion our work requires. We rate the overall performance as **{{custom.rating}}**.\n\nWe thank {{firstName}} for the contribution made to {{companyName}} and wish {{firstName}} every success in the years ahead.',
           503.36,
-        ),
-        para(
-          'thanks',
-          'We thank {{firstName}} for the contribution made to {{companyName}} and wish {{firstName}} every success in the years ahead.',
-          562.63,
+          { maxLines: 8 },
         ),
       ],
       emailSubject: 'Your internship completion letter from {{companyName}}',
@@ -270,7 +274,7 @@ Warm regards,
           'sentence',
           'for successfully completing an internship as **{{designation}}** at {{companyName}} from **{{startDate}}** to **{{endDate}}**, demonstrating dedication, professionalism and care throughout.',
           376.41,
-          { size: 9.75, x: 158, width: 476, align: 'center', lineHeight: 1.692 },
+          { size: 9.75, x: 158, width: 476, align: 'center', lineHeight: 1.692, maxLines: 2 },
         ),
         line('ref', 'Ref: {{documentNumber}}', 528.29, {
           size: 9,

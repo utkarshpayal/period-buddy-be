@@ -59,4 +59,4 @@ export const MAX_FIELDS = 60;
 export const MAX_CUSTOM_FIELDS = 30;
 
 export const companyName = () => process.env.COMPANY_NAME || 'The Nura Care';
-export const documentPrefix = () => process.env.HR_DOCUMENT_PREFIX || 'NURA/HR';
+export const documentPrefix = () => process.env.HR_DOCUMENT_PREFIX || 'NC';

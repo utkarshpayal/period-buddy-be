@@ -74,18 +74,29 @@ export const loadFile = async (id) => {
 const saveFile = (purpose, fileName, bytes) =>
   HrFile.create({ purpose, fileName, size: bytes.length, data: Buffer.from(bytes) });
 
-/** "NURA/HR/2026/0007": a per-year sequence (India time). */
-const nextDocumentNumber = async () => {
+// Each kind of letter runs its own series, as on the Canva designs:
+// NC/INT/2026/0001 for offers, NC/CERT/2026/0001 for completion letters and
+// certificates, NC/EXP/… for experience letters.
+const SERIES = {
+  offer_letter: 'INT',
+  internship_completion: 'CERT',
+  certificate: 'CERT',
+  experience_letter: 'EXP',
+};
+
+/** "NC/INT/2026/0007": a per-series, per-year sequence (India time). */
+const nextDocumentNumber = async (category) => {
   const year = new Intl.DateTimeFormat('en-IN', {
     year: 'numeric',
     timeZone: 'Asia/Kolkata',
   }).format(new Date());
+  const series = SERIES[category] ?? 'DOC';
   const { seq } = await HrCounter.findOneAndUpdate(
-    { key: `document-${year}` },
+    { key: `${series}-${year}` },
     { $inc: { seq: 1 } },
     { upsert: true, new: true },
   );
-  return `${documentPrefix()}/${year}/${String(seq).padStart(4, '0')}`;
+  return `${documentPrefix()}/${series}/${year}/${String(seq).padStart(4, '0')}`;
 };
 
 const publicTemplate = (t) => ({
@@ -576,7 +587,7 @@ export const createDocument = async (req, res, next) => {
     const probe = resolveValues(template, memberValues(member), req.body.values);
     if (probe.missing.length) return missingError(res, probe.missing);
 
-    const number = await nextDocumentNumber();
+    const number = await nextDocumentNumber(template.category);
     const r = await generate(template, member, req.body.values, number);
     if (r.missing) return missingError(res, r.missing);
     const file = await saveFile('document', `${number}.pdf`, r.bytes);

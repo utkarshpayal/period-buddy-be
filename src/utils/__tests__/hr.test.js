@@ -431,3 +431,54 @@ test('the default Nura templates all validate against their PDFs', async () => {
     }
   }
 });
+
+test('an optional field is not asked for; a long paragraph eases down to its maxLines', async () => {
+  const t = parseTemplate(
+    {
+      name: 'Opt',
+      kind: 'fixed',
+      fields: [
+        {
+          key: 'text',
+          text: '{{address}}\n{{email}}',
+          optional: true,
+          page: 0,
+          x: 40,
+          y: 80,
+          width: 300,
+          fontSize: 9,
+        },
+        {
+          key: 'text',
+          text: `This is to certify that **{{fullName}}** has completed an internship as **{{designation}}**.`,
+          wrap: true,
+          maxLines: 2,
+          page: 0,
+          x: 40,
+          y: 120,
+          width: 420,
+          fontSize: 10,
+        },
+      ],
+    },
+    [A4],
+  );
+  assert.equal(t.error, undefined);
+  const { missing } = resolveValues(t.template, {
+    email: 'a@b.co',
+    fullName: 'X',
+    designation: 'Y',
+    firstName: 'X', // used by the default email text
+    companyName: 'The Nura Care',
+  });
+  assert.deepEqual(missing, []); // address is optional
+  const long = {
+    email: 'a@b.co',
+    fullName: 'Venkata Satya Lakshmi Priyadarshini Subramaniam-Raghunathan',
+    designation: 'Senior Product Design Intern',
+  };
+  const ys = await textYs(await fillFixed(await blankPdf(), t.template.fields, long));
+  // one line for the email, then the paragraph: at most 2 distinct lines
+  const paraLines = new Set(ys.slice(1).map((y) => y.toFixed(1)));
+  assert.ok(paraLines.size <= 2, `paragraph took ${paraLines.size} lines`);
+});

@@ -280,7 +280,9 @@ export const extractPlaceholders = (...strings) => {
 export const templatePlaceholders = (t) => [
   ...new Set([
     ...(t.kind === 'fixed'
-      ? (t.fields ?? []).flatMap((f) => (f.text ? extractPlaceholders(f.text) : [f.key]))
+      ? (t.fields ?? [])
+          .filter((f) => !f.optional)
+          .flatMap((f) => (f.text ? extractPlaceholders(f.text) : [f.key]))
       : []),
     ...extractPlaceholders(t.kind === 'letterhead' ? t.body : '', t.emailSubject, t.emailBody),
   ]),
@@ -392,6 +394,9 @@ export const parseTemplate = (raw = {}, pages = []) => {
         ...(f.wrap === true ? { wrap: true } : {}),
         ...(num(f.lineHeight, 1, 2.5) ? { lineHeight: num(f.lineHeight, 1, 2.5) } : {}),
         ...(HEX.test(f.boldColor ?? '') ? { boldColor: f.boldColor } : {}),
+        ...(num(f.maxLines, 1, 40) ? { maxLines: Math.round(num(f.maxLines, 1, 40)) } : {}),
+        // Left blank when the member has no value, instead of being asked for.
+        ...(f.optional === true ? { optional: true } : {}),
       });
     }
   }
