@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import zlib from 'zlib';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, PDFArray, decodePDFRawStream } from 'pdf-lib';
 import {
   extractPlaceholders,
   fillText,
@@ -13,13 +13,33 @@ import {
   templatePlaceholders,
 } from '../hrValues.js';
 import { boldRuns, fillFixed, pdfPages, renderLetterhead, stampSignature } from '../hrPdf.js';
+import { TEMPLATES } from '../../scripts/seedHrTemplates.js';
 
 const A4 = { width: 595.28, height: 841.89 };
 
-const blankPdf = async (pages = 1) => {
+const blankPdf = async (pages = 1, { originY = 0 } = {}) => {
   const doc = await PDFDocument.create();
-  for (let i = 0; i < pages; i += 1) doc.addPage([A4.width, A4.height]);
+  for (let i = 0; i < pages; i += 1) {
+    const page = doc.addPage([A4.width, A4.height]);
+    // Canva exports put the visible page at y ≈ 7.8 rather than 0
+    if (originY) page.setMediaBox(0, originY, A4.width, A4.height);
+  }
   return doc.save();
+};
+
+/** The y of every text run drawn on a page (from its content streams' Tm operators). */
+const textYs = async (bytes, pageIndex = 0) => {
+  const doc = await PDFDocument.load(bytes);
+  const page = doc.getPages()[pageIndex];
+  const contents = page.node.Contents();
+  const streams =
+    contents instanceof PDFArray
+      ? contents.asArray().map((r) => doc.context.lookup(r))
+      : [contents];
+  const ops = streams
+    .map((st) => Buffer.from(decodePDFRawStream(st).decode()).toString('latin1'))
+    .join('\n');
+  return [...ops.matchAll(/1 0 0 1 [\d.-]+ ([\d.-]+) Tm/g)].map((m) => Number(m[1]));
 };
 
 // A real PNG (4×2, red), built here so the test needs no fixture file.
@@ -338,4 +358,76 @@ test('a detected field covers the printed placeholder before drawing the value',
   });
   const bytes = await fillFixed(await blankPdf(), t.template.fields, { fullName: 'Priya Sharma' });
   assert.ok(bytes.length > 1500);
+});
+
+test('a wrap field lays a paragraph out over several lines, at the right height', async () => {
+  const t = parseTemplate(
+    {
+      name: 'Para',
+      kind: 'fixed',
+      fields: [
+        {
+          key: 'text',
+          text: 'We are delighted to offer you an internship at **{{companyName}}** as {{designation}}. '.repeat(
+            3,
+          ),
+          wrap: true,
+          lineHeight: 1.5,
+          boldColor: '#1B2E5A',
+          page: 0,
+          x: 40,
+          y: 100,
+          width: 300,
+          fontSize: 10,
+        },
+      ],
+    },
+    [A4],
+  );
+  assert.equal(t.error, undefined);
+  assert.equal(t.template.fields[0].wrap, true);
+  assert.equal(t.template.fields[0].boldColor, '#1B2E5A');
+  const values = { companyName: 'The Nura Care', designation: 'AI/ML Intern' };
+  // A page whose box starts at y = 7.8 (as Canva exports do) lands text at the
+  // same distance from the visible top as a plain page does.
+  const plain = await textYs(await fillFixed(await blankPdf(), t.template.fields, values));
+  const offset = await textYs(
+    await fillFixed(await blankPdf(1, { originY: 7.8 }), t.template.fields, values),
+  );
+  const lines = [...new Set(plain.map((y) => y.toFixed(2)))];
+  assert.ok(lines.length >= 3, `expected a wrapped paragraph, got ${lines.length} line(s)`);
+  assert.ok(Math.abs(Number(lines[0]) - Number(lines[1]) - 15) < 0.01); // 10 pt × 1.5
+  // (in PDF space everything moves up with the box: 7.8 pt higher)
+  plain.forEach((y, i) => assert.ok(Math.abs(offset[i] - 7.8 - y) < 0.01));
+});
+
+test('stampSignature writes the signing date on a design’s Date line', async () => {
+  const box = { page: 0, x: 60, y: 700, width: 160, height: 20 };
+  const signedAt = new Date('2026-10-02T05:30:00Z');
+  const opts = { signerName: 'Priya Sharma', signedAt };
+  const without = await textYs(await stampSignature(await blankPdf(), box, PNG_BYTES, opts));
+  const withDate = await textYs(
+    await stampSignature(
+      await blankPdf(),
+      { ...box, dateX: 450, dateY: 705, noteX: 60, noteY: 740 },
+      PNG_BYTES,
+      opts,
+    ),
+  );
+  assert.equal(without.length, 1); // just the "Signed electronically" note
+  assert.equal(withDate.length, 2); // the note and the date
+  assert.ok(Math.abs(withDate[0] - (A4.height - 740)) < 0.01); // note moved to noteY
+});
+
+test('the default Nura templates all validate against their PDFs', async () => {
+  const fs = await import('fs');
+  for (const { file, data } of TEMPLATES) {
+    const bytes = fs.readFileSync(new URL(`../../assets/hr-templates/${file}`, import.meta.url));
+    const r = parseTemplate(data, await pdfPages(bytes));
+    assert.equal(r.error, undefined, `${data.name}: ${r.error}`);
+    if (data.requiresSignature) {
+      assert.equal(r.template.signatureBox.page, 1);
+      assert.ok(r.template.signatureBox.dateX > 0);
+    }
+  }
 });

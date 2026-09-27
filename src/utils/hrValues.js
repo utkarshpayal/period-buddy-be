@@ -362,7 +362,9 @@ export const parseTemplate = (raw = {}, pages = []) => {
     for (const f of list) {
       // A field is one {{key}}, or a line of `text` with {{keys}} in it
       // ("Ref: NC/CERT/{{documentNumber}}"), so a sentence stays one run.
-      const fieldText = typeof f?.text === 'string' ? f.text.trim().slice(0, 300) : '';
+      // A `wrap` field is a whole paragraph, so it may run longer.
+      const fieldText =
+        typeof f?.text === 'string' ? f.text.trim().slice(0, f.wrap === true ? 1000 : 300) : '';
       const fieldKey = canonicalKey(f?.key);
       if (!fieldText && !fieldKey) {
         return { error: `Field “${f?.key ?? ''}” isn’t a valid key` };
@@ -387,6 +389,9 @@ export const parseTemplate = (raw = {}, pages = []) => {
         bold: f.bold === true,
         color: HEX.test(f.color ?? '') ? f.color : '#1E1823',
         align: ['left', 'center', 'right'].includes(f.align) ? f.align : 'left',
+        ...(f.wrap === true ? { wrap: true } : {}),
+        ...(num(f.lineHeight, 1, 2.5) ? { lineHeight: num(f.lineHeight, 1, 2.5) } : {}),
+        ...(HEX.test(f.boldColor ?? '') ? { boldColor: f.boldColor } : {}),
       });
     }
   }
@@ -410,6 +415,18 @@ export const parseTemplate = (raw = {}, pages = []) => {
   if (requiresSignature && kind === 'fixed') {
     signatureBox = parseBox(raw.signatureBox, pages);
     if (!signatureBox) return { error: 'Draw where the signature goes' };
+    // Optional spots on the same page for the signing date (a "Date" line)
+    // and the "Signed electronically by …" note.
+    const { width: pw, height: ph } = pages[signatureBox.page];
+    for (const [k, max] of [
+      ['dateX', pw],
+      ['dateY', ph],
+      ['noteX', pw],
+      ['noteY', ph],
+    ]) {
+      const n = raw.signatureBox[k] == null ? null : num(raw.signatureBox[k], 0, max);
+      if (n !== null) signatureBox[k] = n;
+    }
   }
 
   const emailSubject = text(raw.emailSubject, 150, 'Email subject');

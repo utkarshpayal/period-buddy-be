@@ -10,24 +10,28 @@ import fontkit from '@pdf-lib/fontkit';
 import { fillText } from './hrValues.js';
 
 const FONT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'assets', 'fonts');
-// DejaVu: covers ₹ and most Latin text, and its licence allows embedding.
+// The Canva designs' own fonts (Arimo body, Cormorant Garamond headings), so
+// filled-in text matches the printed text. Both cover ₹ and are OFL-licensed;
+// static weights cut from the Google Fonts variable files.
 const FONT_FILES = {
-  sans: 'DejaVuSans.ttf',
-  'sans-bold': 'DejaVuSans-Bold.ttf',
-  serif: 'DejaVuSerif.ttf',
-  'serif-bold': 'DejaVuSerif-Bold.ttf',
+  sans: 'Arimo-Regular.ttf',
+  'sans-bold': 'Arimo-Bold.ttf',
+  serif: 'CormorantGaramond-SemiBold.ttf',
+  'serif-bold': 'CormorantGaramond-Bold.ttf',
 };
 const fontBytes = {};
 const readFont = (name) =>
   (fontBytes[name] ??= fs.readFileSync(path.join(FONT_DIR, FONT_FILES[name])));
 
-/** Lazily embeds each font the first time it's used, subset to the glyphs drawn. */
+/** Lazily embeds each font the first time it's used. */
 const fontSet = (doc) => {
   doc.registerFontkit(fontkit);
   const cache = {};
   return async (family = 'sans', bold = false) => {
     const name = `${family === 'serif' ? 'serif' : 'sans'}${bold ? '-bold' : ''}`;
-    cache[name] ??= doc.embedFont(readFont(name), { subset: true });
+    // Embedded whole: pdf-lib's subsetter drops glyphs from these fonts, so the
+    // files are pre-trimmed to Latin + ₹ instead (~40 KB each).
+    cache[name] ??= doc.embedFont(readFont(name));
     return cache[name];
   };
 };
@@ -35,6 +39,16 @@ const fontSet = (doc) => {
 const hexColor = (hex = '#1E1823') => {
   const n = parseInt(hex.slice(1), 16);
   return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+};
+
+/**
+ * The page's top edge in PDF user space. Canva exports place the visible
+ * page at y ≈ 7.8, not 0, so flipping top-left positions against the height
+ * alone drew everything ~8 pt too high.
+ */
+const pageTop = (page) => {
+  const box = page.getCropBox();
+  return box.y + box.height;
 };
 
 /** Page sizes of an uploaded PDF, or throws if it isn't one pdf-lib can read. */
@@ -55,9 +69,48 @@ const setMeta = (doc, title) => {
 /* ------------------------------ Fixed design ------------------------------ */
 
 /**
- * Draw each field's value into its box on a copy of the template. Text that
- * doesn't fit the box width shrinks (down to 60% of its size); line breaks
- * in a value (an address, say) become extra lines below.
+ * Split text into words that keep their trailing space, so widths add up
+ * exactly, then break them into lines no wider than `maxWidth`. `**bold**`
+ * runs are measured in the bold font.
+ */
+const wrapRuns = (text, maxWidth, size, regular, bold) => {
+  const lines = [];
+  for (const rawLine of String(text).split(/\r?\n/)) {
+    const words = boldRuns(rawLine).flatMap((run) =>
+      run.text.split(/(?<=\s)/).map((t) => ({ text: t, bold: run.bold })),
+    );
+    let line = [];
+    let width = 0;
+    for (const w of words) {
+      const f = w.bold ? bold : regular;
+      // A trailing space may hang past the edge; the word itself may not.
+      if (line.length && width + f.widthOfTextAtSize(w.text.trimEnd(), size) > maxWidth) {
+        lines.push(line);
+        line = [];
+        width = 0;
+        if (!w.text.trim()) continue;
+      }
+      line.push(w);
+      width += f.widthOfTextAtSize(w.text, size);
+    }
+    lines.push(line);
+  }
+  return lines;
+};
+
+const runsWidth = (words, size, regular, bold) =>
+  words.reduce((sum, w) => sum + (w.bold ? bold : regular).widthOfTextAtSize(w.text, size), 0) -
+  // the last word's trailing space doesn't count towards alignment
+  (words.length && /\s$/.test(words.at(-1).text)
+    ? (words.at(-1).bold ? bold : regular).widthOfTextAtSize(' ', size)
+    : 0);
+
+/**
+ * Draw each field's value into its box on a copy of the template. A plain
+ * field is one line that shrinks to fit its width (down to 60%), with line
+ * breaks in the value (an address, say) becoming extra lines below. A `wrap`
+ * field is a paragraph: it wraps to the width at full size, and `**bold**`
+ * runs are drawn bold in `boldColor`, like a sentence with a name in it.
  */
 export const fillFixed = async (templateBytes, fields, values, { title = 'Document' } = {}) => {
   const doc = await PDFDocument.load(templateBytes, { ignoreEncryption: true });
@@ -66,7 +119,7 @@ export const fillFixed = async (templateBytes, fields, values, { title = 'Docume
   for (const f of fields) {
     const page = pages[f.page];
     if (!page) continue;
-    const { height: pageHeight } = page.getSize();
+    const pageHeight = pageTop(page);
     if (f.cover) {
       page.drawRectangle({
         x: f.cover.x,
@@ -76,15 +129,44 @@ export const fillFixed = async (templateBytes, fields, values, { title = 'Docume
         color: hexColor(f.cover.color),
       });
     }
-    const value = String(f.text ? fillText(f.text, values) : (values[f.key] ?? ''));
+    const value = String(f.text ? fillText(f.text, values) : (values[f.key] ?? '')).trim();
     if (!value) continue;
+    const gap = f.fontSize * (f.lineHeight ?? 1.25);
+    if (f.wrap) {
+      const regular = await font(f.font, f.bold);
+      const bold = await font(f.font, true);
+      const ascent = regular.heightAtSize(f.fontSize, { descender: false });
+      wrapRuns(value, f.width, f.fontSize, regular, bold).forEach((words, i) => {
+        const w = runsWidth(words, f.fontSize, regular, bold);
+        let x =
+          f.align === 'center'
+            ? f.x + (f.width - w) / 2
+            : f.align === 'right'
+              ? f.x + f.width - w
+              : f.x;
+        for (const word of words) {
+          const wf = word.bold ? bold : regular;
+          if (word.text.trim()) {
+            page.drawText(word.text, {
+              x,
+              y: pageHeight - (f.y + ascent + i * gap),
+              size: f.fontSize,
+              font: wf,
+              color: hexColor(word.bold ? (f.boldColor ?? f.color) : f.color),
+            });
+          }
+          x += wf.widthOfTextAtSize(word.text, f.fontSize);
+        }
+      });
+      continue;
+    }
     const pdfFont = await font(f.font, f.bold);
     const lines = value.split(/\r?\n/);
     const widest = Math.max(...lines.map((l) => pdfFont.widthOfTextAtSize(l, f.fontSize)));
     const size =
       widest > f.width ? Math.max(f.fontSize * 0.6, (f.fontSize * f.width) / widest) : f.fontSize;
     const ascent = pdfFont.heightAtSize(size, { descender: false });
-    const { height } = page.getSize();
+    const height = pageHeight;
     lines.forEach((line, i) => {
       const w = pdfFont.widthOfTextAtSize(line, size);
       const x =
@@ -95,7 +177,7 @@ export const fillFixed = async (templateBytes, fields, values, { title = 'Docume
             : f.x;
       page.drawText(line, {
         x,
-        y: height - (f.y + ascent + i * size * 1.25),
+        y: height - (f.y + ascent + i * (f.lineHeight ? gap : size * 1.25)),
         size,
         font: pdfFont,
         color: hexColor(f.color),
@@ -163,27 +245,7 @@ export const renderLetterhead = async (
     .replace(/\r\n/g, '\n')
     .split(/\n\s*\n/);
   paragraphs.forEach((para, pi) => {
-    for (const rawLine of para.split('\n')) {
-      // Words keep their trailing space so widths add up exactly.
-      const words = boldRuns(rawLine).flatMap((run) =>
-        run.text.split(/(?<=\s)/).map((t) => ({ text: t, bold: run.bold })),
-      );
-      let line = [];
-      let width = 0;
-      for (const w of words) {
-        const f = w.bold ? bold : regular;
-        // A trailing space may hang past the margin; the word itself may not.
-        if (line.length && width + f.widthOfTextAtSize(w.text.trimEnd(), size) > maxWidth) {
-          place(line);
-          line = [];
-          width = 0;
-          if (!w.text.trim()) continue;
-        }
-        line.push(w);
-        width += f.widthOfTextAtSize(w.text, size);
-      }
-      place(line);
-    }
+    wrapRuns(para, maxWidth, size, regular, bold).forEach(place);
     if (pi < paragraphs.length - 1) y += size * 0.6;
   });
 
@@ -201,6 +263,7 @@ export const renderLetterhead = async (
   const order = Array.from({ length: pageCount }, (_, i) => (i === 0 || srcCount === 1 ? 0 : 1));
   const pages = (await doc.copyPages(source, order)).map((p) => doc.addPage(p));
   const ascent = regular.heightAtSize(size, { descender: false });
+  const top = pageTop(source.getPage(0));
   for (const line of lines) {
     let x = layout.marginLeft;
     for (const w of line.words) {
@@ -208,7 +271,7 @@ export const renderLetterhead = async (
       if (w.text.trim()) {
         pages[line.page].drawText(w.text, {
           x,
-          y: ph - (line.y + ascent),
+          y: top - (line.y + ascent),
           size,
           font: f,
           color: rgb(0.12, 0.09, 0.14),
@@ -229,12 +292,14 @@ export const renderLetterhead = async (
 
 /**
  * Stamp a PNG signature into `box` (kept in proportion, bottom-aligned),
- * with "Signed electronically by … on …" in small print underneath.
+ * with "Signed electronically by … on …" in small print underneath, or at
+ * `box.noteX/noteY` when the design has a better spot for it. A design with
+ * a Date line sets `box.dateX/dateY` and gets the signing date written there.
  */
 export const stampSignature = async (pdfBytes, box, pngBytes, { signerName, signedAt, title }) => {
   const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
   const page = doc.getPages()[box.page] ?? doc.getPages().at(-1);
-  const { height: ph } = page.getSize();
+  const ph = pageTop(page);
   const png = await doc.embedPng(pngBytes);
   const scale = Math.min(box.width / png.width, box.height / png.height);
   const w = png.width * scale;
@@ -251,14 +316,30 @@ export const stampSignature = async (pdfBytes, box, pngBytes, { signerName, sign
     timeZone: 'Asia/Kolkata',
   }).format(signedAt);
   const note = `Signed electronically by ${signerName} on ${when} IST`;
-  const noteY = ph - (box.y + box.height) - 10;
+  const noteY = box.noteY != null ? ph - box.noteY : ph - (box.y + box.height) - 10;
   page.drawText(note, {
-    x: box.x,
+    x: box.noteX ?? box.x,
     y: noteY > 8 ? noteY : ph - box.y + 4,
     size: 7,
     font,
     color: rgb(0.45, 0.42, 0.47),
   });
+  if (box.dateX != null && box.dateY != null) {
+    const date = new Intl.DateTimeFormat('en-IN', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'Asia/Kolkata',
+    }).format(signedAt);
+    const size = 8.6;
+    page.drawText(date, {
+      x: box.dateX,
+      y: ph - (box.dateY + font.heightAtSize(size, { descender: false })),
+      size,
+      font,
+      color: hexColor('#2C2F36'),
+    });
+  }
   if (title) setMeta(doc, title);
   return doc.save();
 };

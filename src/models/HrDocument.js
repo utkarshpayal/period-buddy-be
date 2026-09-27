@@ -25,7 +25,18 @@ const hrDocumentSchema = new mongoose.Schema(
     requiresSignature: { type: Boolean, default: false },
     signatureBox: {
       type: new mongoose.Schema(
-        { page: Number, x: Number, y: Number, width: Number, height: Number },
+        {
+          page: Number,
+          x: Number,
+          y: Number,
+          width: Number,
+          height: Number,
+          // where the signing date and the e-signature note go (fixed designs)
+          dateX: Number,
+          dateY: Number,
+          noteX: Number,
+          noteY: Number,
+        },
         { _id: false },
       ),
       default: null,
