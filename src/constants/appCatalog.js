@@ -252,10 +252,10 @@ export const HOME_SECTIONS = [
   { key: 'promo_top', label: 'Promo banners (top slot)' },
   { key: 'phaseHero', label: 'Cycle phase card' },
   { key: 'quickActions', label: 'Quick log actions' },
-  { key: 'shortcuts', label: 'Shortcuts (features placed on Home)' },
   { key: 'promo_middle', label: 'Promo banners (middle slot)' },
   { key: 'insights', label: 'Insights carousel' },
   { key: 'moreForYou', label: 'More for you (hubs)' },
+  { key: 'shortcuts', label: 'Shortcuts (features placed on Home)' },
 ].map((s, i) => ({ ...s, order: i }));
 
 export const HOME_SECTION_KEYS = HOME_SECTIONS.map((s) => s.key);

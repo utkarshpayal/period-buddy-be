@@ -14,6 +14,8 @@ import {
   parseCircleInput,
   parseVibeInput,
   resolveWrappedRange,
+  mergePhaseEras,
+  parseEraInput,
 } from '../genz.js';
 import { DEFAULT_CYCLE_SYNC_TIPS, PHASE_ERAS } from '../../constants/cycleSync.js';
 
@@ -193,4 +195,59 @@ test('vibe and circle input validation', () => {
   assert.ok(parseCircleInput({ name: '' }).error);
   assert.ok(parseCircleInput({ name: 'x'.repeat(31) }).error);
   assert.deepEqual(parseCircleInput({ name: ' Girls ' }).circle, { name: 'Girls', emoji: '🫶' });
+});
+
+test('mergePhaseEras applies CMS overrides and keeps the rest of the defaults', () => {
+  const eras = mergePhaseEras([
+    { phase: 'period', name: 'Blanket Era', aura: ['#111111', '#222222'] },
+  ]);
+  assert.equal(eras.period.name, 'Blanket Era');
+  assert.deepEqual(eras.period.aura, ['#111111', '#222222']);
+  assert.equal(eras.period.emoji, '🧸');
+  assert.equal(eras.period.statusEmoji, '🩸');
+  assert.equal(eras.luteal.name, 'Soft Life Era');
+});
+
+test('parseEraInput needs a name, emoji, tagline and two 6-digit hex colours', () => {
+  const ok = parseEraInput({
+    name: ' Cozy ',
+    emoji: '🧸',
+    tagline: 'Rest.',
+    aura: ['#ff6b8b', '#FFB3C1'],
+  });
+  assert.deepEqual(ok, {
+    era: { name: 'Cozy', emoji: '🧸', tagline: 'Rest.', aura: ['#FF6B8B', '#FFB3C1'] },
+  });
+  assert.ok(parseEraInput({ emoji: '🧸', tagline: 'x', aura: ['#111111', '#222222'] }).error);
+  assert.ok(
+    parseEraInput({ name: 'A', emoji: '🧸', tagline: 'x', aura: ['#fff', '#222222'] }).error,
+  );
+  assert.ok(
+    parseEraInput({ name: 'A', emoji: '🧸', tagline: 'x', aura: ['rgba(0,0,0,1)', '#222222'] })
+      .error,
+  );
+  assert.ok(
+    parseEraInput({ name: 'A'.repeat(31), emoji: '🧸', tagline: 'x', aura: ['#111111', '#222222'] })
+      .error,
+  );
+});
+
+test('buildEra uses the era cards it is given', () => {
+  const eras = mergePhaseEras([
+    { phase: 'period', name: 'Blanket Era' },
+    { phase: 'follicular', name: 'Glow Up Era' },
+  ]);
+  const era = buildEra(
+    {
+      currentCycleDay: 2,
+      cycleLength: 28,
+      periodLength: 5,
+      currentPhase: 'period',
+      nextPeriodDaysAway: 26,
+    },
+    [],
+    eras,
+  );
+  assert.equal(era.era.name, 'Blanket Era');
+  assert.equal(era.nextEra.name, 'Glow Up Era');
 });

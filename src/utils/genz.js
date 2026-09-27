@@ -315,11 +315,64 @@ const NEXT_PHASE = {
   luteal: 'period',
 };
 
+const HEX6 = /^#[0-9a-f]{6}$/i;
+export const ERA_LIMITS = { name: 30, emoji: 16, tagline: 120 };
+
+/**
+ * The built-in PHASE_ERAS with App CMS overrides (CycleEra docs) applied
+ * field by field. statusEmoji isn't editable, so it always comes from the
+ * defaults.
+ */
+export const mergePhaseEras = (saved = []) => {
+  const byPhase = new Map(saved.map((e) => [e.phase, e]));
+  return Object.fromEntries(
+    Object.entries(PHASE_ERAS).map(([phase, d]) => {
+      const o = byPhase.get(phase) || {};
+      return [
+        phase,
+        {
+          name: o.name || d.name,
+          emoji: o.emoji || d.emoji,
+          tagline: o.tagline || d.tagline,
+          aura: Array.isArray(o.aura) && o.aura.length === 2 ? o.aura : d.aura,
+          statusEmoji: d.statusEmoji,
+        },
+      ];
+    }),
+  );
+};
+
+/**
+ * Validate a CMS era edit. The app appends alpha to the aura colours
+ * (`${aura[0]}22`), so they must be 6-digit hex.
+ * @returns {{ era: { name, emoji, tagline, aura } } | { error: string }}
+ */
+export const parseEraInput = (body = {}) => {
+  const name = String(body.name ?? '').trim();
+  if (!name) return { error: 'Give the era a name' };
+  if (name.length > ERA_LIMITS.name)
+    return { error: `Names are ${ERA_LIMITS.name} characters max` };
+  const emoji = String(body.emoji ?? '').trim();
+  if (!emoji) return { error: 'Pick an emoji' };
+  if (emoji.length > ERA_LIMITS.emoji) return { error: 'Use a single emoji' };
+  const tagline = String(body.tagline ?? '').trim();
+  if (!tagline) return { error: 'Add a tagline' };
+  if (tagline.length > ERA_LIMITS.tagline) {
+    return { error: `Taglines are ${ERA_LIMITS.tagline} characters max` };
+  }
+  const aura = Array.isArray(body.aura) ? body.aura.map((c) => String(c).trim()) : [];
+  if (aura.length !== 2 || !aura.every((c) => HEX6.test(c))) {
+    return { error: 'Pick two colours like #FF6B8B' };
+  }
+  return { era: { name, emoji, tagline, aura: aura.map((c) => c.toUpperCase()) } };
+};
+
 /**
  * Today's era from a computeCyclePredictions() result, plus the tips for that
- * phase grouped by category. `tips` is the active tip list (DB or defaults).
+ * phase grouped by category. `tips` is the active tip list (DB or defaults);
+ * `eras` the era cards (mergePhaseEras() of the CMS overrides).
  */
-export const buildEra = (predictions, tips = []) => {
+export const buildEra = (predictions, tips = [], eras = PHASE_ERAS) => {
   const cycleDay = predictions.currentCycleDay;
   const cycleLength = predictions.cycleLength;
   const periodLength = predictions.periodLength;
@@ -351,10 +404,10 @@ export const buildEra = (predictions, tips = []) => {
     cycleLength,
     daysLeftInPhase: daysLeft,
     nextPhase,
-    nextEra: { name: PHASE_ERAS[nextPhase].name, emoji: PHASE_ERAS[nextPhase].emoji },
+    nextEra: { name: eras[nextPhase].name, emoji: eras[nextPhase].emoji },
     nextPeriodDaysAway: predictions.nextPeriodDaysAway,
     isEstimate: Boolean(predictions.isEstimate),
-    era: PHASE_ERAS[phase],
+    era: eras[phase],
     tips: byCategory,
   };
 };

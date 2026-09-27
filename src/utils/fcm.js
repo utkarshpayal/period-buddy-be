@@ -100,42 +100,51 @@ export const FCM_MAX_BATCH_SIZE = 500;
 
 export const isFcmReady = () => isFcmInitialized;
 
-const buildMessage = (token, { title, body, data }) => ({
-  token,
-  notification: {
-    title,
-    body,
-  },
-  // Custom sound bundled by the client (see expo-notifications plugin
-  // config in app.json + the Android notification channel default in
-  // lib/notifications.ts). Android references the raw resource name
-  // without its extension; iOS/APNs needs the exact bundled filename.
-  android: {
-    // High priority so Doze/app-standby don't defer delivery and the banner
-    // shows as heads-up.
-    priority: 'high',
+const buildMessage = (token, { title, body, data }) => {
+  // Admin pushes can carry a big picture (data.image, an https URL). Android
+  // renders it natively; iOS needs mutable-content so a notification service
+  // extension may attach it (without one, iOS just shows the text).
+  const image = typeof data?.image === 'string' && data.image ? data.image : null;
+  return {
+    token,
     notification: {
-      sound: 'notification',
-      channelId: ANDROID_CHANNEL_ID,
+      title,
+      body,
+      ...(image && { imageUrl: image }),
     },
-  },
-  apns: {
-    payload: {
-      aps: {
-        sound: 'notification.wav',
+    // Custom sound bundled by the client (see expo-notifications plugin
+    // config in app.json + the Android notification channel default in
+    // lib/notifications.ts). Android references the raw resource name
+    // without its extension; iOS/APNs needs the exact bundled filename.
+    android: {
+      // High priority so Doze/app-standby don't defer delivery and the banner
+      // shows as heads-up.
+      priority: 'high',
+      notification: {
+        sound: 'notification',
+        channelId: ANDROID_CHANNEL_ID,
       },
     },
-  },
-  data: data
-    ? Object.entries(data).reduce((acc, [key, val]) => {
-        if (val === undefined || val === null) return acc;
-        // FCM data fields must be strings; objects would otherwise arrive as
-        // "[object Object]".
-        acc[key] = typeof val === 'object' ? JSON.stringify(val) : String(val);
-        return acc;
-      }, {})
-    : {},
-});
+    apns: {
+      payload: {
+        aps: {
+          sound: 'notification.wav',
+          ...(image && { 'mutable-content': 1 }),
+        },
+      },
+      ...(image && { fcmOptions: { imageUrl: image } }),
+    },
+    data: data
+      ? Object.entries(data).reduce((acc, [key, val]) => {
+          if (val === undefined || val === null) return acc;
+          // FCM data fields must be strings; objects would otherwise arrive as
+          // "[object Object]".
+          acc[key] = typeof val === 'object' ? JSON.stringify(val) : String(val);
+          return acc;
+        }, {})
+      : {},
+  };
+};
 
 /**
  * Sends a push notification to a specific FCM token

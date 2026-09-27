@@ -68,6 +68,13 @@ router.delete('/disconnect', authenticate, partnerController.disconnectPartner);
 router.get('/notifications', authenticate, partnerController.getNotifications);
 
 /**
+ * @route   POST /api/partner/notifications/read-all
+ * @desc    Mark all of the signed-in user's notifications as read
+ * @access  Private
+ */
+router.post('/notifications/read-all', authenticate, partnerController.markAllNotificationsAsRead);
+
+/**
  * @route   POST /api/partner/notifications/:id/read
  * @desc    Mark partner notification as read
  * @access  Private

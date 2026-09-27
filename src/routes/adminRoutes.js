@@ -1,4 +1,5 @@
 import express from 'express';
+import multer from 'multer';
 import User from '../models/User.js';
 import PushSchedule from '../models/PushSchedule.js';
 import * as adminController from '../controllers/adminController.js';
@@ -74,6 +75,38 @@ router.get(
   '/notifications/recipients',
   requirePermission(P.PUSH_READ),
   adminNotificationController.searchRecipients,
+);
+// FCM's notification image limit is 1MB, and JPEG/PNG/WebP render
+// everywhere; anything bigger or exotic uploads fine but never shows.
+const NOTIFICATION_IMAGE_MAX_BYTES = 1024 * 1024;
+const NOTIFICATION_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const notificationImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: NOTIFICATION_IMAGE_MAX_BYTES },
+  fileFilter: (req, file, cb) =>
+    NOTIFICATION_IMAGE_TYPES.includes(file.mimetype)
+      ? cb(null, true)
+      : cb(Object.assign(new Error('Use a JPG, PNG or WebP image'), { statusCode: 400 })),
+});
+// Multer errors would otherwise surface as a 500.
+const acceptNotificationImage = (req, res, next) =>
+  notificationImageUpload.single('file')(req, res, (err) => {
+    if (!err) return next();
+    const message =
+      err.code === 'LIMIT_FILE_SIZE' ? 'Notification images must be 1 MB or smaller' : err.message;
+    return res.status(400).json({ success: false, statusCode: 400, message });
+  });
+
+/**
+ * @route   POST /api/admin/notifications/upload
+ * @desc    Upload a push notification's big-picture image (multipart field "file"; JPG, PNG or WebP up to 1MB). Returns { url, key }
+ * @access  Private (push.send)
+ */
+router.post(
+  '/notifications/upload',
+  requirePermission(P.PUSH_SEND),
+  acceptNotificationImage,
+  adminNotificationController.uploadNotificationImage,
 );
 router.post(
   '/notifications/test',

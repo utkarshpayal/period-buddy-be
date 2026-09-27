@@ -1,6 +1,7 @@
 import CycleLog from '../models/CycleLog.js';
 import CycleSettings from '../models/CycleSettings.js';
 import CycleSyncTip from '../models/CycleSyncTip.js';
+import CycleEra from '../models/CycleEra.js';
 import HabitCompletion from '../models/HabitCompletion.js';
 import CommunityPost from '../models/Community.js';
 import BestieCircle from '../models/BestieCircle.js';
@@ -13,6 +14,8 @@ import { computeCyclePredictions, CYCLE_PHASES } from '../utils/cycle.js';
 import {
   buildEra,
   buildWrapped,
+  mergePhaseEras,
+  parseEraInput,
   computeBadges,
   logMetrics,
   nextStreakMilestone,
@@ -40,6 +43,9 @@ const loadTips = async () => {
   const saved = await CycleSyncTip.find().sort({ order: 1 }).lean();
   return saved.length ? saved : DEFAULT_CYCLE_SYNC_TIPS;
 };
+
+/** Era cards with the CMS overrides applied. */
+const loadEras = async () => mergePhaseEras(await CycleEra.find().lean());
 
 /* ---------------------------------- App ---------------------------------- */
 
@@ -84,14 +90,15 @@ export const getEra = async (req, res, next) => {
     if (!settings) {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Please set up your cycle settings first');
     }
-    const [logs, tips] = await Promise.all([
+    const [logs, tips, eras] = await Promise.all([
       CycleLog.find({ userId: req.userId }).select('dateKey flow').sort({ dateKey: 1 }).lean(),
       loadTips(),
+      loadEras(),
     ]);
     const predictions = computeCyclePredictions(settings, logs);
     return sendResponse(res, HTTP_STATUS.OK, 'Era ready', {
-      era: buildEra(predictions, tips),
-      eras: PHASE_ERAS,
+      era: buildEra(predictions, tips, eras),
+      eras,
     });
   } catch (error) {
     next(error);
@@ -155,14 +162,19 @@ const parseTipInput = (body = {}) => {
 /** GET /api/cms/cycle-sync-tips */
 export const listTips = async (req, res, next) => {
   try {
-    const saved = await CycleSyncTip.find().sort({ phase: 1, category: 1, order: 1 }).lean();
+    const [saved, eraOverrides] = await Promise.all([
+      CycleSyncTip.find().sort({ phase: 1, category: 1, order: 1 }).lean(),
+      CycleEra.find().lean(),
+    ]);
     return sendResponse(res, HTTP_STATUS.OK, 'Tips fetched', {
       tips: saved.length ? saved : DEFAULT_CYCLE_SYNC_TIPS,
       usingDefaults: saved.length === 0,
       phases: CYCLE_PHASES,
       categories: CYCLE_SYNC_CATEGORIES,
       categoryLabels: CYCLE_SYNC_CATEGORY_LABELS,
-      eras: PHASE_ERAS,
+      eras: mergePhaseEras(eraOverrides),
+      eraDefaults: PHASE_ERAS,
+      customisedEras: eraOverrides.map((e) => e.phase),
     });
   } catch (error) {
     next(error);
@@ -262,6 +274,50 @@ export const deleteTip = async (req, res, next) => {
       metadata: { phase: tip.phase, title: tip.title },
     });
     return sendResponse(res, HTTP_STATUS.OK, 'Tip deleted', { id: String(tip._id) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** PUT /api/cms/cycle-sync-eras/:phase — body { name, emoji, tagline, aura: [hex, hex] }. */
+export const updateEra = async (req, res, next) => {
+  try {
+    const { phase } = req.params;
+    if (!CYCLE_PHASES.includes(phase))
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Unknown phase');
+    const parsed = parseEraInput(req.body);
+    if (parsed.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, parsed.error);
+    await CycleEra.findOneAndUpdate(
+      { phase },
+      { $set: { ...parsed.era, updatedBy: req.userId } },
+      { upsert: true, new: true, runValidators: true },
+    );
+    recordAudit({
+      req,
+      action: AUDIT_ACTIONS.CMS_ERA_UPDATED,
+      resourceType: 'cycle_era',
+      metadata: { phase, name: parsed.era.name },
+    });
+    return sendResponse(res, HTTP_STATUS.OK, 'Era saved', { eras: await loadEras() });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** DELETE /api/cms/cycle-sync-eras/:phase — back to the built-in era card. */
+export const resetEra = async (req, res, next) => {
+  try {
+    const { phase } = req.params;
+    if (!CYCLE_PHASES.includes(phase))
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Unknown phase');
+    await CycleEra.deleteOne({ phase });
+    recordAudit({
+      req,
+      action: AUDIT_ACTIONS.CMS_ERA_RESET,
+      resourceType: 'cycle_era',
+      metadata: { phase },
+    });
+    return sendResponse(res, HTTP_STATUS.OK, 'Era reset', { eras: await loadEras() });
   } catch (error) {
     next(error);
   }

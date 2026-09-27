@@ -136,5 +136,17 @@ router.put('/cycle-sync-tips/:id', requirePermission(P.CMS_MANAGE), genzControll
  * @access  Private (cms.manage)
  */
 router.delete('/cycle-sync-tips/:id', requirePermission(P.CMS_MANAGE), genzController.deleteTip);
+/**
+ * @route   PUT /api/cms/cycle-sync-eras/:phase
+ * @desc    Edit a phase's era card on the Phase Era screen. Body: { name, emoji, tagline, aura: [#RRGGBB, #RRGGBB] }
+ * @access  Private (cms.manage)
+ */
+router.put('/cycle-sync-eras/:phase', requirePermission(P.CMS_MANAGE), genzController.updateEra);
+/**
+ * @route   DELETE /api/cms/cycle-sync-eras/:phase
+ * @desc    Restore a phase's built-in era card
+ * @access  Private (cms.manage)
+ */
+router.delete('/cycle-sync-eras/:phase', requirePermission(P.CMS_MANAGE), genzController.resetEra);
 
 export default router;
