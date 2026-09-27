@@ -59,6 +59,7 @@ export const AUDIT_ACTIONS = {
   CMS_ERA_RESET: 'cms.cycle_era_reset',
   CMS_SETTINGS_UPDATED: 'cms.settings_updated',
   CMS_REVISION_RESTORED: 'cms.revision_restored',
+  CMS_LAUNCH_ANNOUNCED: 'cms.launch_announced',
   CHANGE_REQUEST_CREATED: 'change_request.created',
   CHANGE_REQUEST_APPROVED: 'change_request.approved',
   CHANGE_REQUEST_REJECTED: 'change_request.rejected',

@@ -1285,7 +1285,7 @@ The app sends `Authorization` when signed in (a bad token is ignored, never a 40
   - When `openFor` is set, only viewers matching it get `open`; everyone else gets `fallback`.
   - Testers always get `open`. A rollout picks people with a stable hash of the item key and user id (or device id when signed out).
   - An item hidden by a rollout comes back `enabled: false` but keeps a `soon` launch, so the app's route guard still blocks links to it.
-- **`action`**: `{ type, value, fallbackUrl }`, where `type` is:
+- **`action`**: `{ type, value, fallbackUrl }`. A link tile's action can be `none` only while the tile is Coming soon: that's a teaser for something not in the app yet, and it can't go live or be scheduled without an action. `type` is:
   - `route`: an in-app path.
   - `url`: an https website, opened in the in-app browser.
   - `app`: another app's link such as `whatsapp://…` or `youtube://…`, with an optional https `fallbackUrl` for when that app isn't installed. The `javascript:`, `data:`, `file:`, `vbscript:`, `blob:` and `about:` schemes are refused.
@@ -1302,7 +1302,7 @@ The app sends `Authorization` when signed in (a bad token is ignored, never a 40
 
 - `POST /api/app-config/banners/:id/click`: counts a tap.
 - `POST /api/app-config/banners/impressions`: body `{ ids: [...] }` (≤ 20). Counts a view. The app sends each id once per session.
-- `POST /api/app-config/launch/:itemKey/notify` (optional auth, `X-Device-Id`): body `{ platform? }`. Joins the "Notify me" list for a Coming soon item. `itemKey` is a feature key or `link:<tileId>`, URL-encoded. When signed in, it takes over this device's signed-out entry. Returns `{ onList: true }`, or `400` unless the item is taking sign-ups.
+- `POST /api/app-config/launch/:itemKey/notify` (optional auth, `X-Device-Id`): body `{ platform? }`. Joins the "Notify me" list for a Coming soon item. `itemKey` is a feature key or `link:<tileId>`, URL-encoded. When signed in, it takes over this device's signed-out entry. Signed-out entries also move to the account the next time that device fetches the config signed in. Returns `{ onList: true }`, or `400` unless the item is taking sign-ups.
 - `POST /api/app-config/launch/:itemKey/tap`: counts a tap on a locked tile.
 
 ### CMS endpoints (staff; `cms.read` to view, `cms.manage` to change)
@@ -1313,7 +1313,8 @@ The app sends `Authorization` when signed in (a bad token is ignored, never a 40
 |---|---|---|
 | GET | `/api/cms/config` | Editable state, `sectionVersions`, and a `catalog` (placements, sizes, colour keys, icons, actions, audiences, theme tokens with defaults, banner placements/layouts) |
 | PUT | `/api/cms/features` | `{ features: [...], customTiles: [...], version }`. Each item may carry `launch: { state: live\|coming_soon\|rolling_out\|paused, resumeTo, rollout: { percent, audience, othersSee, betaLabel }, soon: { headline, customHeadline, message, notifyMe, goLiveAt }, paused: { title, message, alternative, alternativeLabel, resumeAt }, testers: [user id \| email \| phone] }`. Testers are resolved to users; an unknown one gets `400`. A schedule must be in the future, unless it's the one already saved |
-| GET | `/api/cms/launches` | `{ stats: { [itemKey]: { waiting, lockedTaps } } }` |
+| GET | `/api/cms/launches` | `{ stats: { [itemKey]: { waiting, toNotify, deviceOnly, lastNotifiedAt, lockedTaps } } }`. `toNotify` counts sign-ups with an account that haven't had the "It's here" push yet. `deviceOnly` counts signed-out sign-ups a push can't reach |
+| POST | `/api/cms/launches/:itemKey/announce` | `cms.manage`. Body `{ title, body }`. Only once the item is live. Pushes to everyone on its waitlist with an account who hasn't been told yet, at most 5000 per send, through the broadcast worker (so it also goes to the in-app inbox and opens the feature's screen). Returns `202 { broadcastId, recipients, withPush, remaining }` |
 | GET | `/api/cms/launches/:itemKey/waitlist` | `cms.manage`. Returns `{ entries: [{ createdAt, platform, user }] }`, newest first, at most 5000 |
 | PUT | `/api/cms/home` | `{ homeSections: [{ key, visible, order }], version }` |
 | PUT | `/api/cms/theme` | `{ theme: { light, dark }, version }` |

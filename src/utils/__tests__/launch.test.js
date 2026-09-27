@@ -275,3 +275,17 @@ test('isItemKey accepts feature keys and link tile keys only', () => {
   for (const k of ['', 'link:', 'link:ABC', '../x', 'a b', null])
     assert.equal(isItemKey(k), false, String(k));
 });
+
+test('liveTeaserError: a tile with no action may only be Coming soon, unscheduled', async () => {
+  const { liveTeaserError } = await import('../launch.js');
+  const tile = (state, goLiveAt = null, type = 'none') => ({
+    title: 'PCOS programme',
+    action: { type },
+    launch: launch({ state, soon: { goLiveAt } }),
+  });
+  assert.equal(liveTeaserError([tile('coming_soon')]), null);
+  assert.equal(liveTeaserError([tile('live', null, 'url')]), null);
+  for (const t of [tile('live'), tile('rolling_out'), tile('paused'), tile('coming_soon', LATER)]) {
+    assert.match(liveTeaserError([t]), /needs a tap action/);
+  }
+});

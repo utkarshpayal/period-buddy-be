@@ -12,6 +12,8 @@ const launchInterestSchema = new mongoose.Schema(
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     deviceId: { type: String },
     platform: { type: String, enum: ['android', 'ios', 'web', null], default: null },
+    // Set when the CMS sent this person the "It's here" push.
+    notifiedAt: { type: Date, default: null },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 );
@@ -24,6 +26,12 @@ launchInterestSchema.index(
 launchInterestSchema.index(
   { itemKey: 1, deviceId: 1 },
   { unique: true, partialFilterExpression: { deviceId: { $type: 'string' } } },
+);
+
+// Claiming a device's signed-out entries when its owner signs in.
+launchInterestSchema.index(
+  { deviceId: 1 },
+  { partialFilterExpression: { deviceId: { $type: 'string' } } },
 );
 
 export default mongoose.model('LaunchInterest', launchInterestSchema);
