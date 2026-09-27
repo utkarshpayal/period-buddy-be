@@ -54,6 +54,8 @@ import companyFolderRoutes from './src/routes/companyFolderRoutes.js';
 import adminRoutes from './src/routes/adminRoutes.js';
 import appConfigRoutes from './src/routes/appConfigRoutes.js';
 import cmsRoutes from './src/routes/cmsRoutes.js';
+import hrRoutes from './src/routes/hrRoutes.js';
+import signRoutes from './src/routes/signRoutes.js';
 import genzRoutes from './src/routes/genzRoutes.js';
 import circleRoutes from './src/routes/circleRoutes.js';
 import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
@@ -225,6 +227,8 @@ app.use('/api/subscriptions', subscriptionRoutes);
 // once (adminRoutes has no catch-all, so a request under /api/admin/
 // subscriptions/* would otherwise fall through its middleware first too).
 app.use('/api/admin/subscriptions', adminSubscriptionRoutes);
+app.use('/api/admin/hr', hrRoutes);
+app.use('/api/sign', signRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/app-config', appConfigRoutes);
 app.use('/api/cms', cmsRoutes);

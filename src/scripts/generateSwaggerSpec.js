@@ -348,6 +348,8 @@ function determineTag(r) {
   if (g === 'appConfig') return 'App Config';
   if (g === 'genz') return 'Gen Z Pack';
   if (g === 'circle') return 'Bestie Circles';
+  if (g === 'hr') return 'People & letters';
+  if (g === 'sign') return 'Document signing';
   if (g === 'cms') return 'App CMS';
   console.warn(`No tag mapping for route group "${g}" (${r.method} ${r.path}) — add one`);
   return 'System & Health';
