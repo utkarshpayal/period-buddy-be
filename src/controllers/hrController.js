@@ -209,11 +209,12 @@ export const emailDocument = async ({
     ? `<p style="margin:24px 0"><a href="${link}" style="background:#C2416F;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:700;display:inline-block">Review &amp; sign</a></p>
        <p style="margin:0 0 14px;color:#736A79;font-size:13px">The link works for ${SIGN_LINK_DAYS} days. You don’t need an account.</p>`
     : '';
+  // The personal note is a postscript: after the letter and the sign button.
   const note = message
-    ? `<div style="margin:0 0 18px;padding:12px 14px;background:#FCEEF3;border-radius:10px">${paragraphsHtml(message)}</div>`
+    ? `<div style="margin:22px 0 0;padding:14px 16px 0;background:#FCEEF3;border-radius:10px">${paragraphsHtml(message)}</div>`
     : '';
   const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#1E1823;max-width:560px">
-    ${note}${paragraphsHtml(doc.emailBody)}${button}
+    ${paragraphsHtml(doc.emailBody)}${button}${note}
     <p style="margin:24px 0 0;color:#A39AA8;font-size:12px">${escapeHtml(doc.number)} · ${escapeHtml(companyName())}</p>
   </div>`;
   const subject = signed ? `Signed: ${doc.emailSubject}` : doc.emailSubject;
@@ -221,7 +222,7 @@ export const emailDocument = async ({
     to: member.email,
     subject,
     html,
-    text: `${message ? `${message}\n\n` : ''}${doc.emailBody}${link ? `\n\nReview & sign: ${link}` : ''}`,
+    text: `${doc.emailBody}${link ? `\n\nReview & sign: ${link}` : ''}${message ? `\n\n${message}` : ''}`,
     replyTo,
     attachments: [
       { filename: documentFileName(doc, fullName(member)), content: Buffer.from(pdfBytes) },
