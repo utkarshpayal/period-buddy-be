@@ -135,9 +135,24 @@ export const fillFixed = async (templateBytes, fields, values, { title = 'Docume
     if (f.wrap) {
       const regular = await font(f.font, f.bold);
       const bold = await font(f.font, true);
-      const ascent = regular.heightAtSize(f.fontSize, { descender: false });
-      wrapRuns(value, f.width, f.fontSize, regular, bold).forEach((words, i) => {
-        const w = runsWidth(words, f.fontSize, regular, bold);
+      // Too many lines for the space (a long name, say): ease the size down,
+      // to 80% at most, rather than run into what's printed below.
+      let size = f.fontSize;
+      let lines = wrapRuns(value, f.width, size, regular, bold);
+      while (f.maxLines && lines.length > f.maxLines && size > f.fontSize * 0.8) {
+        size = Math.max(f.fontSize * 0.8, size - 0.25);
+        lines = wrapRuns(value, f.width, size, regular, bold);
+      }
+      const lineGap = size * (f.lineHeight ?? 1.25);
+      const ascent = regular.heightAtSize(size, { descender: false });
+      let y = f.y + ascent;
+      lines.forEach((words) => {
+        // A blank line is a paragraph break: 0.76 of a line, as in the designs.
+        if (!words.length) {
+          y += lineGap * 0.76;
+          return;
+        }
+        const w = runsWidth(words, size, regular, bold);
         let x =
           f.align === 'center'
             ? f.x + (f.width - w) / 2
@@ -149,14 +164,15 @@ export const fillFixed = async (templateBytes, fields, values, { title = 'Docume
           if (word.text.trim()) {
             page.drawText(word.text, {
               x,
-              y: pageHeight - (f.y + ascent + i * gap),
-              size: f.fontSize,
+              y: pageHeight - y,
+              size,
               font: wf,
               color: hexColor(word.bold ? (f.boldColor ?? f.color) : f.color),
             });
           }
-          x += wf.widthOfTextAtSize(word.text, f.fontSize);
+          x += wf.widthOfTextAtSize(word.text, size);
         }
+        y += lineGap;
       });
       continue;
     }
@@ -165,7 +181,8 @@ export const fillFixed = async (templateBytes, fields, values, { title = 'Docume
     const widest = Math.max(...lines.map((l) => pdfFont.widthOfTextAtSize(l, f.fontSize)));
     const size =
       widest > f.width ? Math.max(f.fontSize * 0.6, (f.fontSize * f.width) / widest) : f.fontSize;
-    const ascent = pdfFont.heightAtSize(size, { descender: false });
+    // Shrunk text keeps its baseline, so it still sits on the design's line.
+    const ascent = pdfFont.heightAtSize(f.fontSize, { descender: false });
     const height = pageHeight;
     lines.forEach((line, i) => {
       const w = pdfFont.widthOfTextAtSize(line, size);
