@@ -46,6 +46,8 @@ export const PERMISSIONS = {
   STAFF_MANAGE: 'staff.manage',
   AUDIT_READ: 'audit.read',
   COMPANY_FILES_MANAGE: 'company_files.manage',
+  // People & letters: team member records, HR templates, offer letters, e-signing
+  HR_MANAGE: 'hr.manage',
 };
 
 const ALL = Object.values(PERMISSIONS);

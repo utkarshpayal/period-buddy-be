@@ -25,8 +25,9 @@ const getResendInstance = () => {
 /**
  * Sends an email using the Resend SDK.
  * Falls back to logging when Resend isn't configured in dev.
+ * `attachments`: [{ filename, content: Buffer }] (e.g. an HR letter PDF).
  */
-export const sendMail = async ({ to, subject, html, text, replyTo }) => {
+export const sendMail = async ({ to, subject, html, text, replyTo, cc, attachments }) => {
   const resend = getResendInstance();
 
   if (!resend) {
@@ -46,6 +47,8 @@ export const sendMail = async ({ to, subject, html, text, replyTo }) => {
       html,
       text,
       reply_to: replyTo,
+      ...(cc ? { cc } : {}),
+      ...(attachments?.length ? { attachments } : {}),
     });
 
     if (response.error) {

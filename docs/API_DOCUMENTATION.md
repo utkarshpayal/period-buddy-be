@@ -1334,6 +1334,37 @@ The app sends `Authorization` when signed in (a bad token is ignored, never a 40
 
 ---
 
+## People & letters (HR documents)
+
+Team member records, letter and certificate templates designed in Canva, generated PDFs, and e-signing. Staff routes need `hr.manage` (Super Admin). The full contract and product rules are in the Admin Workspace repo's `docs/hr-documents.md`.
+
+- **Templates:** a PDF downloaded from Canva (Share → Download → PDF Standard). There are two kinds:
+  - `fixed`: fields are drawn at set positions (PDF points from the top-left).
+  - `letterhead`: the PDF is the background, and `body` (with `{{placeholders}}` and `**bold**`) flows across as many pages as needed.
+- **Placeholders:** filled from the member record (`fullName`, `designation`, `startDate`… plus `custom.<key>`). A placeholder with no value gets `400 { data: { missing } }`.
+- **Storage:** PDFs are stored in MongoDB (`HrFile`), not S3, because the bucket is public-read and letters include salaries.
+- **Signing:** `POST /documents` with `send: true` emails the PDF, plus a "Review & sign" link to `ADMIN_APP_URL/sign/<token>` (valid 30 days) when the template needs a signature. Only the token's SHA-256 is stored. In development without Resend, the link is logged as `hr_sign_link_dev`.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/admin/hr/meta` | Placeholders, categories, employment types, statuses, fonts |
+| GET / POST | `/api/admin/hr/members` | List (`?search=&status=`, with `documentCount`) / add |
+| GET / PUT / DELETE | `/api/admin/hr/members/:id` | GET includes the member's documents. DELETE also removes their documents |
+| GET / POST | `/api/admin/hr/templates` | POST is multipart: `file` (PDF, ≤ 15 MB) + `data` (JSON) |
+| GET / PUT / DELETE | `/api/admin/hr/templates/:id` | PUT takes an optional new `file`; placed fields are kept |
+| GET | `/api/admin/hr/templates/:id/file` | The template PDF, for the field editor |
+| POST | `/api/admin/hr/documents/preview` | `{ templateId, memberId, values? }` → PDF |
+| POST | `/api/admin/hr/documents` | `{ templateId, memberId, values?, send, message? }` → `201 { document, emailed }` |
+| GET | `/api/admin/hr/documents` | `?memberId=&status=` |
+| GET | `/api/admin/hr/documents/:id/file` | `?version=original\|signed` |
+| POST | `/api/admin/hr/documents/:id/resend` | New signing link if the document is still unsigned |
+| POST | `/api/admin/hr/documents/:id/revoke` | Unsigned documents only |
+| GET | `/api/sign/:token` | Public. Returns `404` for a bad link and `410` for an expired or revoked one |
+| GET | `/api/sign/:token/file` | Public. The PDF, inline (the signed copy once signed) |
+| POST | `/api/sign/:token` | Public. `{ signature: PNG data URL ≤ 1 MB, name, agree: true }` → stamps it and emails copies. `409` if already signed |
+
+---
+
 ## Gen Z pack (Cycle Wrapped, Phase Era, Streaks & Badges, Bestie Circles)
 
 All private (`Authorization: Bearer`). Pure logic lives in `src/utils/genz.js` (unit-tested).
