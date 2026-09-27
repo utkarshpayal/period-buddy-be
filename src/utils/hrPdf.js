@@ -7,6 +7,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { PDFDocument, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
+import { fillText } from './hrValues.js';
 
 const FONT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'assets', 'fonts');
 // DejaVu: covers ₹ and most Latin text, and its licence allows embedding.
@@ -65,7 +66,17 @@ export const fillFixed = async (templateBytes, fields, values, { title = 'Docume
   for (const f of fields) {
     const page = pages[f.page];
     if (!page) continue;
-    const value = String(values[f.key] ?? '');
+    const { height: pageHeight } = page.getSize();
+    if (f.cover) {
+      page.drawRectangle({
+        x: f.cover.x,
+        y: pageHeight - f.cover.y - f.cover.height,
+        width: f.cover.width,
+        height: f.cover.height,
+        color: hexColor(f.cover.color),
+      });
+    }
+    const value = String(f.text ? fillText(f.text, values) : (values[f.key] ?? ''));
     if (!value) continue;
     const pdfFont = await font(f.font, f.bold);
     const lines = value.split(/\r?\n/);

@@ -109,7 +109,7 @@ test('memberValues and fillText fill built-in and custom placeholders', () => {
     ),
     'Dear Priya, you join Growth on 1 October 2026 (NURA/HR/2026/0001).',
   );
-  assert.deepEqual(extractPlaceholders('{{a}} {{b.c}} {{a}}', null), ['a', 'b.c']);
+  assert.deepEqual(extractPlaceholders('{{a}} {{b.c}} {{a}}', null), ['a', 'bC']);
 });
 
 test('resolveValues reports what is still missing, and overrides fill it', () => {
@@ -241,4 +241,101 @@ test('stampSignature embeds the image and pdfPages reads page sizes', async () =
   assert.equal(pages.length, 1);
   assert.equal(Math.round(pages[0].width), 595);
   await assert.rejects(() => pdfPages(Buffer.from('not a pdf')));
+});
+
+test('a fixed field can be a line of text with placeholders in it', async () => {
+  const t = parseTemplate(
+    {
+      name: 'C',
+      kind: 'fixed',
+      fields: [
+        {
+          id: 'r',
+          text: 'Ref: NC/CERT/{{documentNumber}} · {{startDate}}',
+          page: 0,
+          x: 10,
+          y: 10,
+          width: 200,
+        },
+      ],
+    },
+    [A4],
+  );
+  assert.equal(t.error, undefined);
+  assert.equal(t.template.fields[0].text, 'Ref: NC/CERT/{{documentNumber}} · {{startDate}}');
+  const keys = templatePlaceholders(t.template);
+  assert.ok(
+    keys.includes('documentNumber') && keys.includes('startDate') && !keys.includes('text'),
+  );
+  const bytes = await fillFixed(await blankPdf(), t.template.fields, {
+    documentNumber: '0001',
+    startDate: '1 October 2026',
+  });
+  assert.ok(bytes.length > 1500);
+});
+
+test('field names are forgiving: case, spaces, single braces and common aliases', async () => {
+  const { canonicalKey } = await import('../hrValues.js');
+  const cases = {
+    firstName: 'firstName',
+    'first name': 'firstName',
+    FIRSTNAME: 'firstName',
+    first_name: 'firstName',
+    'Candidate Full Name': 'fullName',
+    'Role Title': 'designation',
+    Mentor: 'managerName',
+    Stipend: 'compensation',
+    'Ref No': 'documentNumber',
+    'custom.Team Name': 'custom.teamName',
+    'Reporting time': 'reportingTime',
+  };
+  for (const [raw, key] of Object.entries(cases)) assert.equal(canonicalKey(raw), key, raw);
+  const v = memberValues(member, { documentNumber: 'NC/1' });
+  assert.equal(
+    fillText(
+      'Dear {{ First Name }}, as {Role Title} ({{ref no}}) in {{custom.team}} / {{team}}',
+      v,
+    ),
+    'Dear Priya, as Product Design Intern (NC/1) in Growth / ',
+  );
+  const t = {
+    kind: 'letterhead',
+    body: 'Hi {{First Name}} at {{Reporting Time}}',
+    emailSubject: '',
+    emailBody: '',
+  };
+  assert.deepEqual(resolveValues(t, v).missing, ['reportingTime']);
+  assert.deepEqual(resolveValues(t, v, { 'Reporting Time': '10 AM' }).missing, []);
+});
+
+test('a detected field covers the printed placeholder before drawing the value', async () => {
+  const t = parseTemplate(
+    {
+      name: 'C',
+      kind: 'fixed',
+      fields: [
+        {
+          id: 'n',
+          key: 'Candidate Full Name',
+          page: 0,
+          x: 100,
+          y: 200,
+          width: 300,
+          fontSize: 20,
+          cover: { x: 120, y: 198, width: 240, height: 26 },
+        },
+      ],
+    },
+    [A4],
+  );
+  assert.equal(t.template.fields[0].key, 'fullName');
+  assert.deepEqual(t.template.fields[0].cover, {
+    x: 120,
+    y: 198,
+    width: 240,
+    height: 26,
+    color: '#FFFFFF',
+  });
+  const bytes = await fillFixed(await blankPdf(), t.template.fields, { fullName: 'Priya Sharma' });
+  assert.ok(bytes.length > 1500);
 });

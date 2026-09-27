@@ -15,8 +15,8 @@ import {
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CUSTOM_KEY = /^[a-zA-Z][a-zA-Z0-9_]{0,30}$/;
 const HEX = /^#[0-9a-f]{6}$/i;
-const PLACEHOLDER = /\{\{\s*([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)?)\s*\}\}/g;
-const FIELD_KEY = /^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)?$/;
+// {{ key }} or { key }: the name inside is forgiving (see canonicalKey).
+const PLACEHOLDER = /\{\{\s*([^{}\n]{1,60}?)\s*\}\}|\{\s*([A-Za-z][^{}\n]{0,58}?)\s*\}/g;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 const values = (list) => list.map((x) => x.value);
@@ -133,18 +133,145 @@ export const memberValues = (member, { documentNumber = '', now = new Date() } =
     today: formatDate(now),
     companyName: companyName(),
     documentNumber,
+    documentSeq: String(documentNumber).split('/').pop() ?? '',
   };
-  for (const c of member.customFields ?? []) v[`custom.${c.key}`] = c.value ?? '';
+  for (const c of member.customFields ?? []) {
+    // Both {{custom.team}} and plain {{team}} work (a built-in wins a clash).
+    const key = camel(c.key);
+    v[`custom.${key}`] = c.value ?? '';
+    if (!(key in v)) v[key] = c.value ?? '';
+  }
   return v;
 };
 
 /* ------------------------------ Placeholders ------------------------------ */
 
+// What people actually type in a Canva design or a letter, squashed
+// (lower case, letters and digits only) → the built-in key it means.
+const ALIASES = {
+  firstname: 'firstName',
+  first: 'firstName',
+  givenname: 'firstName',
+  lastname: 'lastName',
+  surname: 'lastName',
+  familyname: 'lastName',
+  fullname: 'fullName',
+  name: 'fullName',
+  candidatefullname: 'fullName',
+  candidatename: 'fullName',
+  internname: 'fullName',
+  employeename: 'fullName',
+  recipientname: 'fullName',
+  membername: 'fullName',
+  email: 'email',
+  emailaddress: 'email',
+  emailid: 'email',
+  phone: 'phone',
+  mobile: 'phone',
+  phonenumber: 'phone',
+  mobilenumber: 'phone',
+  contact: 'phone',
+  designation: 'designation',
+  role: 'designation',
+  roletitle: 'designation',
+  position: 'designation',
+  jobtitle: 'designation',
+  positionheld: 'designation',
+  department: 'department',
+  dept: 'department',
+  team: 'department',
+  departmentteam: 'department',
+  employmenttype: 'employmentType',
+  type: 'employmentType',
+  startdate: 'startDate',
+  joiningdate: 'startDate',
+  dateofjoining: 'startDate',
+  doj: 'startDate',
+  fromdate: 'startDate',
+  enddate: 'endDate',
+  lastdate: 'endDate',
+  relievingdate: 'endDate',
+  todate: 'endDate',
+  lastworkingday: 'endDate',
+  compensation: 'compensation',
+  stipend: 'compensation',
+  salary: 'compensation',
+  ctc: 'compensation',
+  pay: 'compensation',
+  location: 'location',
+  mode: 'location',
+  workmode: 'location',
+  worklocation: 'location',
+  manager: 'managerName',
+  managername: 'managerName',
+  mentor: 'managerName',
+  mentorname: 'managerName',
+  reportingto: 'managerName',
+  reportingmanager: 'managerName',
+  supervisor: 'managerName',
+  address: 'address',
+  addressline1: 'address',
+  recipientaddress: 'address',
+  today: 'today',
+  date: 'today',
+  issuedate: 'today',
+  issued: 'today',
+  dateofissue: 'today',
+  currentdate: 'today',
+  companyname: 'companyName',
+  company: 'companyName',
+  organisation: 'companyName',
+  organization: 'companyName',
+  documentnumber: 'documentNumber',
+  ref: 'documentNumber',
+  refno: 'documentNumber',
+  reference: 'documentNumber',
+  referencenumber: 'documentNumber',
+  docno: 'documentNumber',
+  certificatenumber: 'documentNumber',
+  documentseq: 'documentSeq',
+  seq: 'documentSeq',
+  serial: 'documentSeq',
+  serialno: 'documentSeq',
+};
+const squash = (s) =>
+  String(s)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+const camel = (s) =>
+  String(s)
+    .trim()
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map((w, i) =>
+      i === 0 ? w.charAt(0).toLowerCase() + w.slice(1) : w.charAt(0).toUpperCase() + w.slice(1),
+    )
+    .join('');
+
+/**
+ * The key a typed field name means: "First Name", "first_name", "FIRSTNAME"
+ * and "firstName" are all `firstName`; "Candidate Full Name" is `fullName`;
+ * "custom.Team" is `custom.team`. Anything unknown becomes camelCase
+ * ("Reporting time" → `reportingTime`) and is asked for when sending.
+ */
+export const canonicalKey = (raw) => {
+  const s = String(raw ?? '').trim();
+  const m = /^custom\.(.+)$/i.exec(s);
+  if (m) return `custom.${camel(m[1])}`;
+  const alias = ALIASES[squash(s)];
+  if (alias) return alias;
+  const c = camel(s);
+  return /^[A-Za-z][A-Za-z0-9]*$/.test(c) ? c : '';
+};
+
 export const extractPlaceholders = (...strings) => {
   const keys = new Set();
   for (const s of strings) {
     if (typeof s !== 'string') continue;
-    for (const m of s.matchAll(PLACEHOLDER)) keys.add(m[1]);
+    for (const m of s.matchAll(PLACEHOLDER)) {
+      const key = canonicalKey(m[1] ?? m[2]);
+      if (key) keys.add(key);
+    }
   }
   return [...keys];
 };
@@ -152,13 +279,20 @@ export const extractPlaceholders = (...strings) => {
 /** Keys a template needs: its fields, body and email text. */
 export const templatePlaceholders = (t) => [
   ...new Set([
-    ...(t.kind === 'fixed' ? (t.fields ?? []).map((f) => f.key) : []),
+    ...(t.kind === 'fixed'
+      ? (t.fields ?? []).flatMap((f) => (f.text ? extractPlaceholders(f.text) : [f.key]))
+      : []),
     ...extractPlaceholders(t.kind === 'letterhead' ? t.body : '', t.emailSubject, t.emailBody),
   ]),
 ];
 
 export const fillText = (s, v) =>
-  typeof s === 'string' ? s.replace(PLACEHOLDER, (_, key) => v[key] ?? '') : '';
+  typeof s === 'string'
+    ? s.replace(PLACEHOLDER, (whole, a, b) => {
+        const key = canonicalKey(a ?? b);
+        return key ? (v[key] ?? '') : whole;
+      })
+    : '';
 
 /**
  * Member values overlaid with the ones typed in the send dialog, and the
@@ -168,11 +302,11 @@ export const fillText = (s, v) =>
 export const resolveValues = (template, base, overrides = {}) => {
   const merged = { ...base };
   for (const [k, val] of Object.entries(overrides ?? {})) {
-    if (FIELD_KEY.test(k) && typeof val === 'string' && val.trim())
-      merged[k] = val.trim().slice(0, 500);
+    const key = canonicalKey(k);
+    if (key && typeof val === 'string' && val.trim()) merged[key] = val.trim().slice(0, 2000);
   }
   const missing = templatePlaceholders(template).filter(
-    (k) => k !== 'documentNumber' && !String(merged[k] ?? '').trim(),
+    (k) => k !== 'documentNumber' && k !== 'documentSeq' && !String(merged[k] ?? '').trim(),
   );
   return { values: merged, missing };
 };
@@ -182,6 +316,16 @@ export const resolveValues = (template, base, overrides = {}) => {
 const num = (v, min, max) => {
   const n = Number(v);
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : null;
+};
+
+const parseCover = (raw, page) => {
+  if (!raw || typeof raw !== 'object' || !page) return null;
+  const x = num(raw.x, 0, page.width);
+  const y = num(raw.y, 0, page.height);
+  const width = num(raw.width, 1, page.width);
+  const height = num(raw.height, 1, page.height);
+  if ([x, y, width, height].includes(null)) return null;
+  return { x, y, width, height, color: HEX.test(raw.color ?? '') ? raw.color : '#FFFFFF' };
 };
 
 const parseBox = (raw, pages) => {
@@ -216,13 +360,24 @@ export const parseTemplate = (raw = {}, pages = []) => {
     const list = Array.isArray(raw.fields) ? raw.fields : [];
     if (list.length > MAX_FIELDS) return { error: `At most ${MAX_FIELDS} fields` };
     for (const f of list) {
-      if (!FIELD_KEY.test(f?.key ?? ''))
+      // A field is one {{key}}, or a line of `text` with {{keys}} in it
+      // ("Ref: NC/CERT/{{documentNumber}}"), so a sentence stays one run.
+      const fieldText = typeof f?.text === 'string' ? f.text.trim().slice(0, 300) : '';
+      const fieldKey = canonicalKey(f?.key);
+      if (!fieldText && !fieldKey) {
         return { error: `Field “${f?.key ?? ''}” isn’t a valid key` };
+      }
       const box = parseBox({ ...f, height: 10 }, pages);
-      if (!box) return { error: `Field {{${f.key}}} is off the page` };
+      if (!box) return { error: `Field ${fieldText || `{{${f.key}}}`} is off the page` };
       fields.push({
         id: String(f.id ?? `${f.key}-${fields.length}`).slice(0, 40),
-        key: f.key,
+        key: fieldKey || 'text',
+        ...(fieldText ? { text: fieldText } : {}),
+        // Paint over what's printed there first: the {{placeholder}} or
+        // [ sample ] text a Canva design came with (auto-detected in the editor).
+        ...(parseCover(f.cover, pages[box.page])
+          ? { cover: parseCover(f.cover, pages[box.page]) }
+          : {}),
         page: box.page,
         x: box.x,
         y: box.y,

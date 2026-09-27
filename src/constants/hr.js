@@ -49,6 +49,7 @@ export const PLACEHOLDERS = [
   { key: 'today', label: 'Today’s date' },
   { key: 'companyName', label: 'Company name' },
   { key: 'documentNumber', label: 'Document number' },
+  { key: 'documentSeq', label: 'Document number (running number only, e.g. 0007)' },
 ];
 
 export const MAX_TEMPLATE_BYTES = 15 * 1024 * 1024;
