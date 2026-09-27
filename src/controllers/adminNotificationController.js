@@ -13,13 +13,15 @@ import {
 } from '../utils/apiHelpers.js';
 import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
 import { isFcmReady, sendPushNotification } from '../utils/fcm.js';
+import { uploadBufferToS3 } from '../utils/s3.js';
+import { assertAllowedUpload } from '../utils/fileValidation.js';
 import {
   buildAudienceFilter,
   countAudience,
   enqueueBroadcast,
   laneFor,
 } from '../utils/pushBroadcastWorker.js';
-import { parseNotificationRoute } from '../utils/notificationRoute.js';
+import { parseNotificationData } from '../utils/notificationRoute.js';
 import PushSchedule from '../models/PushSchedule.js';
 import { describeSchedule, nextOccurrence, parseScheduleInput } from '../utils/pushSchedule.js';
 
@@ -119,6 +121,36 @@ export const searchRecipients = async (req, res, next) => {
 };
 
 /**
+ * POST /api/admin/notifications/upload — upload a push's big-picture image
+ * (multipart field "file"; JPG, PNG or WebP up to 1MB) to S3 under notifications/.
+ * Returns { url, key }; the url goes in a send's `image`.
+ */
+export const uploadNotificationImage = async (req, res, next) => {
+  try {
+    if (!req.file) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'No file uploaded');
+    let mimeType;
+    try {
+      mimeType = assertAllowedUpload(req.file.buffer, ['image']);
+    } catch (validationError) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, validationError.message);
+    }
+    // The bytes decide, not the browser's claimed type (GIF/AVIF won't render in a push).
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Use a JPG, PNG or WebP image');
+    }
+    const { url, key } = await uploadBufferToS3({
+      buffer: req.file.buffer,
+      mimeType,
+      originalName: req.file.originalname,
+      folder: 'notifications',
+    });
+    return sendResponse(res, HTTP_STATUS.CREATED, 'Image uploaded', { url, key });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * POST /api/admin/notifications/test — send the message to one user (by
  * email) right away, so an admin can preview it on a real device before
  * broadcasting.
@@ -135,8 +167,8 @@ export const sendTestNotification = async (req, res, next) => {
       );
     }
 
-    const parsedRoute = parseNotificationRoute(req.body.route);
-    if (parsedRoute.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, parsedRoute.error);
+    const pushData = parseNotificationData(req.body);
+    if (pushData.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, pushData.error);
 
     const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     if (!email) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Email is required');
@@ -164,7 +196,7 @@ export const sendTestNotification = async (req, res, next) => {
       data: {
         type: 'system',
         test: 'true',
-        ...(parsedRoute.route && { route: parsedRoute.route }),
+        ...pushData.data,
       },
     });
     if (!messageId) {
@@ -189,8 +221,9 @@ export const sendTestNotification = async (req, res, next) => {
  * POST /api/admin/notifications/broadcasts — queue a push to every user in
  * the audience. Returns 202 immediately; the worker sends in batches in the
  * background and the admin polls GET /broadcasts/:id for progress.
- * Body: { title, body, audience?, userIds?, saveToInbox?, route? } — `route` is an
- * optional in-app path (e.g. "/tracker") the notification opens when tapped.
+ * Body: { title, body, audience?, userIds?, saveToInbox?, route?, icon?, image? } —
+ * `route` is an optional in-app path (e.g. "/tracker") the notification opens
+ * when tapped; `icon` one of NOTIFICATION_ICONS; `image` an https big picture.
  */
 export const createBroadcast = async (req, res, next) => {
   try {
@@ -206,9 +239,9 @@ export const createBroadcast = async (req, res, next) => {
 
     const audience = parseAudience(req.body.audience);
 
-    // Optional in-app screen the notification opens when tapped.
-    const parsedRoute = parseNotificationRoute(req.body.route);
-    if (parsedRoute.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, parsedRoute.error);
+    // Optional in-app screen the tap opens, icon and big-picture image.
+    const pushData = parseNotificationData(req.body);
+    if (pushData.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, pushData.error);
 
     let userIds;
     let recipientPreview;
@@ -248,7 +281,7 @@ export const createBroadcast = async (req, res, next) => {
       audience,
       userIds,
       recipientPreview,
-      data: parsedRoute.route ? { route: parsedRoute.route } : undefined,
+      data: pushData.data,
       saveToInbox: req.body.saveToInbox !== false,
       ...counts,
       createdBy: req.userId,
@@ -422,8 +455,8 @@ const buildScheduleFields = async (body, { allowPastStart }) => {
   const timing = parseScheduleInput(body, new Date(), { allowPastStart });
   if (timing.error) return { status: HTTP_STATUS.BAD_REQUEST, error: timing.error };
 
-  const parsedRoute = parseNotificationRoute(body.route);
-  if (parsedRoute.error) return { status: HTTP_STATUS.BAD_REQUEST, error: parsedRoute.error };
+  const pushData = parseNotificationData(body);
+  if (pushData.error) return { status: HTTP_STATUS.BAD_REQUEST, error: pushData.error };
 
   const audience = parseAudience(body.audience);
   let userIds;
@@ -451,7 +484,7 @@ const buildScheduleFields = async (body, { allowPastStart }) => {
       audience,
       userIds,
       recipientPreview,
-      data: parsedRoute.route ? { route: parsedRoute.route } : undefined,
+      data: pushData.data,
       saveToInbox: body.saveToInbox !== false,
       ...timing.schedule,
     },
