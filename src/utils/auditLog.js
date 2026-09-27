@@ -55,6 +55,8 @@ export const AUDIT_ACTIONS = {
   CMS_TIP_UPDATED: 'cms.cycle_tip_updated',
   CMS_TIP_DELETED: 'cms.cycle_tip_deleted',
   CMS_TIPS_SEEDED: 'cms.cycle_tips_seeded',
+  CMS_ERA_UPDATED: 'cms.cycle_era_updated',
+  CMS_ERA_RESET: 'cms.cycle_era_reset',
   CMS_SETTINGS_UPDATED: 'cms.settings_updated',
   CMS_REVISION_RESTORED: 'cms.revision_restored',
   CHANGE_REQUEST_CREATED: 'change_request.created',
