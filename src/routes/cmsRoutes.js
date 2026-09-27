@@ -29,7 +29,7 @@ const imageUpload = multer({
 router.get('/config', requirePermission(P.CMS_READ), appConfigController.getCmsConfig);
 /**
  * @route   PUT /api/cms/features
- * @desc    Save the full feature list and admin link tiles. Body: { features: [{ key, enabled, placement, order, size, colorKey, title?, description?, badge?, audience? }], customTiles?: [{ id?, title, description?, icon, colorKey, placement, size, order, enabled, badge?, action: { type: route|url|app, value, fallbackUrl? }, audience? }], version? } — version (this section's) guards against overwriting a newer save (409)
+ * @desc    Save the full feature list and admin link tiles. Body: { features: [{ key, enabled, placement, order, size, colorKey, title?, description?, badge?, audience?, launch? }], customTiles?: [{ id?, title, description?, icon, colorKey, placement, size, order, enabled, badge?, action: { type: route|url|app, value, fallbackUrl? }, audience?, launch? }], version? }. Each item may carry launch: { state: live|coming_soon|rolling_out|paused, resumeTo, rollout, soon, paused, testers: [user id | email | phone] } (see utils/launch.js) — version (this section's) guards against overwriting a newer save (409)
  * @access  Private (cms.manage)
  */
 router.put('/features', requirePermission(P.CMS_MANAGE), appConfigController.updateFeatures);
@@ -68,6 +68,23 @@ router.post(
   '/revisions/:id/restore',
   requirePermission(P.CMS_MANAGE),
   appConfigController.restoreRevision,
+);
+
+/**
+ * @route   GET /api/cms/launches
+ * @desc    Launch stats per item key (feature key or link:<tileId>): { stats: { [itemKey]: { waiting, lockedTaps } } }
+ * @access  Private (cms.read)
+ */
+router.get('/launches', requirePermission(P.CMS_READ), appConfigController.getLaunchStats);
+/**
+ * @route   GET /api/cms/launches/:itemKey/waitlist
+ * @desc    Everyone who tapped "Notify me" on an item, newest first (up to 5000), with their name, email and phone when signed in
+ * @access  Private (cms.manage)
+ */
+router.get(
+  '/launches/:itemKey/waitlist',
+  requirePermission(P.CMS_MANAGE),
+  appConfigController.getWaitlist,
 );
 
 /**

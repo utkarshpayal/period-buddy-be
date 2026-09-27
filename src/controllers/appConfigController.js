@@ -1,13 +1,16 @@
 import AppConfig from '../models/AppConfig.js';
 import AppBanner from '../models/AppBanner.js';
-import AppConfigRevision, { REVISIONS_KEPT } from '../models/AppConfigRevision.js';
+import AppConfigRevision from '../models/AppConfigRevision.js';
+import LaunchInterest from '../models/LaunchInterest.js';
+import LaunchStat from '../models/LaunchStat.js';
+import User from '../models/User.js';
+import { CONFIG_KEY, ensureConfig, saveSection } from '../utils/appConfigStore.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { isValidObjectId } from '../utils/apiHelpers.js';
 import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
 import { uploadBufferToS3 } from '../utils/s3.js';
 import { assertAllowedUpload } from '../utils/fileValidation.js';
-import logger from '../utils/logger.js';
 import {
   AUDIENCE_PLATFORMS,
   AUDIENCE_SEGMENTS,
@@ -37,10 +40,15 @@ import {
   parseTheme,
   toPublicBanner,
 } from '../utils/appConfig.js';
-
-const CONFIG_KEY = 'app';
-const STALE_SAVE =
-  'Someone else published this section since you opened it. Reload to see their changes, then try again.';
+import {
+  acceptsNotify,
+  isDeviceId,
+  isItemKey,
+  mergeLaunch,
+  parseLaunch,
+  resolveLaunch,
+  testerKind,
+} from '../utils/launch.js';
 
 const liveBannerFilter = (now) => ({
   active: true,
@@ -49,92 +57,6 @@ const liveBannerFilter = (now) => ({
     { $or: [{ endAt: null }, { endAt: { $gt: now } }] },
   ],
 });
-
-// init() resolves once the unique `key` index is built (cached after the
-// first call), which is what makes concurrent first saves safe.
-const ensureConfig = async () => {
-  await AppConfig.init();
-  await AppConfig.updateOne(
-    { key: CONFIG_KEY },
-    { $setOnInsert: { key: CONFIG_KEY, version: 0 } },
-    { upsert: true },
-  ).catch((error) => {
-    if (error?.code !== 11000) throw error; // lost a create race: the doc exists now
-  });
-};
-
-/** What each section stores, as saved in a revision and restored from one. */
-const sectionData = (config, section) => {
-  switch (section) {
-    case 'features':
-      return { features: config.features ?? [], customTiles: config.customTiles ?? [] };
-    case 'homeSections':
-      return { homeSections: config.homeSections ?? [] };
-    case 'theme':
-      return { theme: config.theme ?? { light: {}, dark: {} } };
-    case 'settings':
-      return { settings: config.settings ?? {} };
-    default:
-      return {};
-  }
-};
-
-const pruneRevisions = async (section) => {
-  const stale = await AppConfigRevision.find({ section })
-    .sort({ createdAt: -1 })
-    .skip(REVISIONS_KEPT)
-    .select('_id')
-    .lean();
-  if (stale.length) await AppConfigRevision.deleteMany({ _id: { $in: stale.map((r) => r._id) } });
-};
-
-/**
- * Publish one section of the config singleton: bump the global version (the
- * app's cache key) and that section's version (the CMS's lock), then keep a
- * revision for rollback. With `expected` set, a save on top of a newer save
- * of the *same section* is refused. Saves never upsert with the version
- * filter: a mismatch must fail, not insert a second singleton.
- */
-const saveSection = async (section, set, req, { expected, note, restoredFrom } = {}) => {
-  await ensureConfig();
-  const filter = { key: CONFIG_KEY };
-  const field = `sectionVersions.${section}`;
-  if (Number.isInteger(expected)) {
-    // A config saved before per-section versions existed has no counter
-    // yet; the CMS reads that as 0.
-    if (expected === 0) filter.$or = [{ [field]: 0 }, { [field]: { $exists: false } }];
-    else filter[field] = expected;
-  }
-  const config = await AppConfig.findOneAndUpdate(
-    filter,
-    {
-      $set: { ...set, updatedBy: req.userId },
-      $inc: { version: 1, [field]: 1 },
-    },
-    { new: true },
-  ).lean();
-  if (!config) return { conflict: STALE_SAVE };
-
-  try {
-    await AppConfigRevision.create({
-      section,
-      data: sectionData(config, section),
-      sectionVersion: config.sectionVersions?.[section] ?? 0,
-      note: note ?? null,
-      restoredFrom: restoredFrom ?? null,
-      createdBy: req.userId,
-    });
-    await pruneRevisions(section);
-  } catch (error) {
-    // History is a convenience; a failed snapshot must not fail the publish.
-    logger.error('cms_revision_failed', {
-      action: 'cms_revision_failed',
-      section,
-      error: error.message,
-    });
-  }
-  return { config };
-};
 
 /** Banners are part of what the app caches, so a banner change bumps the global version. */
 const touchVersion = async (req) => {
@@ -158,7 +80,22 @@ const publicTile = (t) => ({
   badge: t.badge || null,
   action: t.action,
   audience: { ...DEFAULT_AUDIENCE, ...(t.audience || {}) },
+  launch: mergeLaunch(t.launch),
 });
+
+const withLaunch = (f) => ({ ...f, launch: mergeLaunch(f.launch) });
+
+/** Every feature and link tile with its item key and full launch, for lookups. */
+const launchItems = (config) => [
+  ...mergeFeatures(config?.features).map((f) => ({
+    itemKey: f.key,
+    launch: mergeLaunch(f.launch),
+  })),
+  ...(config?.customTiles ?? []).map((t) => ({
+    itemKey: `link:${t.id}`,
+    launch: mergeLaunch(t.launch),
+  })),
+];
 
 /* ------------------------------- Public (app) ------------------------------ */
 
@@ -177,13 +114,42 @@ export const getAppConfig = async (req, res, next) => {
       AppConfig.findOne({ key: CONFIG_KEY }).lean(),
       AppBanner.find(liveBannerFilter(now)).sort({ priority: -1, createdAt: -1 }).limit(50).lean(),
     ]);
-    res.set('Cache-Control', 'no-cache');
+
+    // Launch states are worked out per person (testers, rollout buckets,
+    // Notify me), so the answer is private and varies by who's asking. A
+    // build that doesn't send X-Nura-Launch can't show a locked tile, so it
+    // only gets the items that are plainly open.
+    const supportsLaunch = req.get('X-Nura-Launch') === '1';
+    const deviceId = isDeviceId(req.get('X-Device-Id')) ? req.get('X-Device-Id') : null;
+    const viewer = { userId: req.userId ? String(req.userId) : null, deviceId, onList: new Set() };
+    const features = mergeFeatures(config?.features).map(withLaunch);
+    const tiles = (config?.customTiles ?? []).map(publicTile);
+    if (supportsLaunch && (viewer.userId || deviceId)) {
+      const asking = [...features.map((f) => f.key), ...tiles.map((t) => `link:${t.id}`)];
+      const who = [];
+      if (viewer.userId) who.push({ user: viewer.userId });
+      if (deviceId) who.push({ deviceId, user: { $exists: false } });
+      const joined = await LaunchInterest.find({ itemKey: { $in: asking }, $or: who })
+        .select('itemKey')
+        .lean();
+      viewer.onList = new Set(joined.map((j) => j.itemKey));
+    }
+    const forViewer = (item, itemKey) => {
+      const { launch, ...rest } = item;
+      const resolved = resolveLaunch(itemKey, launch, viewer, now);
+      if (resolved.hidden) {
+        return { ...rest, enabled: false, ...(supportsLaunch ? { launch: resolved.launch } : {}) };
+      }
+      if (!supportsLaunch) return { ...rest, enabled: rest.enabled && resolved.plainOpen };
+      return { ...rest, launch: resolved.launch };
+    };
+
+    res.set('Cache-Control', 'private, no-cache');
+    res.set('Vary', 'Authorization, X-Device-Id, X-Nura-Launch');
     return sendResponse(res, HTTP_STATUS.OK, 'App config fetched', {
       version: config?.version ?? 0,
-      features: mergeFeatures(config?.features).map(
-        ({ defaults: _d, icon: _i, route: _r, ...f }) => f,
-      ),
-      customTiles: (config?.customTiles ?? []).map(publicTile),
+      features: features.map(({ defaults: _d, icon: _i, route: _r, ...f }) => forViewer(f, f.key)),
+      customTiles: tiles.map((t) => forViewer(t, `link:${t.id}`)),
       homeSections: mergeHomeSections(config?.homeSections).map(({ label: _l, ...s }) => s),
       theme: { light: config?.theme?.light ?? {}, dark: config?.theme?.dark ?? {} },
       settings: mergeSettings(config?.settings),
@@ -224,6 +190,66 @@ export const trackBannerImpressions = async (req, res, next) => {
   }
 };
 
+/**
+ * POST /api/app-config/launch/:itemKey/notify — "Notify me" on a Coming soon
+ * tile. Signed in, the entry is the account's (taking over this device's
+ * signed-out entry if there is one); signed out, it's the device's.
+ */
+export const notifyLaunch = async (req, res, next) => {
+  try {
+    const { itemKey } = req.params;
+    if (!isItemKey(itemKey)) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Unknown feature');
+    const deviceId = isDeviceId(req.get('X-Device-Id')) ? req.get('X-Device-Id') : null;
+    if (!req.userId && !deviceId) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Missing device id');
+    }
+    const config = await AppConfig.findOne({ key: CONFIG_KEY }).lean();
+    const item = launchItems(config).find((i) => i.itemKey === itemKey);
+    if (!item || !acceptsNotify(item.launch)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'This feature isn’t taking sign-ups');
+    }
+    const platform = ['android', 'ios', 'web'].includes(req.body?.platform)
+      ? req.body.platform
+      : null;
+
+    try {
+      if (req.userId) {
+        const mine = await LaunchInterest.exists({ itemKey, user: req.userId });
+        const claimed =
+          !mine &&
+          deviceId &&
+          (await LaunchInterest.findOneAndUpdate(
+            { itemKey, deviceId, user: { $exists: false } },
+            { $set: { user: req.userId }, $unset: { deviceId: 1 } },
+          ));
+        if (!mine && !claimed) {
+          await LaunchInterest.create({ itemKey, user: req.userId, platform });
+        }
+      } else if (!(await LaunchInterest.exists({ itemKey, deviceId }))) {
+        await LaunchInterest.create({ itemKey, deviceId, platform });
+      }
+    } catch (error) {
+      if (error?.code !== 11000) throw error; // a double tap raced us: already on the list
+    }
+    return sendResponse(res, HTTP_STATUS.OK, 'You’re on the list', { onList: true });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/app-config/launch/:itemKey/tap — the app's beacon for a tap on a locked tile. */
+export const trackLockedTap = async (req, res, next) => {
+  try {
+    const { itemKey } = req.params;
+    if (isItemKey(itemKey)) {
+      await LaunchStat.updateOne({ itemKey }, { $inc: { lockedTaps: 1 } }, { upsert: true });
+    }
+    return sendResponse(res, HTTP_STATUS.OK, 'Recorded', {});
+  } catch (error) {
+    next(error);
+  }
+};
+
 /* ---------------------------------- CMS ---------------------------------- */
 
 const editableState = (config) => ({
@@ -236,7 +262,7 @@ const editableState = (config) => ({
   },
   updatedAt: config?.updatedAt ?? null,
   updatedBy: config?.updatedBy ?? null,
-  features: mergeFeatures(config?.features),
+  features: mergeFeatures(config?.features).map(withLaunch),
   customTiles: (config?.customTiles ?? []).map(publicTile),
   homeSections: mergeHomeSections(config?.homeSections),
   theme: { light: config?.theme?.light ?? {}, dark: config?.theme?.dark ?? {} },
@@ -279,7 +305,7 @@ const respondWithConfig = async (res, message) =>
   sendResponse(res, HTTP_STATUS.OK, message, editableState(await loadEditable()));
 
 const publish = async (req, res, { section, set, audit, message, metadata }) => {
-  const saved = await saveSection(section, set, req, { expected: req.body?.version });
+  const saved = await saveSection(section, set, req.userId, { expected: req.body?.version });
   if (saved.conflict) return sendError(res, HTTP_STATUS.CONFLICT, saved.conflict);
   recordAudit({
     req,
@@ -289,6 +315,68 @@ const publish = async (req, res, { section, set, audit, message, metadata }) => 
     metadata: { ...metadata, version: saved.config.version },
   });
   return respondWithConfig(res, message);
+};
+
+/**
+ * Tester entries typed in the CMS (user ids, emails or phone numbers) →
+ * `{ id, label }` per entry, or `{ error }` naming the first one with no
+ * app user behind it.
+ */
+const resolveTesters = async (entries) => {
+  const unique = [...new Set(entries)];
+  if (!unique.length) return { byEntry: new Map() };
+  const ids = unique.filter((e) => testerKind(e) === 'id');
+  const emails = unique.filter((e) => testerKind(e) === 'email').map((e) => e.toLowerCase());
+  const phones = unique.filter((e) => testerKind(e) === 'phone');
+  const digits = (p) => p.replace(/[^0-9]/g, '');
+  const or = [];
+  if (ids.length) or.push({ _id: { $in: ids } });
+  if (emails.length) or.push({ email: { $in: emails } });
+  // Phones are stored as typed at sign-up ("+91 98765 43210"), so match the
+  // last 10 digits with anything between them.
+  for (const p of phones) {
+    or.push({ phone: { $regex: `${digits(p).slice(-10).split('').join('[^0-9]*')}$` } });
+  }
+  const users = await User.find({ $or: or }).select('email phone firstName lastName').lean();
+
+  const byEntry = new Map();
+  for (const entry of unique) {
+    const kind = testerKind(entry);
+    const user = users.find((u) =>
+      kind === 'id'
+        ? String(u._id) === entry.toLowerCase()
+        : kind === 'email'
+          ? u.email === entry.toLowerCase()
+          : u.phone && digits(u.phone).endsWith(digits(entry).slice(-10)),
+    );
+    if (!user) return { error: `No app user with the email or phone “${entry}”` };
+    const name = [user.firstName, user.lastName].filter(Boolean).join(' ');
+    byEntry.set(entry, { id: String(user._id), label: user.email || user.phone || name || entry });
+  }
+  return { byEntry };
+};
+
+/**
+ * Validate each item's `launch` against what's saved (for `since` and
+ * schedules) and resolve its testers. Mutates the parsed items.
+ */
+const applyLaunches = async (items, rawItems, savedByKey, keyOf) => {
+  const parsed = [];
+  for (let i = 0; i < items.length; i += 1) {
+    const r = parseLaunch(rawItems[i]?.launch, savedByKey.get(keyOf(items[i])));
+    if (r.error) return { error: `${r.error} (“${items[i].title || items[i].key}”)` };
+    parsed.push(r);
+  }
+  const resolved = await resolveTesters(parsed.flatMap((r) => r.testers));
+  if (resolved.error) return { error: resolved.error };
+  parsed.forEach((r, i) => {
+    const seen = new Set();
+    const testers = r.testers
+      .map((e) => resolved.byEntry.get(e))
+      .filter((t) => !seen.has(t.id) && seen.add(t.id));
+    items[i].launch = { ...r.launch, testers };
+  });
+  return {};
 };
 
 /**
@@ -302,6 +390,36 @@ export const updateFeatures = async (req, res, next) => {
     if (parsed.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, parsed.error);
     const tiles = parseCustomTiles(req.body?.customTiles);
     if (tiles.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, tiles.error);
+
+    const saved = await AppConfig.findOne({ key: CONFIG_KEY })
+      .select('features customTiles')
+      .lean();
+    const savedLaunch = new Map([
+      ...(saved?.features ?? []).map((f) => [f.key, f.launch]),
+      ...(saved?.customTiles ?? []).map((t) => [`link:${t.id}`, t.launch]),
+    ]);
+    const featureLaunches = await applyLaunches(
+      parsed.features,
+      req.body.features,
+      savedLaunch,
+      (f) => f.key,
+    );
+    if (featureLaunches.error)
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, featureLaunches.error);
+    const tileLaunches = await applyLaunches(
+      tiles.tiles,
+      req.body.customTiles ?? [],
+      savedLaunch,
+      (t) => `link:${t.id}`,
+    );
+    if (tileLaunches.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, tileLaunches.error);
+
+    const notLive = Object.fromEntries(
+      [
+        ...parsed.features.map((f) => [f.key, f.launch.state]),
+        ...tiles.tiles.map((t) => [`link:${t.id}`, t.launch.state]),
+      ].filter(([, state]) => state !== 'live'),
+    );
     return await publish(req, res, {
       section: 'features',
       set: { features: parsed.features, customTiles: tiles.tiles },
@@ -310,6 +428,7 @@ export const updateFeatures = async (req, res, next) => {
       metadata: {
         hidden: parsed.features.filter((f) => !f.enabled).map((f) => f.key),
         linkTiles: tiles.tiles.length,
+        launches: notLive,
       },
     });
   } catch (error) {
@@ -433,7 +552,7 @@ export const restoreRevision = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Unknown section');
     }
 
-    const saved = await saveSection(revision.section, set, req, {
+    const saved = await saveSection(revision.section, set, req.userId, {
       note: `Restored the version from ${new Date(revision.createdAt).toISOString()}`,
       restoredFrom: revision._id,
     });
@@ -445,6 +564,49 @@ export const restoreRevision = async (req, res, next) => {
       metadata: { section: revision.section, revisionId: String(revision._id) },
     });
     return respondWithConfig(res, 'Revision restored');
+  } catch (error) {
+    next(error);
+  }
+};
+
+/* -------------------------------- Launches -------------------------------- */
+
+/** GET /api/cms/launches — Notify me sign-ups and locked taps per item key. */
+export const getLaunchStats = async (req, res, next) => {
+  try {
+    const [waiting, taps] = await Promise.all([
+      LaunchInterest.aggregate([{ $group: { _id: '$itemKey', count: { $sum: 1 } } }]),
+      LaunchStat.find().lean(),
+    ]);
+    const stats = {};
+    const entry = (key) => (stats[key] ??= { waiting: 0, lockedTaps: 0 });
+    for (const w of waiting) entry(w._id).waiting = w.count;
+    for (const t of taps) entry(t.itemKey).lockedTaps = t.lockedTaps;
+    return sendResponse(res, HTTP_STATUS.OK, 'Launch stats fetched', { stats });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const WAITLIST_LIMIT = 5000;
+
+/** GET /api/cms/launches/:itemKey/waitlist — who tapped Notify me, newest first (for a CSV). */
+export const getWaitlist = async (req, res, next) => {
+  try {
+    const { itemKey } = req.params;
+    if (!isItemKey(itemKey)) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Unknown feature');
+    const entries = await LaunchInterest.find({ itemKey })
+      .sort({ createdAt: -1 })
+      .limit(WAITLIST_LIMIT)
+      .populate('user', 'firstName lastName email phone')
+      .lean();
+    return sendResponse(res, HTTP_STATUS.OK, 'Waitlist fetched', {
+      entries: entries.map((e) => ({
+        createdAt: e.createdAt,
+        platform: e.platform ?? null,
+        user: e.user ?? null,
+      })),
+    });
   } catch (error) {
     next(error);
   }

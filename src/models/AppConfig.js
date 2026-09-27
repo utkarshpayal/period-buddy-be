@@ -39,6 +39,8 @@ const featureSchema = new mongoose.Schema(
     description: { type: String, default: null },
     badge: { type: String, default: null },
     audience: { type: audienceSchema, default: undefined },
+    // Coming soon / rolling out / live / paused; validated by utils/launch.js.
+    launch: { type: mongoose.Schema.Types.Mixed, default: undefined },
   },
   { _id: false },
 );
@@ -58,6 +60,8 @@ const customTileSchema = new mongoose.Schema(
     badge: { type: String, default: null },
     action: { type: actionSchema, required: true },
     audience: { type: audienceSchema, default: undefined },
+    // Coming soon / rolling out / live / paused; validated by utils/launch.js.
+    launch: { type: mongoose.Schema.Types.Mixed, default: undefined },
   },
   { _id: false },
 );

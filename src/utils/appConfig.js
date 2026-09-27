@@ -223,6 +223,8 @@ export const mergeFeatures = (saved = []) => {
       description: s.description || d.description,
       badge: s.badge || null,
       audience: { ...DEFAULT_AUDIENCE, ...(s.audience || {}) },
+      // Raw; utils/launch.js mergeLaunch() fills it in (it imports this file).
+      launch: s.launch ?? null,
       defaults: {
         title: d.title,
         description: d.description,
