@@ -1,19 +1,27 @@
 /* eslint-disable no-console -- CLI script output */
 // Adds The Nura Care's four default HR templates to People & letters, built
-// from the Canva designs ("… (Portal template)" copies in the team Canva,
-// exported to src/assets/hr-templates/):
+// from the Canva designs and exported to src/assets/hr-templates/:
 //
-//   Internship offer letter        letterhead, 2 pages, collects a signature
-//   Internship completion letter   letterhead
-//   Experience letter              the plain letterhead
-//   Internship certificate         fixed design with placed fields
+//   Internship offer letter        the 2-page Canva letter, fixed; collects the
+//                                  intern's signature in the acceptance box
+//   Internship completion letter   the Canva letter, fixed
+//   Experience letter              the plain letterhead, text laid out on it
+//   Internship certificate         the Canva certificate, fixed
 //
-//   node src/scripts/seedHrTemplates.js           # dry run: validates, lists what it would add
-//   node src/scripts/seedHrTemplates.js --apply   # writes to MONGODB_URI
+// The offer and completion PDFs are the Canva originals with the sample
+// person's details redacted (the text is removed, not painted over); every
+// heading, table rule, box, stamp and signature stays as designed. Fields
+// write the person's details back into those exact spots, in the design's
+// own fonts (Arimo / Cormorant Garamond) and colours.
 //
-// Idempotent: a template whose name already exists is skipped. Each goes
-// through the same pdfPages() / parseTemplate() as the Admin Workspace upload.
-// Positions: Canva px × 0.75 = PDF points (794 px wide A4 = 595.5 pt).
+//   node src/scripts/seedHrTemplates.js            # dry run: validates, lists what it would do
+//   node src/scripts/seedHrTemplates.js --apply    # adds the ones that aren't there yet
+//   node src/scripts/seedHrTemplates.js --update   # also replaces existing ones of the same
+//                                                  # name (PDF + fields; documents already sent
+//                                                  # keep their own copy)
+//
+// Each goes through the same pdfPages() / parseTemplate() as the Admin
+// Workspace upload.
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
@@ -30,16 +38,48 @@ const PINK = '#D9607E';
 const INK = '#2C2F36';
 const MUTED = '#6B7280';
 
-// Body area of the A4 designs: below the masthead rule / title, above the
-// founder signature and stamp (Canva y ≈ 890 px) and the contact bar.
-const A4_LAYOUT = {
-  marginLeft: 46.5,
-  marginRight: 46.5,
-  marginBottom: 175,
-  fontSize: 9.5,
-  lineHeight: 1.6,
-  font: 'sans',
+// Field y is the top of the text. Positions below are the baselines measured
+// in the Canva PDFs (with PyMuPDF), turned into tops with each font's ascent
+// plus a per-font correction found by rendering and re-measuring.
+const ASCENT = { sans: 0.9053, serif: 0.924 };
+const SHIFT = { sans: 2.22, serif: 0 };
+const top = (baseline, size, font = 'sans') =>
+  Math.round((baseline + SHIFT[font] - ASCENT[font] * size) * 100) / 100;
+
+/** One line of text at a measured baseline. */
+const line = (id, text, baseline, opts = {}) => {
+  const { size = 9.38, font = 'sans', page = 0, x = 46.5, width = 502.7 } = opts;
+  return {
+    id,
+    key: 'text',
+    text,
+    page,
+    x,
+    y: top(baseline, size, font),
+    width,
+    fontSize: size,
+    font,
+    bold: opts.bold ?? false,
+    color: opts.color ?? INK,
+    align: opts.align ?? 'left',
+    ...(opts.lineHeight ? { lineHeight: opts.lineHeight } : {}),
+  };
 };
+
+/** A paragraph that wraps, with **bold** runs in navy, like the Canva body text. */
+const para = (id, text, baseline, opts = {}) => ({
+  ...line(id, text, baseline, opts),
+  wrap: true,
+  lineHeight: opts.lineHeight ?? 1.68, // 15.76 pt at 9.38 pt
+  boldColor: NAVY,
+});
+
+/** A value in a "key terms" table row (label column stays as designed). */
+const cell = (id, text, baseline, opts = {}) =>
+  line(id, text, baseline, { size: 8.63, x: 159.1, width: 390, ...opts });
+
+const HEADER_REF = (text) =>
+  line('ref', text, 120.78, { size: 7.88, color: MUTED, x: 349, width: 200, align: 'right' });
 
 export const TEMPLATES = [
   {
@@ -47,51 +87,75 @@ export const TEMPLATES = [
     data: {
       name: 'Internship offer letter',
       category: 'offer_letter',
-      kind: 'letterhead',
+      kind: 'fixed',
       requiresSignature: true,
-      layout: { ...A4_LAYOUT, marginTop: 135 },
-      body: `Ref: {{documentNumber}}  ·  {{today}}
-
-**Offer of Internship — {{designation}}**
-
-**{{fullName}}**
-{{address}}
-{{email}}
-
-Dear {{firstName}},
-
-Congratulations, and welcome. Following your application and interview, we are delighted to offer you an internship at **{{companyName}}** as **{{designation}}**. We were genuinely impressed by your curiosity and the care you bring to your work — both of which matter a great deal here.
-
-The key terms of your internship are set out below.
-
-**Position:** {{designation}}
-**Department:** {{department}}
-**Duration:** {{custom.duration}}
-**Working hours:** {{custom.workingHours}}
-**Location:** {{location}}
-**Reporting to:** {{managerName}}
-
-**1 · HOURS AND PLACE OF WORK**
-You are expected to be available during the hours stated above and to keep your mentor informed of your availability. Any change of schedule or planned leave should be agreed with your mentor in advance. Where the internship is remote, you are responsible for a stable internet connection and a workspace suitable for calls.
-
-**2 · CONFIDENTIALITY**
-During and after your internship you will keep confidential all non-public information you come across — patient and customer details, health records, business plans, pricing, code, designs and internal documents. Nothing may be copied, shared or published outside {{companyName}} without written permission. All work product created during the internship belongs to {{companyName}}.
-
-**3 · CODE OF CONDUCT**
-We work with people at vulnerable moments, so conduct matters as much as output. You agree to:
-•  treat colleagues, clients and patients with respect, dignity and privacy;
-•  represent {{companyName}} honestly and never give medical advice beyond your remit;
-•  follow our data-handling, safety and social-media guidelines;
-•  raise any concern or mistake early — we would always rather hear it than not.
-
-This internship is a learning engagement and does not constitute employment. Either party may end it with 7 days' written notice; {{companyName}} may end it immediately for a breach of confidentiality or conduct.
-
-We are very glad you are joining us, and we hope this is a period you look back on as genuinely useful. To accept, please sign below by **{{custom.acceptBy}}**.
-
-Warm regards,
-
-**ACCEPTANCE BY THE INTERN**
-I have read and understood the terms above and accept the internship offered by {{companyName}}.`,
+      // Acceptance box, page 2: the signature sits on the "Signature" rule,
+      // the name is pre-filled on "Name" and the signing date goes on "Date".
+      signatureBox: {
+        page: 1,
+        x: 62.3,
+        y: 555.5,
+        width: 174,
+        height: 18.5,
+        dateX: 452.9,
+        dateY: top(568.3, 8.63),
+        noteX: 62.3,
+        noteY: 594,
+      },
+      fields: [
+        HEADER_REF('Ref: {{documentNumber}}  ·  {{today}}'),
+        line('title', 'Offer of Internship — {{designation}}', 152.4, {
+          size: 19.51,
+          font: 'serif',
+          color: NAVY,
+        }),
+        line('name', '{{fullName}}', 181.8, { bold: true, color: NAVY, width: 350 }),
+        line('contact', '{{address}}\n{{email}}', 198.49, {
+          size: 8.63,
+          color: MUTED,
+          width: 350,
+          lineHeight: 1.651, // 14.25 pt, as designed
+        }),
+        line('greeting', 'Dear {{fullName}},', 258.28),
+        para(
+          'intro',
+          'Congratulations, and welcome. Following your application and interview, we are delighted to offer you an internship at **{{companyName}}** as {{designation}}. We were genuinely impressed by your curiosity and the care you bring to your work — both of which matter a great deal here.',
+          284.54,
+        ),
+        cell('position', '{{designation}}', 371.01, { bold: true, color: NAVY }),
+        cell('department', '{{department}}', 396.75),
+        cell('duration', '{{custom.duration}}', 422.5),
+        cell('hours', '{{custom.workingHours}}', 448.24),
+        cell('location', '{{location}}', 473.98),
+        cell('reportingTo', '{{managerName}}', 499.73),
+        line('ref2', 'Ref: {{documentNumber}}', 83.62, {
+          page: 1,
+          size: 7.88,
+          bold: true,
+          color: NAVY,
+          x: 349,
+          width: 200,
+          align: 'right',
+        }),
+        line(
+          'notice',
+          'This internship is a learning engagement and does not constitute employment. Either party may end it with 7 days’',
+          335.17,
+          { page: 1 },
+        ),
+        para(
+          'acceptBy',
+          'please sign and return a copy of this letter by **{{custom.acceptBy}}**.',
+          394.44,
+          { page: 1 },
+        ),
+        line('acceptName', '{{fullName}}', 568.3, {
+          page: 1,
+          size: 8.63,
+          x: 257.6,
+          width: 174,
+        }),
+      ],
       emailSubject: 'Your internship offer from {{companyName}}',
       emailBody: `Hi {{firstName}},
 
@@ -109,28 +173,34 @@ Warm regards,
     data: {
       name: 'Internship completion letter',
       category: 'internship_completion',
-      kind: 'letterhead',
-      layout: { ...A4_LAYOUT, marginTop: 188 },
-      body: `Ref: {{documentNumber}}  ·  {{today}}
-
-This is to certify that **{{fullName}}** has successfully completed an internship with **{{companyName}}** as **{{designation}}** from **{{startDate}}** to **{{endDate}}**.
-
-**Intern name:** {{fullName}}
-**Position held:** {{designation}}, {{department}}
-**Period:** {{startDate}} – {{endDate}}
-**Mode:** {{location}}
-**Mentor:** {{managerName}}
-
-**SCOPE OF WORK**
-During the internship, {{firstName}} contributed to:
-•  {{custom.scope1}}
-•  {{custom.scope2}}
-•  {{custom.scope3}}
-
-**CONDUCT AND PERFORMANCE**
-Throughout the internship {{firstName}} was {{custom.conduct}}, worked well with the team, and handled sensitive information with the discretion our work requires. We rate the overall performance as **{{custom.rating}}**.
-
-We thank {{firstName}} for the contribution made to {{companyName}} and wish them every success in the years ahead.`,
+      kind: 'fixed',
+      fields: [
+        HEADER_REF('Ref: {{documentNumber}}  ·  {{today}}'),
+        para(
+          'certify',
+          'This is to certify that **{{fullName}}** has successfully completed an internship with **{{companyName}}** as **{{designation}}** from **{{startDate}}** to **{{endDate}}**.',
+          196.66,
+        ),
+        cell('internName', '{{fullName}}', 239.6, { bold: true, color: NAVY }),
+        cell('position', '{{designation}}, {{department}}', 265.34),
+        cell('period', '{{startDate}} – {{endDate}}  ·  {{custom.duration}}', 291.09),
+        cell('mode', '{{location}}', 316.84),
+        cell('mentor', '{{managerName}}', 342.58),
+        line('scopeIntro', 'During the internship, {{firstName}} contributed to:', 400.49),
+        line('scope1', '{{custom.scope1}}', 420.74, { x: 60, width: 489 }),
+        line('scope2', '{{custom.scope2}}', 436.5, { x: 60, width: 489 }),
+        line('scope3', '{{custom.scope3}}', 452.26, { x: 60, width: 489 }),
+        para(
+          'conduct',
+          'Throughout the internship {{firstName}} was {{custom.conduct}}, worked well with the team, and handled sensitive information with the discretion our work requires. We rate the overall performance as **{{custom.rating}}**.',
+          503.36,
+        ),
+        para(
+          'thanks',
+          'We thank {{firstName}} for the contribution made to {{companyName}} and wish {{firstName}} every success in the years ahead.',
+          562.63,
+        ),
+      ],
       emailSubject: 'Your internship completion letter from {{companyName}}',
       emailBody: `Hi {{firstName}},
 
@@ -148,13 +218,23 @@ Warm regards,
       name: 'Experience letter',
       category: 'experience_letter',
       kind: 'letterhead',
-      layout: { ...A4_LAYOUT, marginTop: 120 },
+      // Body area below the masthead rule, above the signature, stamp and
+      // contact bar; the Canva letters' own type size and spacing.
+      layout: {
+        marginTop: 120,
+        marginLeft: 46.5,
+        marginRight: 46.5,
+        marginBottom: 175,
+        fontSize: 9.38,
+        lineHeight: 1.68,
+        font: 'sans',
+      },
       body: `Date: {{today}}
 Ref: {{documentNumber}}
 
 **TO WHOMSOEVER IT MAY CONCERN**
 
-This is to certify that **{{fullName}}** worked with **{{companyName}}** as **{{designation}}** in the {{department}} team from **{{startDate}}** to **{{endDate}}**.
+This is to certify that **{{fullName}}** worked with **{{companyName}}** as **{{designation}}** ({{department}}) from **{{startDate}}** to **{{endDate}}**.
 
 During this period {{firstName}} was sincere, dependable and a valued member of the team, and handled every responsibility with care and professionalism.
 
@@ -176,78 +256,35 @@ Warm regards,
       name: 'Internship certificate',
       category: 'certificate',
       kind: 'fixed',
-      // Canva: name box 248–808 px at y 401 px; sentence 208–848 px at y 490 px;
-      // ref / issued at x 729 px, y 693 / 711 px (landscape Letter, 1056 × 816 px).
+      // Landscape Letter; the name and sentence are centred on the page.
       fields: [
-        {
-          id: 'name',
-          key: 'fullName',
-          page: 0,
-          x: 186,
-          y: 301,
-          width: 420,
-          fontSize: 36,
+        line('name', '{{fullName}}', 336.72, {
+          size: 39,
           font: 'serif',
-          bold: true,
           color: PINK,
+          x: 96,
+          width: 600,
           align: 'center',
-        },
-        {
-          id: 'line1',
-          key: 'text',
-          text: 'for successfully completing an internship as {{designation}} at {{companyName}}',
-          page: 0,
-          x: 156,
-          y: 368,
-          width: 480,
-          fontSize: 10,
-          font: 'sans',
-          bold: false,
-          color: INK,
-          align: 'center',
-        },
-        {
-          id: 'line2',
-          key: 'text',
-          text: 'from {{startDate}} to {{endDate}}, demonstrating dedication, professionalism and care throughout.',
-          page: 0,
-          x: 156,
-          y: 385,
-          width: 480,
-          fontSize: 10,
-          font: 'sans',
-          bold: false,
-          color: INK,
-          align: 'center',
-        },
-        {
-          id: 'ref',
-          key: 'text',
-          text: 'Ref: {{documentNumber}}',
-          page: 0,
-          x: 547,
-          y: 520,
-          width: 160,
-          fontSize: 9,
-          font: 'sans',
+        }),
+        para(
+          'sentence',
+          'for successfully completing an internship as **{{designation}}** at {{companyName}} from **{{startDate}}** to **{{endDate}}**, demonstrating dedication, professionalism and care throughout.',
+          376.41,
+          { size: 9.75, x: 158, width: 476, align: 'center', lineHeight: 1.692 },
+        ),
+        line('ref', 'Ref: {{documentNumber}}', 528.29, {
+          size: 9,
           bold: true,
           color: NAVY,
-          align: 'left',
-        },
-        {
-          id: 'issued',
-          key: 'text',
-          text: 'Issued {{today}}',
-          page: 0,
           x: 547,
-          y: 533.5,
-          width: 160,
-          fontSize: 8,
-          font: 'sans',
-          bold: false,
+          width: 200,
+        }),
+        line('issued', 'Issued {{today}}', 540.4, {
+          size: 8.25,
           color: MUTED,
-          align: 'left',
-        },
+          x: 547,
+          width: 200,
+        }),
       ],
       emailSubject: 'Your internship certificate from {{companyName}}',
       emailBody: `Hi {{firstName}},
@@ -261,14 +298,18 @@ Warm regards,
 ];
 
 const main = async () => {
-  const apply = process.argv.includes('--apply');
+  const update = process.argv.includes('--update');
+  const apply = update || process.argv.includes('--apply');
   await mongoose.connect(process.env.MONGODB_URI);
   try {
-    const existing = new Set((await HrTemplate.find().select('name').lean()).map((t) => t.name));
+    const existing = new Map(
+      (await HrTemplate.find().select('name file').lean()).map((t) => [t.name, t]),
+    );
     console.log(`db: ${mongoose.connection.name}`);
     for (const { file, data } of TEMPLATES) {
-      if (existing.has(data.name)) {
-        console.log(`  = ${data.name} (already there, skipped)`);
+      const current = existing.get(data.name);
+      if (current && !update) {
+        console.log(`  = ${data.name} (already there, skipped; --update replaces it)`);
         continue;
       }
       const bytes = fs.readFileSync(path.join(DIR, file));
@@ -276,7 +317,7 @@ const main = async () => {
       const parsed = parseTemplate(data, pages);
       if (parsed.error) throw new Error(`${data.name}: ${parsed.error}`);
       console.log(
-        `  + ${data.name} (${data.kind}, ${pages.length} page${pages.length > 1 ? 's' : ''})`,
+        `  ${current ? '~' : '+'} ${data.name} (${data.kind}, ${pages.length} page${pages.length > 1 ? 's' : ''}, ${parsed.template.fields.length} fields)`,
       );
       if (!apply) continue;
       const stored = await HrFile.create({
@@ -285,15 +326,25 @@ const main = async () => {
         size: bytes.length,
         data: bytes,
       });
-      await HrTemplate.create({ ...parsed.template, file: stored._id, fileName: file, pages });
+      const doc = { ...parsed.template, file: stored._id, fileName: file, pages };
+      if (current) {
+        await HrTemplate.updateOne({ _id: current._id }, { $set: doc });
+        // Sent documents copy the PDF they were made from, so the old
+        // template file is no longer referenced.
+        await HrFile.deleteOne({ _id: current.file, purpose: 'template' });
+      } else {
+        await HrTemplate.create(doc);
+      }
     }
-    if (!apply) console.log('Dry run: nothing written. Re-run with --apply to add them.');
+    if (!apply) console.log('Dry run: nothing written. Re-run with --apply (or --update).');
   } finally {
     await mongoose.disconnect();
   }
 };
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+// Only when run as a script, so tests and render checks can import TEMPLATES.
+if (process.argv[1] === fileURLToPath(import.meta.url))
+  main().catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });

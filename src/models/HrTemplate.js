@@ -2,7 +2,18 @@ import mongoose from 'mongoose';
 import { TEMPLATE_CATEGORIES, TEMPLATE_KINDS } from '../constants/hr.js';
 
 const boxSchema = new mongoose.Schema(
-  { page: Number, x: Number, y: Number, width: Number, height: Number },
+  {
+    page: Number,
+    x: Number,
+    y: Number,
+    width: Number,
+    height: Number,
+    // where the signing date and the e-signature note go (fixed designs)
+    dateX: Number,
+    dateY: Number,
+    noteX: Number,
+    noteY: Number,
+  },
   { _id: false },
 );
 
