@@ -77,7 +77,7 @@ export const signup = async (req, res, next) => {
       {
         email: normalizedEmail,
         firstName,
-        lastName,
+        lastName: lastName || '',
         password: hashedPassword,
         phone,
         dateOfBirth,
@@ -329,11 +329,11 @@ export const googleAuth = async (req, res, next) => {
       didChange = true;
       if (didChange) await user.save();
     } else {
-      // firstName/lastName require a 2-char minimum — Google occasionally
-      // supplies a single-character given/family name (or none at all).
+      // firstName requires a 2-char minimum — Google occasionally supplies a
+      // single-character given name (or none at all). lastName is optional.
       user = new User({
         firstName: givenName && givenName.trim().length >= 2 ? givenName.trim() : 'Nura',
-        lastName: familyName && familyName.trim().length >= 2 ? familyName.trim() : 'User',
+        lastName: familyName?.trim() || '',
         email: normalizedEmail,
         googleId,
         authProvider: 'google',

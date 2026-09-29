@@ -88,6 +88,8 @@ Payload:
 }
 ```
 
+Only `firstName`, `email` and `password` are required. `lastName`, `phone`, `dateOfBirth` and `gender` are optional (the app collects date of birth later, in onboarding).
+
 Response `201`:
 
 ```json

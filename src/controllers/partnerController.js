@@ -26,6 +26,9 @@ import { ACTIVE_ACCOUNT_FILTER } from '../utils/accountStatus.js';
 const isLiveAccount = async (userId) =>
   Boolean(userId) && Boolean(await User.exists({ _id: userId, ...ACTIVE_ACCOUNT_FILTER }));
 
+// lastName is optional, so never leave a trailing space or "undefined".
+const fullName = (user) => [user?.firstName, user?.lastName].filter(Boolean).join(' ');
+
 const CARE_SUGGESTIONS_CACHE_MS = 24 * 60 * 60 * 1000;
 
 function generateCode() {
@@ -150,7 +153,7 @@ export const connectPartner = async (req, res, next) => {
       userId: partnerProfile.userId,
       type: 'system',
       title: 'Partner Connected 🎉',
-      body: `${me.firstName} ${me.lastName} is now synced as your partner.`,
+      body: `${fullName(me)} is now synced as your partner.`,
       sentAt: new Date(),
     });
 
@@ -158,7 +161,7 @@ export const connectPartner = async (req, res, next) => {
       userId: req.userId,
       type: 'system',
       title: 'Connected to Partner 🎉',
-      body: `You are now synced with ${ownerUser.firstName} ${ownerUser.lastName}.`,
+      body: `You are now synced with ${fullName(ownerUser)}.`,
       sentAt: new Date(),
     });
 
@@ -166,7 +169,7 @@ export const connectPartner = async (req, res, next) => {
       type: 'partner_notification',
       notification: {
         title: 'Partner Connected 🎉',
-        body: `${me.firstName} ${me.lastName} is now synced as your partner.`,
+        body: `${fullName(me)} is now synced as your partner.`,
       },
     });
 

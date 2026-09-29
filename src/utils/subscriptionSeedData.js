@@ -48,7 +48,7 @@ export const subscriptionFeatureData = [
   {
     key: 'voice_checkin_calls',
     name: 'Voice Check-in Calls',
-    description: 'Outbound "call me now" and scheduled cycle check-in phone calls.',
+    description: 'Scheduled cycle check-in phone calls.',
     category: 'Care',
     icon: 'Phone',
     billingCycle: 'monthly',

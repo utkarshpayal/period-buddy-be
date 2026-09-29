@@ -105,7 +105,7 @@ export const FEATURE_CATALOG = [
     title: 'Nura AI',
     description: 'Ask privately, anytime',
     icon: 'help-circle-outline',
-    route: '/(app)/qa?new=1',
+    route: '/(app)/qa',
     placement: 'wellness_hub',
     colorKey: 'info',
   },

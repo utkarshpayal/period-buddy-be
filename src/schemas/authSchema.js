@@ -29,11 +29,10 @@ export const validateSignup = [
     .withMessage('First name must be between 2 and 50 characters'),
 
   body('lastName')
+    .optional({ nullable: true })
     .trim()
-    .notEmpty()
-    .withMessage('Last name is required')
-    .isLength({ min: 2, max: 50 })
-    .withMessage('Last name must be between 2 and 50 characters'),
+    .isLength({ max: 50 })
+    .withMessage('Last name must be at most 50 characters'),
 
   body('email')
     .trim()
@@ -142,10 +141,10 @@ export const validateProfileUpdate = [
     .withMessage('First name must be between 2 and 50 characters'),
 
   body('lastName')
-    .optional()
+    .optional({ nullable: true })
     .trim()
-    .isLength({ min: 2, max: 50 })
-    .withMessage('Last name must be between 2 and 50 characters'),
+    .isLength({ max: 50 })
+    .withMessage('Last name must be at most 50 characters'),
 
   body('phone')
     .optional({ nullable: true, checkFalsy: true })
