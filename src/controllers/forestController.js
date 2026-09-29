@@ -1,6 +1,7 @@
 import CycleLog from '../models/CycleLog.js';
 import ForestLog from '../models/ForestLog.js';
 import Habit from '../models/Habit.js';
+import HabitCompletion from '../models/HabitCompletion.js';
 import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
@@ -11,6 +12,12 @@ import {
   validateDateKey,
   validateMonthKey,
 } from '../utils/apiHelpers.js';
+import {
+  buildTaskDays,
+  computeForestGrowth,
+  hasCycleEntry,
+  shiftDateKey,
+} from '../utils/forestGrowth.js';
 
 const getTier = (healthyTreeCount) => {
   if (healthyTreeCount >= 20) return 'Ancient Evergreen Canopy';
@@ -19,7 +26,42 @@ const getTier = (healthyTreeCount) => {
   return 'Sprout Woodland';
 };
 
-const calculateForest = async (userId) => {
+// The caller's local date (?today=), trusted only within a day of the server's
+// UTC date, so the app's "today" matches the day its logs are saved under.
+const resolveToday = (clientToday) => {
+  const serverToday = todayDateKey();
+  if (
+    validateDateKey(clientToday) &&
+    [shiftDateKey(serverToday, -1), serverToday, shiftDateKey(serverToday, 1)].includes(clientToday)
+  ) {
+    return clientToday;
+  }
+  return serverToday;
+};
+
+// A year of task dates is plenty: a tree takes about three weeks.
+const loadForestGrowth = async (userId, habits, today) => {
+  const since = shiftDateKey(today, -365);
+  const [cycleLogs, completions, waterings] = await Promise.all([
+    CycleLog.find({ userId, dateKey: { $gte: since } }).lean(),
+    HabitCompletion.find({ userId, dateKey: { $gte: since } }, { dateKey: 1 }).lean(),
+    ForestLog.find({ userId, dateKey: { $gte: since } }, { dateKey: 1 }).lean(),
+  ]);
+  return computeForestGrowth(
+    buildTaskDays({
+      logDates: cycleLogs.filter(hasCycleEntry).map((log) => log.dateKey),
+      // completedDates still holds completions made before HabitCompletion existed.
+      habitDates: [
+        ...completions.map((c) => c.dateKey),
+        ...habits.flatMap((h) => h.completedDates || []).filter((key) => key >= since),
+      ],
+      waterDates: waterings.map((w) => w.dateKey),
+    }),
+    today,
+  );
+};
+
+const calculateForest = async (userId, today = todayDateKey()) => {
   const [cycleLogs, habits, forestLogs, user] = await Promise.all([
     CycleLog.find({ userId }).sort({ dateKey: -1 }).limit(120),
     Habit.find({ userId, isActive: true }),
@@ -82,13 +124,14 @@ const calculateForest = async (userId) => {
     careActions: forestLogs.length,
     activeHabits: habits.length,
     trees,
-    todayCareLogged: forestLogs.some((log) => log.dateKey === todayDateKey()),
+    todayCareLogged: forestLogs.some((log) => log.dateKey === today),
+    growth: await loadForestGrowth(userId, habits, today),
   };
 };
 
 export const getForestStatus = async (req, res, next) => {
   try {
-    const status = await calculateForest(req.userId);
+    const status = await calculateForest(req.userId, resolveToday(req.query.today));
     return sendResponse(res, HTTP_STATUS.OK, 'Forest status fetched', status);
   } catch (error) {
     next(error);
@@ -150,7 +193,7 @@ export const logForestCare = async (req, res, next) => {
       await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: tokensEarned } });
     }
 
-    const status = await calculateForest(req.userId);
+    const status = await calculateForest(req.userId, resolveToday(req.body.today || dateKey));
 
     return sendResponse(
       res,

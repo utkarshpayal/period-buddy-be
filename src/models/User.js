@@ -11,11 +11,13 @@ const userSchema = new mongoose.Schema(
       minlength: 2,
       maxlength: 50,
     },
+    // Optional since signup only asks for a first name. Empty string rather
+    // than missing, so older display code that concatenates it never prints
+    // "undefined".
     lastName: {
       type: String,
-      required: true,
+      default: '',
       trim: true,
-      minlength: 2,
       maxlength: 50,
     },
     email: {

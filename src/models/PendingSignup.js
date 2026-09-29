@@ -13,7 +13,7 @@ const pendingSignupSchema = new mongoose.Schema(
       trim: true,
     },
     firstName: { type: String, required: true, trim: true },
-    lastName: { type: String, required: true, trim: true },
+    lastName: { type: String, default: '', trim: true },
     password: { type: String, required: true }, // already hashed before save
     phone: { type: String, trim: true },
     dateOfBirth: { type: Date },

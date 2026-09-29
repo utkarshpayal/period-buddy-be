@@ -17,7 +17,14 @@ export const comparePassword = async (password, hashedPassword) => {
   }
 };
 
-export const validatePasswordStrength = (password) => {
-  const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
-  return passwordRegex.test(password);
-};
+// 8+ characters with a lowercase letter, an uppercase letter, a number and a
+// symbol. Any non-alphanumeric character counts as the symbol (it used to be
+// only @$!%*?&, which rejected ordinary passwords like "Hello#123"). The app's
+// signup checklist (lib/password.ts in The-Nura-App) mirrors this rule.
+export const validatePasswordStrength = (password) =>
+  typeof password === 'string' &&
+  password.length >= 8 &&
+  /[a-z]/.test(password) &&
+  /[A-Z]/.test(password) &&
+  /\d/.test(password) &&
+  /[^A-Za-z\d]/.test(password);
