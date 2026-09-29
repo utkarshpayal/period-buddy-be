@@ -71,6 +71,11 @@ const homeSectionSchema = new mongoose.Schema(
     key: { type: String, required: true },
     visible: { type: Boolean, default: true },
     order: { type: Number, default: 0 },
+    // Heading override (null = the app's text), who sees it, and when.
+    text: { type: String, default: null },
+    audience: { type: audienceSchema, default: undefined },
+    startAt: { type: Date, default: null },
+    endAt: { type: Date, default: null },
   },
   { _id: false },
 );
@@ -81,6 +86,11 @@ const appConfigSchema = new mongoose.Schema(
     features: { type: [featureSchema], default: [] },
     customTiles: { type: [customTileSchema], default: [] },
     homeSections: { type: [homeSectionSchema], default: [] },
+    // { profile: [{ key, visible, order }], care_hub: [...], ... } — the
+    // other screens' blocks (SCREEN_SECTIONS); a screen not saved yet is absent.
+    screenSections: { type: mongoose.Schema.Types.Mixed, default: {} },
+    // { care_hub: 'Title' } — hub title overrides; saved with screenSections.
+    screenTitles: { type: mongoose.Schema.Types.Mixed, default: {} },
     // { light: { token: color }, dark: { token: color } } — overrides only.
     theme: {
       light: { type: mongoose.Schema.Types.Mixed, default: {} },
@@ -95,6 +105,7 @@ const appConfigSchema = new mongoose.Schema(
     sectionVersions: {
       features: { type: Number, default: 0 },
       homeSections: { type: Number, default: 0 },
+      screenSections: { type: Number, default: 0 },
       theme: { type: Number, default: 0 },
       settings: { type: Number, default: 0 },
     },

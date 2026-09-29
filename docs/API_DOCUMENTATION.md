@@ -1273,7 +1273,7 @@ Managed from the separate **The-Nura-CMS** portal. The app reads one public endp
 
 ### GET `/api/app-config` (public with optional auth, `Cache-Control: private, no-cache` + ETag)
 
-Returns `{ version, features, customTiles, homeSections, theme, settings, banners }`.
+Returns `{ version, features, customTiles, homeSections, screenSections, screenTitles, theme, settings, banners }`.
 
 The app sends `Authorization` when signed in (a bad token is ignored, never a 401), `X-Device-Id` (a random per-install id) and `X-Nura-Launch: 1`. Launch states are resolved for that user or device, so the response has `Vary: Authorization, X-Device-Id, X-Nura-Launch`. A request without `X-Nura-Launch: 1` (older app builds) gets no `launch` fields, and every item that isn't plainly open comes back `enabled: false`.
 
@@ -1292,7 +1292,9 @@ The app sends `Authorization` when signed in (a bad token is ignored, never a 40
   - `url`: an https website, opened in the in-app browser.
   - `app`: another app's link such as `whatsapp://…` or `youtube://…`, with an optional https `fallbackUrl` for when that app isn't installed. The `javascript:`, `data:`, `file:`, `vbscript:`, `blob:` and `about:` schemes are refused.
 - **`audience`**: `{ segment: all|signed_in|premium|free, platforms: [android|ios|web] (empty = all), minAppVersion, maxAppVersion }`. It's evaluated in the app.
-- **`homeSections[]`**: `{ key, visible, order }` with keys `statPills`, `weekStrip`, `promo_top`, `phaseHero`, `quickActions`, `shortcuts`, `promo_middle`, `insights`, `moreForYou`.
+- **`homeSections[]`**: `{ key, visible, order, text, audience, startAt, endAt }` (see `screenSections` for the extra fields) with keys `statPills`, `weekStrip`, `promo_top`, `phaseHero`, `quickActions`, `shortcuts`, `promo_middle`, `insights`, `moreForYou`.
+- **`screenSections`**: `{ profile, care_hub, wellness_hub, explore_hub }`, each a list of `{ key, visible, order, text, audience, startAt, endAt }` (always complete, defaults filled in). `text` overrides a block's heading or intro (null = the app's own; only Home's `insights` / `moreForYou`, Profile's `account` / `preferences` / `privacyHelp` and each hub's `intro` have one). `audience` and the ISO `startAt` / `endAt` narrow who sees a block and when; the app checks them. Profile: `identity`, `completeProfile`, `stats`, `account`, `preferences`, `privacyHelp`, `promo`, `shortcuts`, `logout`. Each hub: `intro`, `promo`, `tiles`. Blocks marked `required` in the catalog (`identity`, `account`, `preferences`, `privacyHelp`, `logout`, `tiles`) are always `visible: true`, for everyone, with no dates.
+- **`screenTitles`**: hub title overrides, e.g. `{ care_hub: "Your Health" }`. A hub not listed keeps its own title.
 - **`theme`**: overridden colours only, `{ light: {…}, dark: {…} }`. Only brand, surface and text tokens can be changed.
 - **`settings`**: `{ maintenance: { enabled, title, message }, update: { minVersion, latestVersion, title, message, androidUrl, iosUrl } }`.
   - Maintenance blocks the app.
@@ -1306,6 +1308,7 @@ The app sends `Authorization` when signed in (a bad token is ignored, never a 40
 - `POST /api/app-config/banners/impressions`: body `{ ids: [...] }` (≤ 20). Counts a view. The app sends each id once per session.
 - `POST /api/app-config/launch/:itemKey/notify` (optional auth, `X-Device-Id`): body `{ platform? }`. Joins the "Notify me" list for a Coming soon item. `itemKey` is a feature key or `link:<tileId>`, URL-encoded. When signed in, it takes over this device's signed-out entry. Signed-out entries also move to the account the next time that device fetches the config signed in. Returns `{ onList: true }`, or `400` unless the item is taking sign-ups.
 - `POST /api/app-config/launch/:itemKey/tap`: counts a tap on a locked tile.
+- `POST /api/app-config/usage` (`X-Device-Id`): body `{ events: [{ itemKey, kind: open | tap }] }` (≤ 50). `open` = a feature's screen was visited, `tap` = its tile was tapped. Unknown items are skipped. Counted per UTC day (`FeatureUsage`); devices kept 100 days for unique counts (`FeatureUsageDevice`).
 
 ### CMS endpoints (staff; `cms.read` to view, `cms.manage` to change)
 
@@ -1319,6 +1322,8 @@ The app sends `Authorization` when signed in (a bad token is ignored, never a 40
 | POST | `/api/cms/launches/:itemKey/announce` | `cms.manage`. Body `{ title, body }`. Only once the item is live. Pushes to everyone on its waitlist with an account who hasn't been told yet, at most 5000 per send, through the broadcast worker (so it also goes to the in-app inbox and opens the feature's screen). Returns `202 { broadcastId, recipients, withPush, remaining }` |
 | GET | `/api/cms/launches/:itemKey/waitlist` | `cms.manage`. Returns `{ entries: [{ createdAt, platform, user }] }`, newest first, at most 5000 |
 | PUT | `/api/cms/home` | `{ homeSections: [{ key, visible, order }], version }` |
+| PUT | `/api/cms/screens/:screen` | `screen` is `profile` \| `care_hub` \| `wellness_hub` \| `explore_hub`. Body `{ sections: [{ key, visible, order, text?, audience?, startAt?, endAt? }], title?, version }`, where `version` is `sectionVersions.screenSections` and `title` is a hub's title (null = its own). Hiding, targeting or scheduling a `required` block is a `400`. `PUT /api/cms/home` takes the same block fields |
+| GET | `/api/cms/usage?days=7\|30\|90` | `{ days: [YYYY-MM-DD], items: { [itemKey]: { opens, taps, devices, daily: [{ opens, taps }] } } }` |
 | PUT | `/api/cms/theme` | `{ theme: { light, dark }, version }` |
 | PUT | `/api/cms/settings` | `{ settings: { maintenance, update }, version }` |
 | GET | `/api/cms/revisions?section=` | Publish history (last 50 per section) |

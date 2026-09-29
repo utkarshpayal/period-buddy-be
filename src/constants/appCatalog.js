@@ -241,10 +241,13 @@ export const FEATURE_CATALOG = [
 
 export const FEATURE_KEYS = FEATURE_CATALOG.map((f) => f.key);
 
+/** A block whose heading or text the CMS can override (null = the app's text). */
+const heading = (dflt) => ({ label: 'Heading', default: dflt, max: 40 });
+
 /**
  * Home screen blocks, in their default order. `promo_*` are banner slots
  * (banners with placement home_top / home_middle), so ads can be moved
- * around like any other section.
+ * around like any other section. `text` marks a block with editable text.
  */
 export const HOME_SECTIONS = [
   { key: 'statPills', label: 'Streak & points' },
@@ -253,12 +256,61 @@ export const HOME_SECTIONS = [
   { key: 'phaseHero', label: 'Cycle phase card' },
   { key: 'quickActions', label: 'Quick log actions' },
   { key: 'promo_middle', label: 'Promo banners (middle slot)' },
-  { key: 'insights', label: 'Insights carousel' },
-  { key: 'moreForYou', label: 'More for you (hubs)' },
+  { key: 'insights', label: 'Insights carousel', text: heading('Insights') },
+  { key: 'moreForYou', label: 'More for you (hubs)', text: heading('More for you') },
   { key: 'shortcuts', label: 'Shortcuts (features placed on Home)' },
 ].map((s, i) => ({ ...s, order: i }));
 
 export const HOME_SECTION_KEYS = HOME_SECTIONS.map((s) => s.key);
+
+const hubSections = (intro) => [
+  { key: 'intro', label: 'Intro line', text: { label: 'Text', default: intro, max: 140 } },
+  { key: 'promo', label: 'Promo banners' },
+  { key: 'tiles', label: 'Feature tiles', required: true },
+];
+
+/**
+ * Blocks on the other CMS-controlled screens, in their default order (Home
+ * keeps HOME_SECTIONS, which older app builds read). `required` blocks can
+ * be moved and retitled but not hidden, targeted or scheduled: they hold
+ * something a user must always reach (Edit profile, subscription, privacy
+ * toggles, log out, the hub itself).
+ */
+export const SCREEN_SECTIONS = Object.fromEntries(
+  Object.entries({
+    profile: [
+      { key: 'identity', label: 'Photo, name & Edit profile', required: true },
+      { key: 'completeProfile', label: 'Complete your profile nudge' },
+      { key: 'stats', label: 'Stats (days tracked, points, streak)' },
+      { key: 'account', label: 'Your account', required: true, text: heading('Your account') },
+      { key: 'preferences', label: 'Preferences', required: true, text: heading('Preferences') },
+      {
+        key: 'privacyHelp',
+        label: 'Privacy & help',
+        required: true,
+        text: heading('Privacy & help'),
+      },
+      { key: 'promo', label: 'Promo banners' },
+      { key: 'shortcuts', label: 'Shortcuts (features placed on Profile)' },
+      { key: 'logout', label: 'Log out', required: true },
+    ],
+    care_hub: hubSections('Forecasts and insights for your health.'),
+    wellness_hub: hubSections(
+      'Support for your body and mind — private, judgment-free, and always here.',
+    ),
+    explore_hub: hubSections('Community, content, and everything to explore beyond tracking.'),
+  }).map(([screen, list]) => [screen, list.map((s, i) => ({ required: false, ...s, order: i }))]),
+);
+
+/** Screens with an editable title (the hubs), and the app's default. */
+export const SCREEN_TITLES = {
+  care_hub: 'Care & Insights',
+  wellness_hub: 'Wellness & Support',
+  explore_hub: 'Explore',
+};
+export const SCREEN_TITLE_MAX = 30;
+
+export const LAYOUT_SCREENS = Object.keys(SCREEN_SECTIONS);
 
 export const BANNER_PLACEMENTS = [
   'home_top',
@@ -362,7 +414,7 @@ export const THEME_TOKENS = [
 export const THEME_TOKEN_KEYS = THEME_TOKENS.map((t) => t.key);
 
 /** Sections of the config that are saved (and versioned) independently. */
-export const CONFIG_SECTIONS = ['features', 'homeSections', 'theme', 'settings'];
+export const CONFIG_SECTIONS = ['features', 'homeSections', 'screenSections', 'theme', 'settings'];
 
 /**
  * App-wide switches. Versions are "major.minor.patch" and compared against
