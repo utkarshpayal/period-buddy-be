@@ -93,10 +93,13 @@ infra/                AWS setup guide, IAM policies, scripts, CloudFormation
 
 | Doc | Read it for |
 |---|---|
+| [docs/README.md](docs/README.md) | Index of every doc, and links to all Nura repos |
+| [docs/SECURITY.md](docs/SECURITY.md) | How data is protected, production status, key rotation, incidents |
 | [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md) | Every endpoint |
 | [docs/INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md) | How production runs: AWS services, IAM, secrets, deploys, runbook |
 | [docs/PUSH_AND_SCHEDULED_JOBS.md](docs/PUSH_AND_SCHEDULED_JOBS.md) | Firebase push setup, reminder + check-in-call schedulers |
 | [docs/AI_ML_OVERVIEW.md](docs/AI_ML_OVERVIEW.md) | The AI features and how they work |
+| [docs/SECURITY_BACKLOG.md](docs/SECURITY_BACKLOG.md) | Security to-do list |
 | [docs/fixes.md](docs/fixes.md) | Code review findings and their status |
 | [CLAUDE.md](CLAUDE.md) | Detailed architecture notes (for AI assistants and humans) |
 | [infra/README.md](infra/README.md) | Step-by-step AWS setup |

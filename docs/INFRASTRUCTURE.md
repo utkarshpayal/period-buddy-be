@@ -2,7 +2,7 @@
 
 How the Nura API is built, deployed, configured and run in production, and
 every service involved. Written for the whole team. You don't need to know
-AWS to follow it. **Last verified against the live account: 2026-09-25.**
+AWS to follow it. **Last verified against the live account: 2026-09-30.**
 
 > **Quick facts**
 > - API: `https://www.backend.thenura.care` (and `https://backend.thenura.care`)
@@ -300,7 +300,8 @@ Keep it a single valid JSON object.
 | Group | Keys |
 |---|---|
 | Core | `MONGODB_URI`\*, `JWT_SECRET`\* (≥ 32 chars), `JWT_EXPIRE`, `BCRYPT_ROUNDS` |
-| URLs / CORS | `API_BASE_URL` (`https://www.backend.thenura.care`: used for email links and the Sarvam webhook), `ALLOWED_ORIGINS`, `ADMIN_APP_URL`, `ADMIN_INVITE_CODE` |
+| Security & privacy ([SECURITY.md](SECURITY.md)) | `DATA_ENCRYPTION_KEYS`\*\* (the server won't start in production without it; must be the key the data was encrypted with, never a new one), `AI_CONSENT_ENFORCED`, `STAFF_2FA_ENABLED`, `STAFF_COOKIE_AUTH`, `STAFF_SESSION_TTL`, `LOGIN_MAX_FAILURES`, `LOGIN_LOCK_MINUTES`, `ACCOUNT_PURGE_AFTER_DAYS`, `NOTIFICATION_RETENTION_DAYS`, `AUDIT_LOG_RETENTION_DAYS`, `USAGE_RETENTION_DAYS` |
+| URLs / CORS | `API_BASE_URL` (`https://www.backend.thenura.care`: used for email links and the Sarvam webhook), `ALLOWED_ORIGINS` (should be `https://admin.thenura.care,https://cms.thenura.care,https://thenura.care,https://www.thenura.care`; the mobile app sends no Origin and needs no entry), `ADMIN_APP_URL` |
 | Email (Resend) | `RESEND_API_KEY`, `MAIL_FROM`, `CONTACT_RECEIVER_EMAIL` |
 | Push (Firebase) | `FIREBASE_SERVICE_ACCOUNT_JSON` |
 | Uploads (S3) | `AWS_S3_BUCKET` (`thenura`), `AWS_REGION` (`us-east-1`, the bucket's region), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
@@ -309,9 +310,9 @@ Keep it a single valid JSON object.
 | AI chat / speech (Sarvam) | `SARVAM_API_KEY`, `SARVAM_CHAT_MODEL`, `SARVAM_TTS_MODEL`, `SARVAM_STT_MODEL` |
 | Check-in phone calls (Sarvam Outbound) | `SARVAM_OUTBOUND_API_KEY`, `SARVAM_ORG_ID`, `SARVAM_WORKSPACE_ID`, `SARVAM_APP_ID`, `SARVAM_APP_VERSION`, `SARVAM_CONNECTION_ID`, `SARVAM_AGENT_PHONE_NUMBER`, `SAMVAAD_CALL_TOKEN_TTL` |
 | Schedulers | `ENABLE_IN_PROCESS_SCHEDULER` (`true`, must stay on for this single-server setup), `CHECKIN_CALL_SCHEDULER_SECRET`, `NOTIFICATION_SCHEDULER_SECRET` |
-| Misc | `SWAGGER_ENABLED` (**currently `true`**, so API docs are public at `/api-docs`; see risks), `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` (unused by the code, safe to delete) |
+| Misc | `SWAGGER_ENABLED` (`false`: `/api-docs` is closed in production) |
 
-\* Required. The deploy fails on purpose if they're empty. The full list with descriptions is in [`.env.example`](../.env.example).
+\* Required. The deploy fails on purpose if they're empty. \*\* Required in production; the API refuses to start without it. The full list with descriptions is in [`.env.example`](../.env.example).
 
 **Adding a new env var:** add it to `.env.example` (for the team) **and** to the
 secret (for production), then deploy. Adding it only to `.env.example` does nothing in production.
@@ -434,6 +435,7 @@ df -h /                                  # disk space
 | PR #16, #17 | CodeDeploy agent install on Ruby 3.3 (repacked .deb) | repo |
 | 2026-09-25 | **Cut over** from nginx + pm2 to Docker + Caddy on `Nura-Backend` | server |
 | PR #18 | Prune all unused images after each deploy (disk space) | repo |
+| 2026-09-30 | Secret: added `DATA_ENCRYPTION_KEYS` and the security/retention keys, removed unused `RAZORPAY_*` and `ADMIN_INVITE_CODE`; `SWAGGER_ENABLED=false`. Deployed with PR #43 (security & privacy) | AWS |
 
 ---
 
@@ -444,7 +446,8 @@ df -h /                                  # disk space
 | 🔴 High | **Public IP is not an Elastic IP** | A stop/start (or AWS host maintenance) gives the server a new IP. The domain then points nowhere, and Atlas blocks the new IP. | Allocate/associate an Elastic IP → update Spaceship A records + Atlas allow-list. (4 EIPs sit unattached already. Reuse one, release the rest.) |
 | 🔴 High | **8 GB disk, ~85% full** | Deploys fail when it fills (each image ≈ 565 MB) | EC2 → Volumes → modify to 20 GB, then `growpart` + `resize2fs` |
 | 🟠 Medium | **SSH (22) open to 0.0.0.0/0** | Brute-force target; not needed (Session Manager works) | Remove the rule from `launch-wizard-5` |
-| 🟠 Medium | **`SWAGGER_ENABLED=true`** | Full API docs public at `/api-docs` | Remove from the secret or set `false`, then deploy |
+| 🟠 Medium | **`ALLOWED_ORIGINS=*`** (until changed) | Any website can call the API from a signed-in browser | Set the four site origins listed in §7.3, then Release change |
+| 🟠 Medium | **Production database reachable from laptops** | Local backends use the production `MONGODB_URI`, so a laptop can read production health data | Create a separate development database and user; keep the production URI only in the secret |
 | 🟠 Medium | Old software still on server (nginx, certbot timer, pm2 service, Node, `~/period-buddy-be/.env` with plaintext secrets) | Confusion, and nginx could grab ports 80/443 again, causing 502s | Remove (check whether this has been done) |
 | 🟠 Medium | Local AWS work uses the **root** account | Root keys can do anything, including closing the account | Create IAM users for people, delete root access keys, enable MFA |
 | 🟡 Low | No swap on a 2 GB server | Out-of-memory kill under load | Add a 2 GB swap file |

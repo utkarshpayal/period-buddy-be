@@ -24,9 +24,28 @@ How The Nura protects user data, what to do when deploying or rotating keys, and
 | Children | No usage tracking (feature usage, tile taps, banner impressions/clicks) for anyone under 18 by profile birthday. "Sex & Intimacy" AI chats need 18+. | App: `lib/analyticsConsent.ts` |
 | On the phone | Screenshots and recordings are blocked on documents, AI chats, the tracker, the day log and partner/doctor chat; iOS blurs the app in the app switcher. Onboarding answers (cycle dates, birthday) live in the OS keystore. Both screen settings can be switched off by the person. | App: `lib/screenPrivacy.ts`, `lib/secureStorage.ts` |
 | Retention | Notifications 90 days, audit logs 730, usage counts 400 (env, 0 = keep). AI chats: the period each person picks (keep, 30, 90, 365 days). | `utils/retentionRunner.js` |
-| CI | Dependency audit (production deps, high+; blocking everywhere, the app through `audit-ci` with a reviewed allowlist), gitleaks and CodeQL on every PR and weekly, in all four repos. | `.github/workflows/security.yml` |
+| CI | Dependency audit (production deps, high+; blocking everywhere, the app through `audit-ci` with a reviewed allowlist), gitleaks and CodeQL on every PR and weekly, in all five repos. | `.github/workflows/security.yml` |
 
 Already in place before this: bcrypt passwords, hashed OTPs, JWT secret length check, Helmet headers, CORS allowlist in production, rate limiting, content-type sniffing of uploads, TLS to MongoDB Atlas (`mongodb+srv`).
+
+## Production status
+
+Checked against the live secret (`nura/api/env`) and deploys on **2026-09-30**. Update this table whenever one of these changes.
+
+| Item | Status |
+|---|---|
+| `DATA_ENCRYPTION_KEYS` | ✅ Set, deployed with PR #43. Same key the data was already encrypted with. Keep a copy outside AWS. |
+| Secrets in Secrets Manager | ✅ All production secrets are in `nura/api/env`. ⚠️ Developer `.env` files still hold the production database URI and keys (see "Other secrets"). |
+| `SWAGGER_ENABLED` | ✅ `false`, `/api-docs` returns 404. |
+| `ALLOWED_ORIGINS` | ⏳ `*`. Set to `https://admin.thenura.care,https://cms.thenura.care,https://thenura.care,https://www.thenura.care`. |
+| `STAFF_2FA_ENABLED` | ⏳ `false`. The Admin Workspace and CMS builds with the code screen are live, so it can be turned on. |
+| `STAFF_COOKIE_AUTH` | ⏳ `false`. Turn on together with the `ALLOWED_ORIGINS` change. |
+| `AI_CONSENT_ENFORCED` | ⏳ `false`, on purpose until the app release with the AI consent switch is out and `minVersion` is raised in the CMS. |
+| `AWS_S3_KMS_KEY_ID` | Not set: documents use SSE-S3. |
+| `encryptExistingData.js --apply` | ❓ Not recorded as run. Do a dry run to see how many old rows are still plain text. |
+| `applyS3Privacy.js --apply` | ❓ Not recorded as run. |
+| Git history of all five repos | ✅ Scanned with gitleaks on 2026-09-30. All repos are private; the only real secret in history is an old Cashfree **sandbox** key in `.env.example` (removed 2026-09-25, not the live key). Revoke it in the Cashfree sandbox dashboard. |
+| Security CI | ✅ `security.yml` in all five repos (marketing site added 2026-09-30). |
 
 ## Deploying this for the first time
 
