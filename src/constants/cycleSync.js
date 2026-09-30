@@ -68,7 +68,7 @@ export const DEFAULT_CYCLE_SYNC_TIPS = [
     'fuel',
     '🥬',
     'Iron up',
-    'Spinach, lentils, jaggery or dates help replace what you lose.',
+    'Spinach, lentils, beans and ragi help replace what you lose.',
   ),
   tip(
     'period',

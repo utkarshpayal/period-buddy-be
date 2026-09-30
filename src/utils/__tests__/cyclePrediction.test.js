@@ -249,3 +249,19 @@ test('legacy (settings, options) call signature still works', () => {
   const p = computeCyclePredictions(settings, { today: new Date('2026-01-15T00:00:00Z') });
   assert.equal(p.nextPeriodDateKey, '2026-01-29');
 });
+
+test('derivePeriodEpisodes: spotting alone is not a period, leading spotting still starts one', () => {
+  const day = (dateKey, flow) => ({ dateKey, flow });
+  const logs = [
+    day('2026-08-01', 'spotting'),
+    day('2026-08-02', 'medium'),
+    day('2026-08-03', 'light'),
+    day('2026-08-15', 'spotting'), // mid-cycle spotting
+    day('2026-08-29', 'heavy'),
+  ];
+  assert.deepEqual(derivePeriodEpisodes(logs), [
+    { startKey: '2026-08-01', endKey: '2026-08-03' },
+    { startKey: '2026-08-29', endKey: '2026-08-29' },
+  ]);
+  assert.deepEqual(derivePeriodEpisodes([day('2026-08-15', 'spotting')]), []);
+});

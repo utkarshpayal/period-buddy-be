@@ -45,7 +45,7 @@ const PHASE_TEMPLATES = {
     nutritionSuggestions: [
       'Lean proteins to support increasing activity levels',
       'Fresh fruits and vegetables for rising metabolism',
-      'Fermented foods to support gut and hormone health',
+      'Fermented foods to support gut health',
     ],
     sleepSuggestions: [
       'Energy is naturally higher — keep a consistent sleep schedule anyway',
@@ -70,7 +70,7 @@ const PHASE_TEMPLATES = {
     ],
     nutritionSuggestions: [
       'Antioxidant-rich foods (berries, colorful vegetables)',
-      'Zinc and magnesium-rich foods to support hormone balance',
+      'Zinc and magnesium-rich foods (nuts, seeds, whole grains)',
       'Stay well hydrated, especially with more intense exercise',
     ],
     sleepSuggestions: [
@@ -80,7 +80,7 @@ const PHASE_TEMPLATES = {
     ],
     wellnessRecommendations: [
       'Great window for important conversations or presentations',
-      'Track cervical mucus/BBT if trying to conceive or avoid pregnancy',
+      'Track cervical mucus or BBT if you are trying to conceive',
       'Socialize — confidence tends to peak now',
     ],
   },
