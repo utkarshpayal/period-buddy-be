@@ -22,7 +22,6 @@ import {
   sendPaginatedList,
 } from '../utils/apiHelpers.js';
 import { broadcastToRoom } from '../config/websocket.js';
-import { generateToken } from '../utils/jwt.js';
 import { sendMail } from '../utils/mailer.js';
 import { getDoctorInviteTemplate } from '../templates/emailTemplates.js';
 import { userRoleEnum } from '../enums/enums.js';
@@ -30,6 +29,7 @@ import { INVITE_EXPIRY_HOURS, buildInviteUrl } from '../utils/invite.js';
 import { describeAccess, isStaffRole } from '../config/permissions.js';
 import { isDeletedAccount } from '../utils/accountStatus.js';
 import { retireDoctorProfiles, suspendAccount } from '../utils/accountLifecycle.js';
+import { startSession } from '../utils/sessions.js';
 
 /**
  * Populate the patient on a consultation, but never expose a deleted
@@ -194,7 +194,7 @@ export const listDoctorsForAdmin = async (req, res, next) => {
     }
 
     const query = Doctor.find(filter)
-      .populate('userId', 'email isActive mustSetPassword lastLogin')
+      .populate('userId', 'email isActive mustSetPassword lastLogin twoFactor.totpEnabledAt')
       .sort({ createdAt: -1, _id: -1 });
 
     // ?page=&limit= (default 20, max 100) — `pagination` rides on the
@@ -390,7 +390,7 @@ export const setPasswordFromInvite = async (req, res, next) => {
     user.lastLogin = new Date();
     await user.save();
 
-    const authToken = generateToken({ userId: user._id, email: user.email, role: user.role });
+    const authToken = await startSession(user, req);
 
     // This link also onboards Admin Workspace staff (staffController), so
     // carry their access the same way the login response does.

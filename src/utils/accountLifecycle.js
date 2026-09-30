@@ -24,6 +24,7 @@
 import mongoose from 'mongoose';
 import { leaveAllCircles } from './circleMembership.js';
 import User from '../models/User.js';
+import { revokeAllSessions } from './sessions.js';
 import Partner from '../models/Partner.js';
 import PartnerMessage from '../models/PartnerMessage.js';
 import Notification from '../models/Notification.js';
@@ -50,6 +51,7 @@ import DocumentChatMessage from '../models/DocumentChatMessage.js';
 import RewardTransaction from '../models/RewardTransaction.js';
 import ScreeningAssessment from '../models/ScreeningAssessment.js';
 import UserSession from '../models/UserSession.js';
+import LaunchInterest from '../models/LaunchInterest.js';
 import QaChatSession from '../models/QaChatSession.js';
 import SchemeApplication from '../models/SchemeApplication.js';
 import Newsletter from '../models/Newsletter.js';
@@ -377,12 +379,14 @@ export const softDeleteAccount = async (user) => {
   user.$locals.skipPasswordHash = true;
   await user.save();
 
+  await revokeAllSessions(user._id, 'account_deleted');
   await teardownForRemoval(user, { reason: 'account_deleted' });
   logger.info('account_soft_deleted', { action: 'account_soft_deleted', userId: String(user._id) });
 };
 
 /** Admin suspension (reversible). */
 export const suspendAccount = async (user) => {
+  await revokeAllSessions(user._id, 'account_suspended');
   disconnectUser(user._id);
   // A pairing with a locked account is dead weight for the other member,
   // who can't start a new one while it exists; it's disposable by design.
@@ -411,6 +415,7 @@ export const purgeAccount = async (userId) => {
   if (!user) return;
   const email = originalEmailOf(user);
 
+  await revokeAllSessions(user._id, 'account_purged');
   await teardownForRemoval(user, { reason: 'account_purged', dropReports: true });
 
   // Files first — once the Document rows are gone we can't find their keys.
@@ -455,6 +460,7 @@ export const purgeAccount = async (userId) => {
     RewardTransaction.deleteMany({ userId }),
     ScreeningAssessment.deleteMany({ userId }),
     UserSession.deleteMany({ userId }),
+    LaunchInterest.deleteMany({ user: userId }),
     QaChatSession.deleteMany({ userId }),
     SchemeApplication.deleteMany({ userId }),
     PartnerMessage.deleteMany({ partnerId: { $in: partnerRows.map((row) => row._id) } }),

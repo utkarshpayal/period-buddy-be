@@ -1,3 +1,4 @@
+import * as twoFactorController from '../controllers/twoFactorController.js';
 import express from 'express';
 import multer from 'multer';
 import User from '../models/User.js';
@@ -317,6 +318,16 @@ router.post(
  * @access  Private (staff.manage)
  */
 router.delete('/staff/:id', requirePermission(P.STAFF_MANAGE), staffController.removeStaff);
+/**
+ * @route   POST /api/admin/staff/:id/reset-2fa
+ * @desc    Turn off a staff member's authenticator app (lost phone and recovery codes); they get emailed codes again
+ * @access  Private (staff.manage)
+ */
+router.post(
+  '/staff/:id/reset-2fa',
+  requirePermission(P.STAFF_MANAGE),
+  twoFactorController.resetStaffTwoFactor,
+);
 
 /* ---------------------------- Change requests -------------------------- */
 

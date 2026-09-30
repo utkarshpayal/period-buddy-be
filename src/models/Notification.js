@@ -3,6 +3,12 @@ import User from './User.js';
 import { sendPushNotification } from '../utils/fcm.js';
 import logger from '../utils/logger.js';
 
+/** What a push says when the person hides notification details. */
+export const PRIVATE_PUSH = {
+  title: 'The Nura',
+  body: 'You have a new update. Open the app to see it.',
+};
+
 /** Notification — in-app notification records. */
 const notificationSchema = new mongoose.Schema(
   {
@@ -46,7 +52,7 @@ notificationSchema.index({ userId: 1, createdAt: -1 });
 notificationSchema.post('save', async function (doc) {
   try {
     const user = await User.findById(doc.userId).select(
-      'notificationToken notificationsEnabled isActive deletedAt',
+      'notificationToken notificationsEnabled isActive deletedAt privacySettings',
     );
     // notificationsEnabled is the app's Profile → Notifications toggle. The
     // in-app row is still saved; only the device push is skipped. A
@@ -58,13 +64,19 @@ notificationSchema.post('save', async function (doc) {
       user.notificationToken &&
       user.notificationsEnabled !== false
     ) {
+      // "Hide notification details" (on unless the person turned it off):
+      // a locked phone shows neutral text, the details stay in the app's
+      // notification list. Tapping still opens the right screen (data).
+      const hide = user.privacySettings?.hideNotificationDetails !== false;
       await sendPushNotification(user.notificationToken, {
-        title: doc.title,
-        body: doc.body,
+        title: hide ? PRIVATE_PUSH.title : doc.title,
+        body: hide ? PRIVATE_PUSH.body : doc.body,
         data: {
           notificationId: String(doc._id),
           type: doc.type,
           ...(doc.data || {}),
+          // A banner image could show details too.
+          ...(hide && { image: undefined }),
         },
       });
     }

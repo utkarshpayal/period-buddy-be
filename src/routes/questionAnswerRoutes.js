@@ -20,6 +20,7 @@ import {
 import { authenticate, optionalAuth } from '../middleware/authMiddleware.js';
 import { requirePermission } from '../middleware/rbac.js';
 import { PERMISSIONS } from '../config/permissions.js';
+import { requireAiConsent } from '../utils/privacy.js';
 
 const router = express.Router();
 
@@ -32,7 +33,7 @@ router.post(
 
 router.get('/', optionalAuth, getAllQuestionAnswers);
 
-router.post('/ask', optionalAuth, askQuestion);
+router.post('/ask', optionalAuth, requireAiConsent, askQuestion);
 
 // Persisted, topic-scoped Nura Companion chat sessions — chat history the
 // user can reopen and continue, one per topic (or 'general'). All
@@ -43,10 +44,10 @@ router.post('/ask', optionalAuth, askQuestion);
 // feature-route registry (config/subscriptionRouteRegistry.js) — free until
 // an admin marks it premium; reading/deleting a session you already have
 // stays free regardless — you already paid for that history.
-router.post('/sessions', authenticate, createChatSession);
+router.post('/sessions', authenticate, requireAiConsent, createChatSession);
 router.get('/sessions', authenticate, listChatSessions);
 router.get('/sessions/:id', authenticate, getChatSession);
-router.post('/sessions/:id/messages', authenticate, sendChatSessionMessage);
+router.post('/sessions/:id/messages', authenticate, requireAiConsent, sendChatSessionMessage);
 router.delete('/sessions/:id', authenticate, deleteChatSession);
 
 router.get('/:id', optionalAuth, getSingleQuestionAnswer);

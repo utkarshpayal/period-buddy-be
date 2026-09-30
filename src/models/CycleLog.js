@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { encryptFields } from '../utils/fieldEncryption.js';
 
 // Shared by `mood` and `moods` below so the two enums can't drift apart.
 // `emotional`/`tired`/`neutral` are kept for backward-compat with older logs
@@ -108,5 +109,8 @@ const cycleLogSchema = new mongoose.Schema(
 
 // Compound unique index: one log per user per day
 cycleLogSchema.index({ userId: 1, dateKey: 1 }, { unique: true });
+
+// Free text is encrypted at rest (utils/fieldEncryption.js).
+cycleLogSchema.plugin(encryptFields, { fields: ['note'] });
 
 export default mongoose.model('CycleLog', cycleLogSchema);

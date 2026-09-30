@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { encryptFields } from '../utils/fieldEncryption.js';
 
 /** PartnerMessage — message history for connected partner pairs. */
 const partnerMessageSchema = new mongoose.Schema(
@@ -18,5 +19,8 @@ const partnerMessageSchema = new mongoose.Schema(
 );
 
 partnerMessageSchema.index({ partnerId: 1, sentAt: -1 });
+
+// Free text is encrypted at rest (utils/fieldEncryption.js).
+partnerMessageSchema.plugin(encryptFields, { fields: ['text'] });
 
 export default mongoose.model('PartnerMessage', partnerMessageSchema);

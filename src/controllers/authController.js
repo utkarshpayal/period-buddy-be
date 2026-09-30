@@ -5,11 +5,10 @@ import CycleLog from '../models/CycleLog.js';
 import CycleSettings from '../models/CycleSettings.js';
 import Habit from '../models/Habit.js';
 import { comparePassword, hashPassword } from '../utils/password.js';
-import { generateToken } from '../utils/jwt.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants/errorMessages.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
-import { pickDefined, todayDateKey } from '../utils/apiHelpers.js';
+import { isValidObjectId, pickDefined, todayDateKey } from '../utils/apiHelpers.js';
 import { computeCyclePredictions, calculateTrackingStreak } from '../utils/cycle.js';
 import { userRoleEnum } from '../enums/enums.js';
 import {
@@ -41,6 +40,34 @@ import {
   purgeAccount,
   softDeleteAccount,
 } from '../utils/accountLifecycle.js';
+import UserSession from '../models/UserSession.js';
+import { listSessions, revokeAllSessions, revokeSession, startSession } from '../utils/sessions.js';
+import { disconnectUser } from '../config/websocket.js';
+import {
+  AI_CHAT_RETENTION_OPTIONS,
+  AI_CONSENT_VERSION,
+  describeConsents,
+  describePrivacySettings,
+} from '../utils/privacy.js';
+import { buildDataExport } from '../utils/dataExport.js';
+import {
+  clearFailedLogins,
+  isNewDevice,
+  lockMinutesLeft,
+  lockedMessage,
+  recordFailedLogin,
+  requiresSecondFactor,
+  resendLoginChallenge,
+  sendNewSignInEmail,
+  startLoginChallenge,
+  verifyLoginChallenge,
+} from '../utils/loginSecurity.js';
+import {
+  clearSessionCookie,
+  readCookie,
+  setSessionCookie,
+  wantsCookieSession,
+} from '../utils/sessionCookie.js';
 
 const sendOtpEmail = async ({ email, firstName, otp }) => {
   await sendMail({
@@ -155,11 +182,7 @@ export const verifyOtp = async (req, res, next) => {
 
     await PendingSignup.deleteOne({ _id: pending._id });
 
-    const token = generateToken({
-      userId: user._id,
-      email: user.email,
-      role: user.role,
-    });
+    const token = await startSession(user, req);
 
     return sendResponse(
       res,
@@ -219,7 +242,7 @@ export const login = async (req, res, next) => {
     const { email, password } = req.body;
 
     // Find user by email and include password field
-    const user = await User.findOne({ email }).select('+password');
+    const user = await User.findOne({ email }).select('+password +lockUntil');
 
     if (!user) {
       return sendError(res, HTTP_STATUS.UNAUTHORIZED, ERROR_MESSAGES.INVALID_CREDENTIALS);
@@ -231,12 +254,24 @@ export const login = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, ERROR_MESSAGES.GOOGLE_ONLY_ACCOUNT);
     }
 
+    // Locked after repeated wrong passwords (utils/loginSecurity.js). Checked
+    // before the password, so guessing stops while the lock lasts.
+    const lockedFor = lockMinutesLeft(user.lockUntil);
+    if (lockedFor) {
+      return sendError(res, HTTP_STATUS.TOO_MANY_REQUESTS, lockedMessage(lockedFor));
+    }
+
     // Compare passwords
     const isPasswordValid = await comparePassword(password, user.password);
 
     if (!isPasswordValid) {
+      const nowLockedFor = await recordFailedLogin(user._id);
+      if (nowLockedFor) {
+        return sendError(res, HTTP_STATUS.TOO_MANY_REQUESTS, lockedMessage(nowLockedFor));
+      }
       return sendError(res, HTTP_STATUS.UNAUTHORIZED, ERROR_MESSAGES.INVALID_CREDENTIALS);
     }
+    await clearFailedLogins(user._id);
 
     // Checked only after the password matches, so this can't be used to
     // probe which emails belong to suspended accounts (or to trigger the
@@ -249,24 +284,102 @@ export const login = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.UNAUTHORIZED, ERROR_MESSAGES.INVALID_CREDENTIALS);
     }
 
-    // Update last login
-    user.lastLogin = new Date();
-    await user.save();
+    // Staff and doctors confirm with an emailed code first; the session
+    // starts in verifyLoginCode.
+    if (requiresSecondFactor(user)) {
+      const challenge = await startLoginChallenge(user);
+      return sendResponse(res, HTTP_STATUS.OK, 'Enter the code we emailed you', challenge);
+    }
 
-    // Generate token
-    const token = generateToken({
-      userId: user._id,
-      email: user.email,
-      role: user.role,
-    });
+    return await completeLogin(user, req, res);
+  } catch (error) {
+    next(error);
+  }
+};
 
-    // Get user data without password. Staff also get their workspace access
-    // (role label, department, permissions) so the Admin Workspace can build
-    // its navigation without a second round trip.
-    const userData = user.toJSON();
-    if (isStaffRole(user.role)) userData.access = describeAccess(user.role);
+/**
+ * Start the session once every sign-in check has passed, and answer the
+ * same way for every sign-in path.
+ */
+const completeLogin = async (user, req, res) => {
+  user.lastLogin = new Date();
+  await user.save();
 
-    return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.LOGIN_SUCCESS, userData, token);
+  const newDevice = await isNewDevice(user._id, req, user).catch(() => false);
+  const token = await startSession(user, req);
+  if (newDevice) sendNewSignInEmail(user, req);
+  // Admin Workspace / CMS builds that ask for it get the session in an
+  // httpOnly cookie. The token is still in the body once, so a site that
+  // finds the cookie isn't sent (another domain) can fall back to it.
+  const cookieSession = wantsCookieSession(req, user);
+  if (cookieSession) setSessionCookie(res, token);
+
+  // Get user data without password. Staff also get their workspace access
+  // (role label, department, permissions) so the Admin Workspace can build
+  // its navigation without a second round trip.
+  const userData = user.toJSON();
+  if (isStaffRole(user.role)) userData.access = describeAccess(user.role);
+  if (cookieSession) userData.sessionMode = 'cookie';
+
+  return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.LOGIN_SUCCESS, userData, token);
+};
+
+/** POST /api/auth/login/verify-code — body { challengeToken, code }. */
+export const verifyLoginCode = async (req, res, next) => {
+  try {
+    const result = await verifyLoginChallenge(req.body?.challengeToken, req.body?.code);
+    if (result.error === 'expired') {
+      return sendError(
+        res,
+        HTTP_STATUS.UNAUTHORIZED,
+        'This code has expired. Please sign in again to get a new one.',
+      );
+    }
+    if (result.error) {
+      return sendError(
+        res,
+        HTTP_STATUS.UNAUTHORIZED,
+        `That code isn't right. ${result.attemptsLeft} attempt${result.attemptsLeft === 1 ? '' : 's'} left.`,
+      );
+    }
+
+    const user = await User.findById(result.userId);
+    if (isSuspended(user)) return sendAccountSuspendedError(res);
+    if (!user || !user.isActive) {
+      return sendError(res, HTTP_STATUS.UNAUTHORIZED, ERROR_MESSAGES.INVALID_CREDENTIALS);
+    }
+    return await completeLogin(user, req, res);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/auth/login/resend-code — body { challengeToken }. */
+export const resendLoginCode = async (req, res, next) => {
+  try {
+    const result = await resendLoginChallenge(req.body?.challengeToken);
+    if (result.error === 'expired') {
+      return sendError(
+        res,
+        HTTP_STATUS.UNAUTHORIZED,
+        'This sign-in has expired. Please sign in again.',
+      );
+    }
+    if (result.error === 'authenticator') {
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        'Use the code from your authenticator app, or one of your recovery codes.',
+      );
+    }
+    if (result.error === 'cooldown') {
+      return sendError(
+        res,
+        HTTP_STATUS.TOO_MANY_REQUESTS,
+        `Please wait ${result.retryAfterSeconds} seconds before asking for another code.`,
+      );
+    }
+    return sendResponse(res, HTTP_STATUS.OK, 'We sent you a new code', result);
   } catch (error) {
     next(error);
   }
@@ -298,6 +411,7 @@ export const googleAuth = async (req, res, next) => {
     const normalizedEmail = String(email).trim().toLowerCase();
 
     let user = await User.findOne({ $or: [{ googleId }, { email: normalizedEmail }] });
+    const isNewUser = !user;
 
     if (user) {
       // The Google ID token is already verified, so the caller owns this
@@ -325,6 +439,15 @@ export const googleAuth = async (req, res, next) => {
         user.profilePicture = picture;
         didChange = true;
       }
+      // Staff and doctors sign in with a password plus an emailed code;
+      // Google sign-in would skip that second step.
+      if (requiresSecondFactor(user)) {
+        return sendError(
+          res,
+          HTTP_STATUS.FORBIDDEN,
+          'Staff and doctor accounts sign in with email and password.',
+        );
+      }
       user.lastLogin = new Date();
       didChange = true;
       if (didChange) await user.save();
@@ -345,11 +468,9 @@ export const googleAuth = async (req, res, next) => {
       await user.save();
     }
 
-    const token = generateToken({
-      userId: user._id,
-      email: user.email,
-      role: user.role,
-    });
+    const newDevice = isNewUser ? false : await isNewDevice(user._id, req, user).catch(() => false);
+    const token = await startSession(user, req);
+    if (newDevice) sendNewSignInEmail(user, req);
 
     return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.LOGIN_SUCCESS, user.toJSON(), token);
   } catch (error) {
@@ -486,7 +607,16 @@ export const changePassword = async (req, res, next) => {
     user.password = newPassword;
     await user.save();
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Password changed successfully');
+    // A changed password signs every other device out; this one gets a
+    // fresh session so the person making the change stays signed in
+    // (builds that ignore the new token just sign in again).
+    await revokeAllSessions(user._id, 'password_changed');
+    disconnectUser(user._id);
+    const token = await startSession(user, req);
+    // Signed in by cookie (utils/sessionCookie.js): swap in the new session.
+    if (!req.headers.authorization && readCookie(req)) setSessionCookie(res, token);
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Password changed successfully', null, token);
   } catch (error) {
     next(error);
   }
@@ -499,7 +629,11 @@ export const changePassword = async (req, res, next) => {
  */
 export const logout = async (req, res, next) => {
   try {
-    // In a real application, you might want to implement token blacklisting.
+    // End this device's session, so its token stops working now rather than
+    // when it expires. Tokens from before sessions existed have none; they
+    // run out on their own.
+    await revokeSession(req.session?._id);
+    clearSessionCookie(res);
     // Drop this device's push token so a logged-out phone stops receiving
     // this account's notifications (period reminders, partner updates, ...).
     // With `fcmToken` in the body, only clear it if it's still this device's
@@ -515,6 +649,166 @@ export const logout = async (req, res, next) => {
       }
     }
     return sendResponse(res, HTTP_STATUS.OK, SUCCESS_MESSAGES.LOGOUT_SUCCESS);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const EXPORT_EVERY_MS = 5 * 60 * 1000;
+
+/** GET /api/auth/privacy — the person's privacy choices (utils/privacy.js). */
+export const getPrivacy = async (req, res, next) => {
+  try {
+    return sendResponse(res, HTTP_STATUS.OK, 'Privacy settings fetched', {
+      consents: describeConsents(req.user),
+      settings: describePrivacySettings(req.user),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /api/auth/privacy/settings — body { hideNotificationDetails?: boolean,
+ * aiChatRetentionDays?: 0 | 30 | 90 | 365, newSignInAlerts?: boolean }. Only the fields sent change.
+ */
+export const setPrivacySettings = async (req, res, next) => {
+  try {
+    const { hideNotificationDetails, aiChatRetentionDays, newSignInAlerts } = req.body || {};
+    const updates = {};
+    if (newSignInAlerts !== undefined) {
+      if (typeof newSignInAlerts !== 'boolean') {
+        return sendError(res, HTTP_STATUS.BAD_REQUEST, 'newSignInAlerts must be true or false');
+      }
+      updates['privacySettings.newSignInAlerts'] = newSignInAlerts;
+    }
+    if (hideNotificationDetails !== undefined) {
+      if (typeof hideNotificationDetails !== 'boolean') {
+        return sendError(
+          res,
+          HTTP_STATUS.BAD_REQUEST,
+          'hideNotificationDetails must be true or false',
+        );
+      }
+      updates['privacySettings.hideNotificationDetails'] = hideNotificationDetails;
+    }
+    if (aiChatRetentionDays !== undefined) {
+      if (!AI_CHAT_RETENTION_OPTIONS.includes(aiChatRetentionDays)) {
+        return sendError(
+          res,
+          HTTP_STATUS.BAD_REQUEST,
+          `aiChatRetentionDays must be one of ${AI_CHAT_RETENTION_OPTIONS.join(', ')}`,
+        );
+      }
+      updates['privacySettings.aiChatRetentionDays'] = aiChatRetentionDays;
+    }
+    const user = await User.findByIdAndUpdate(req.userId, { $set: updates }, { new: true });
+    logger.info('privacy_settings_changed', {
+      action: 'privacy_settings_changed',
+      userId: req.userId,
+      fields: Object.keys(updates),
+    });
+    return sendResponse(res, HTTP_STATUS.OK, 'Privacy settings saved', {
+      consents: describeConsents(user),
+      settings: describePrivacySettings(user),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** PUT /api/auth/privacy/ai-consent — body { granted: boolean }. */
+export const setAiConsent = async (req, res, next) => {
+  try {
+    if (typeof req.body?.granted !== 'boolean') {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'granted must be true or false');
+    }
+    const user = await User.findByIdAndUpdate(
+      req.userId,
+      {
+        'consents.aiProcessing': {
+          granted: req.body.granted,
+          version: AI_CONSENT_VERSION,
+          updatedAt: new Date(),
+        },
+      },
+      { new: true },
+    );
+    logger.info('ai_consent_changed', {
+      action: 'ai_consent_changed',
+      userId: req.userId,
+      granted: req.body.granted,
+      version: AI_CONSENT_VERSION,
+    });
+    return sendResponse(res, HTTP_STATUS.OK, 'Privacy settings saved', {
+      consents: describeConsents(user),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/auth/export-data — everything stored about the signed-in person
+ * as one JSON download (utils/dataExport.js). At most once every 5 minutes.
+ */
+export const exportData = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.userId).select('+lastDataExportAt');
+    const last = user?.lastDataExportAt?.getTime() ?? 0;
+    if (Date.now() - last < EXPORT_EVERY_MS) {
+      return sendError(
+        res,
+        HTTP_STATUS.TOO_MANY_REQUESTS,
+        'You just downloaded your data. Try again in a few minutes.',
+      );
+    }
+    await User.updateOne({ _id: req.userId }, { lastDataExportAt: new Date() });
+    const data = await buildDataExport(req.userId);
+    logger.info('data_exported', { action: 'data_exported', userId: req.userId });
+    res.set('Cache-Control', 'no-store');
+    res.set('Content-Disposition', 'attachment; filename="the-nura-my-data.json"');
+    return sendResponse(res, HTTP_STATUS.OK, 'Your data', data);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** GET /api/auth/sessions — the signed-in devices, this one marked `current`. */
+export const getSessions = async (req, res, next) => {
+  try {
+    const sessions = await listSessions(req.userId, req.session?._id);
+    return sendResponse(res, HTTP_STATUS.OK, 'Sessions fetched', { sessions });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** DELETE /api/auth/sessions/:id — sign one of your other devices out. */
+export const endSession = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid session id');
+    }
+    const session = await UserSession.findOne({ _id: req.params.id, userId: req.userId })
+      .select('_id')
+      .lean();
+    if (!session) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Session not found');
+    await revokeSession(session._id);
+    return sendResponse(res, HTTP_STATUS.OK, 'Signed out of that device');
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/auth/logout-all — sign out everywhere, this device included. */
+export const logoutAll = async (req, res, next) => {
+  try {
+    await revokeAllSessions(req.userId, 'logout_all');
+    clearSessionCookie(res);
+    disconnectUser(req.userId);
+    await User.updateOne({ _id: req.userId }, { $unset: { notificationToken: 1 } });
+    return sendResponse(res, HTTP_STATUS.OK, 'Signed out of every device');
   } catch (error) {
     next(error);
   }

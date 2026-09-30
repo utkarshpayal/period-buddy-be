@@ -10,6 +10,8 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from './logger.js';
 import { activeUserIdSet } from './accountStatus.js';
 import { localClock, parseTimeOfDay, planScheduledAttempt, resolveCallDay } from './checkinCall.js';
+import { aiAllowed } from './privacy.js';
+import User from '../models/User.js';
 
 const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -48,7 +50,19 @@ export const runCheckinCallSchedulerTick = async (now = new Date()) => {
   });
   // Never phone a suspended or deleted account.
   const liveIds = await activeUserIdSet(allCandidates.map((settings) => settings.userId));
-  const candidates = allCandidates.filter((settings) => liveIds.has(String(settings.userId)));
+  // Calls run through our AI provider: skip anyone who turned AI off.
+  const consenting = new Set(
+    (
+      await User.find({ _id: { $in: [...liveIds] } })
+        .select('consents')
+        .lean()
+    )
+      .filter(aiAllowed)
+      .map((u) => String(u._id)),
+  );
+  const candidates = allCandidates.filter(
+    (settings) => liveIds.has(String(settings.userId)) && consenting.has(String(settings.userId)),
+  );
 
   let fired = 0;
   const skipped = {};

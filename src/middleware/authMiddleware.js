@@ -1,21 +1,39 @@
-import { verifyToken } from '../utils/jwt.js';
+import { SESSION_REVOKED, resolveToken } from '../utils/sessions.js';
 import { ERROR_MESSAGES } from '../constants/errorMessages.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { sendError } from '../utils/sendResponse.js';
-import User from '../models/User.js';
 import logger from '../utils/logger.js';
 import { isSuspended, sendAccountSuspendedError } from '../utils/accountStatus.js';
+import { cookieRequestAllowed, tokenFromRequest } from '../utils/sessionCookie.js';
+import { CALL_TOKEN_SCOPE } from '../utils/samvaadClient.js';
+
+/**
+ * Whether a token's `scope` lets it make this request. Normal sign-in tokens
+ * have none. The check-in call token (utils/samvaadClient.js) may only log
+ * the day's cycle data; any other scope is refused everywhere.
+ */
+export const scopeAllows = (scope, req) => {
+  if (!scope) return true;
+  return (
+    scope === CALL_TOKEN_SCOPE &&
+    req.method === 'POST' &&
+    (req.baseUrl + req.path).replace(/\/$/, '') === '/api/cycle/log'
+  );
+};
 
 export const authenticate = async (req, res, next) => {
   try {
-    const [scheme, token] = req.headers.authorization?.split(' ') || [];
+    // Bearer header, or the staff session cookie (utils/sessionCookie.js).
+    const { token, fromCookie } = tokenFromRequest(req);
 
-    if (scheme !== 'Bearer' || !token) {
+    if (!token) {
       return sendError(res, HTTP_STATUS.UNAUTHORIZED, ERROR_MESSAGES.NO_TOKEN);
     }
+    if (fromCookie && !cookieRequestAllowed(req)) {
+      return sendError(res, HTTP_STATUS.FORBIDDEN, 'Request blocked: unknown origin');
+    }
 
-    const decoded = verifyToken(token);
-    const user = await User.findById(decoded.userId);
+    const { user, decoded, session } = await resolveToken(token);
 
     // Suspended while already signed in: still a 401 (so clients sign out as
     // before), but with code ACCOUNT_SUSPENDED so they can say why.
@@ -26,8 +44,15 @@ export const authenticate = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.UNAUTHORIZED, ERROR_MESSAGES.USER_NOT_FOUND);
     }
 
+    // Scoped tokens (check-in call tokens handed to the call provider) work
+    // only for the one endpoint they're for.
+    if (!scopeAllows(decoded.scope, req)) {
+      return sendError(res, HTTP_STATUS.UNAUTHORIZED, ERROR_MESSAGES.INVALID_TOKEN);
+    }
+
     req.user = user;
     req.userId = decoded.userId;
+    req.session = session;
     next();
   } catch (error) {
     // Both branches below return the same generic message to the client
@@ -42,6 +67,9 @@ export const authenticate = async (req, res, next) => {
       reason: error.message,
       path: req.originalUrl,
     });
+    if (error.message === SESSION_REVOKED) {
+      return sendError(res, HTTP_STATUS.UNAUTHORIZED, ERROR_MESSAGES.SESSION_REVOKED);
+    }
     if (error.message === 'Token expired') {
       return sendError(res, HTTP_STATUS.UNAUTHORIZED, ERROR_MESSAGES.TOKEN_EXPIRED);
     }
@@ -64,14 +92,14 @@ export const authorize = (...roles) => {
 
 export const optionalAuth = async (req, res, next) => {
   try {
-    const [scheme, token] = req.headers.authorization?.split(' ') || [];
+    const { token, fromCookie } = tokenFromRequest(req);
 
-    if (scheme === 'Bearer' && token) {
-      const decoded = verifyToken(token);
-      const user = await User.findById(decoded.userId);
-      if (user && user.isActive) {
+    if (token && (!fromCookie || cookieRequestAllowed(req))) {
+      const { user, decoded, session } = await resolveToken(token);
+      if (user && user.isActive && !decoded.scope) {
         req.user = user;
         req.userId = decoded.userId;
+        req.session = session;
       }
     }
     next();

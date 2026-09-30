@@ -1,5 +1,6 @@
 import express from 'express';
 import * as authController from '../controllers/authController.js';
+import * as twoFactorController from '../controllers/twoFactorController.js';
 import {
   validateChangePassword,
   validateDeleteAccount,
@@ -88,6 +89,21 @@ router.post(
 );
 
 /**
+ * @route   POST /api/auth/login/verify-code
+ * @desc    Second sign-in step for staff and doctors: the emailed code
+ *          (body { challengeToken, code }). Answers like /login.
+ * @access  Public
+ */
+router.post('/login/verify-code', sensitiveLimiter, authController.verifyLoginCode);
+
+/**
+ * @route   POST /api/auth/login/resend-code
+ * @desc    Email a new sign-in code for the same challenge
+ * @access  Public
+ */
+router.post('/login/resend-code', sensitiveLimiter, authController.resendLoginCode);
+
+/**
  * @route   POST /api/auth/google
  * @desc    Sign in (or sign up) with a Google ID token
  * @access  Public
@@ -152,6 +168,95 @@ router.post(
  * @access  Private
  */
 router.post('/logout', authenticate, authController.logout);
+
+/**
+ * @route   POST /api/auth/logout-all
+ * @desc    Sign out of every device, this one included (all sessions and older tokens stop working)
+ * @access  Private
+ */
+router.post('/logout-all', authenticate, authController.logoutAll);
+
+/**
+ * @route   GET /api/auth/sessions
+ * @desc    Signed-in devices: { sessions: [{ id, platform, appVersion, userAgent, signedInAt, lastActiveAt, expiresAt, current }] }
+ * @access  Private
+ */
+router.get('/sessions', authenticate, authController.getSessions);
+
+/**
+ * @route   DELETE /api/auth/sessions/:id
+ * @desc    Sign one device out
+ * @access  Private
+ */
+router.delete('/sessions/:id', authenticate, authController.endSession);
+
+/**
+ * @route   GET /api/auth/privacy
+ * @desc    Privacy choices: { consents: { aiProcessing: { granted (null = never asked), version, updatedAt, currentVersion, providers, allowedNow } } }
+ * @access  Private
+ */
+router.get('/privacy', authenticate, authController.getPrivacy);
+
+/**
+ * @route   PUT /api/auth/privacy/ai-consent
+ * @desc    Allow or refuse sending your content to the AI provider. Body: { granted: boolean }
+ * @access  Private
+ */
+router.put('/privacy/ai-consent', authenticate, authController.setAiConsent);
+
+/**
+ * @route   PUT /api/auth/privacy/settings
+ * @desc    Save privacy settings: { hideNotificationDetails?, aiChatRetentionDays?, newSignInAlerts? }
+ * @access  Private
+ */
+router.put('/privacy/settings', authenticate, authController.setPrivacySettings);
+
+/**
+ * @route   GET /api/auth/2fa
+ * @desc    Staff/doctor two-step sign-in status: { required, method, totpEnabledAt, recoveryCodesLeft }
+ * @access  Private (staff and doctors)
+ */
+router.get('/2fa', authenticate, twoFactorController.getTwoFactor);
+
+/**
+ * @route   POST /api/auth/2fa/totp/setup
+ * @desc    Start setting up an authenticator app: { secret, otpauthUrl } to scan
+ * @access  Private (staff and doctors)
+ */
+router.post('/2fa/totp/setup', authenticate, twoFactorController.setupTotp);
+
+/**
+ * @route   POST /api/auth/2fa/totp/enable
+ * @desc    Finish setup with a first code ({ code }); returns the recovery codes, shown once
+ * @access  Private (staff and doctors)
+ */
+router.post('/2fa/totp/enable', authenticate, sensitiveLimiter, twoFactorController.enableTotp);
+
+/**
+ * @route   POST /api/auth/2fa/totp/disable
+ * @desc    Turn the authenticator app off ({ password }); back to emailed codes
+ * @access  Private (staff and doctors)
+ */
+router.post('/2fa/totp/disable', authenticate, sensitiveLimiter, twoFactorController.disableTotp);
+
+/**
+ * @route   POST /api/auth/2fa/recovery-codes
+ * @desc    Replace the recovery codes ({ password }); returns the new ones, shown once
+ * @access  Private (staff and doctors)
+ */
+router.post(
+  '/2fa/recovery-codes',
+  authenticate,
+  sensitiveLimiter,
+  twoFactorController.regenerateRecoveryCodes,
+);
+
+/**
+ * @route   GET /api/auth/export-data
+ * @desc    Download everything stored about you as JSON (at most once every 5 minutes)
+ * @access  Private
+ */
+router.get('/export-data', authenticate, authController.exportData);
 
 /**
  * @route   DELETE /api/auth/delete-account

@@ -40,8 +40,28 @@ const getClient = () => {
   return s3Client;
 };
 
-// Objects are served back via plain https://bucket.s3.region.amazonaws.com/key
-// URLs (no signing), so the bucket must actually allow anonymous GETs. New
+/**
+ * Folders whose objects are meant to be seen by anyone with the link:
+ * profile pictures and community media (users/), content media (content/),
+ * CMS banners, notification images, company assets and legacy uploads/.
+ * Everything else, above all medical-documents/, is private: never covered
+ * by the public-read policy and only served through short-lived signed URLs
+ * (getSignedViewUrl). Add a folder here only if its files are public by design.
+ */
+export const PUBLIC_PREFIXES = [
+  'users/',
+  'content/',
+  'cms/',
+  'notifications/',
+  'company-assets/',
+  'uploads/',
+];
+
+/** Whether `key` sits in a publicly readable folder. */
+export const isPublicKey = (key) => PUBLIC_PREFIXES.some((p) => String(key).startsWith(p));
+
+// Public objects are served back via plain https://bucket.s3.region.amazonaws.com/key
+// URLs (no signing), so the bucket must allow anonymous GETs for those folders. New
 // (and most existing) buckets default to Block Public Access = on with no
 // policy, which is exactly why a successful upload still 403s on view — so
 // after confirming the bucket exists we make sure public reads are allowed.
@@ -63,11 +83,15 @@ const ensurePublicReadAccess = async (client, bucketName) => {
       Version: '2012-10-17',
       Statement: [
         {
-          Sid: 'PublicReadForUploadedObjects',
+          // Public folders only. Replacing the old bucket-wide statement
+          // here is what makes existing medical documents private on the
+          // next upload after deploy (see scripts/applyS3Privacy.js to do it
+          // right away).
+          Sid: 'PublicReadForPublicFolders',
           Effect: 'Allow',
           Principal: '*',
           Action: 's3:GetObject',
-          Resource: `arn:aws:s3:::${bucketName}/*`,
+          Resource: PUBLIC_PREFIXES.map((p) => `arn:aws:s3:::${bucketName}/${p}*`),
         },
       ],
     };
@@ -80,6 +104,7 @@ const ensurePublicReadAccess = async (client, bucketName) => {
       action: 's3_bucket_public_read_enabled',
       bucketName,
     });
+    return true;
   } catch (error) {
     // Non-fatal — some buckets are managed outside this app (e.g. a shared
     // corporate bucket) and the IAM user here may not be allowed to touch
@@ -90,6 +115,7 @@ const ensurePublicReadAccess = async (client, bucketName) => {
       bucketName,
       error: error.message,
     });
+    return false;
   }
 };
 
@@ -130,7 +156,10 @@ const ensureBucketExists = async (client, bucketName) => {
 
 /**
  * Uploads a buffer to S3 under `folder/` with a random file name and returns
- * its public URL. Throws if AWS env vars aren't configured.
+ * `{ url, key }`. `url` is the public URL for a public folder and null for a
+ * private one (serve those with getSignedViewUrl). Private objects are
+ * encrypted with the KMS key in AWS_S3_KMS_KEY_ID when set, else with S3's
+ * own keys (SSE-S3). Throws if AWS env vars aren't configured.
  */
 export const uploadBufferToS3 = async ({ buffer, mimeType, originalName, folder = 'uploads' }) => {
   const client = getClient();
@@ -146,14 +175,25 @@ export const uploadBufferToS3 = async ({ buffer, mimeType, originalName, folder 
   const extension = path.extname(originalName || '') || '';
   const key = `${folder}/${crypto.randomUUID()}${extension}`;
 
+  const isPublic = isPublicKey(key);
+  const kmsKeyId = process.env.AWS_S3_KMS_KEY_ID;
   await client.send(
     new PutObjectCommand({
       Bucket: bucket,
       Key: key,
       Body: buffer,
       ContentType: mimeType,
+      ...(!isPublic &&
+        (kmsKeyId
+          ? { ServerSideEncryption: 'aws:kms', SSEKMSKeyId: kmsKeyId }
+          : { ServerSideEncryption: 'AES256' })),
     }),
   );
+
+  if (!isPublic) {
+    logger.info('s3_upload_success', { action: 's3_upload_success', key, private: true });
+    return { url: null, key };
+  }
 
   const region = process.env.AWS_REGION;
   const publicUrlBase =
@@ -162,6 +202,34 @@ export const uploadBufferToS3 = async ({ buffer, mimeType, originalName, folder 
 
   logger.info('s3_upload_success', { action: 's3_upload_success', key });
   return { url, key };
+};
+
+/**
+ * A short-lived signed GET URL to view a private object (e.g. a medical
+ * document) in the app. Ten minutes: long enough to open and scroll it,
+ * short enough that a leaked link soon stops working.
+ */
+export const getSignedViewUrl = async ({ key, expiresIn = 600 }) => {
+  const client = getClient();
+  if (!client || !key) return null;
+  return getSignedUrl(
+    client,
+    new GetObjectCommand({ Bucket: process.env.AWS_S3_BUCKET, Key: key }),
+    {
+      expiresIn,
+    },
+  );
+};
+
+/** Re-apply the bucket policy now (scripts/applyS3Privacy.js). */
+export const applyBucketPolicy = async () => {
+  const client = getClient();
+  if (!client) throw new Error('S3 is not configured.');
+  if (!(await ensurePublicReadAccess(client, process.env.AWS_S3_BUCKET))) {
+    throw new Error(
+      'Could not replace the bucket policy (see the s3_bucket_public_read_failed log).',
+    );
+  }
 };
 
 /**

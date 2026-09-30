@@ -2,7 +2,11 @@ import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
 import { createChatCompletion, isAiConfigured } from '../utils/sarvamClient.js';
-import { isSamvaadConfigured, startCheckinCall } from '../utils/samvaadClient.js';
+import {
+  isSamvaadConfigured,
+  startCheckinCall,
+  WEBHOOK_TOKEN_SCOPE,
+} from '../utils/samvaadClient.js';
 import { verifyToken } from '../utils/jwt.js';
 import { computeCyclePredictions } from '../utils/cycle.js';
 import { dateFromDateKey, pickDefined, validateDateKey } from '../utils/apiHelpers.js';
@@ -673,6 +677,12 @@ export const checkinCallWebhook = async (req, res) => {
     let callId;
     try {
       const decoded = verifyToken(webhookConfig?.metadata?.callToken);
+      // Only a webhook token proves the call: never a sign-in token (they
+      // carry a session id) or the other call token. Tokens minted before
+      // scopes existed have neither and are still accepted.
+      if (decoded?.sid || (decoded?.scope && decoded.scope !== WEBHOOK_TOKEN_SCOPE)) {
+        throw new Error('Not a check-in webhook token');
+      }
       userId = decoded?.userId;
       callDate = decoded?.dateKey;
       callId = decoded?.callId;

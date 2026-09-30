@@ -2,6 +2,7 @@ import express from 'express';
 import * as voiceAgentController from '../controllers/voiceAgentController.js';
 import { authenticate } from '../middleware/authMiddleware.js';
 import { handleSchedulerTick } from '../utils/checkinCallScheduler.js';
+import { requireAiConsent } from '../utils/privacy.js';
 
 const router = express.Router();
 
@@ -11,7 +12,7 @@ const router = express.Router();
  *          guides/executes an action (e.g. logging today's cycle entry)
  * @access  Private
  */
-router.post('/converse', authenticate, voiceAgentController.converse);
+router.post('/converse', authenticate, requireAiConsent, voiceAgentController.converse);
 
 /**
  * @route   POST /api/voice-agent/checkin-call
@@ -21,7 +22,12 @@ router.post('/converse', authenticate, voiceAgentController.converse);
  */
 // Gated behind 'voice_checkin_calls' via the global feature-route registry
 // (config/subscriptionRouteRegistry.js), not inline here.
-router.post('/checkin-call', authenticate, voiceAgentController.triggerCheckinCall);
+router.post(
+  '/checkin-call',
+  authenticate,
+  requireAiConsent,
+  voiceAgentController.triggerCheckinCall,
+);
 
 /**
  * @route   GET /api/voice-agent/checkin-call/schedule

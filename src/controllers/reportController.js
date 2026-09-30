@@ -5,6 +5,7 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { createChatCompletion, isAiConfigured, getLanguageLabel } from '../utils/sarvamClient.js';
 import { buildDocumentContext, buildCycleContext } from '../utils/reportContext.js';
 import logger from '../utils/logger.js';
+import { aiAllowed } from '../utils/privacy.js';
 
 const MAX_CONTEXT_DOCS = 20;
 
@@ -111,7 +112,7 @@ export const getHealthReport = async (req, res, next) => {
     };
 
     let analysis = null;
-    if (isAiConfigured() && (documents.length || cycle.daysLogged)) {
+    if (isAiConfigured() && aiAllowed(req.user) && (documents.length || cycle.daysLogged)) {
       try {
         const sections = [];
         if (documents.length)

@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { authenticate } from '../middleware/authMiddleware.js';
 import * as documentController from '../controllers/documentController.js';
+import { requireAiConsent } from '../utils/privacy.js';
 
 const router = express.Router();
 
@@ -24,8 +25,8 @@ router.use(authenticate);
 // (config/subscriptionRouteRegistry.js) — free until an admin marks it
 // premium; browsing/deleting documents you already uploaded stays free.
 router.get('/chat', documentController.getChatHistory);
-router.post('/chat', documentController.sendChatMessage);
-router.post('/summarize', documentController.summarizeDocuments);
+router.post('/chat', requireAiConsent, documentController.sendChatMessage);
+router.post('/summarize', requireAiConsent, documentController.summarizeDocuments);
 
 router.post('/', upload.single('file'), documentController.uploadDocument);
 router.get('/', documentController.listDocuments);

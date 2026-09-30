@@ -37,10 +37,17 @@ function stripCodeFences(text) {
  * call fails — care suggestions are a bonus layer, never a hard dependency
  * of the partner-view screen (same resilience pattern as the health report's
  * `analysis` field in reportController.js). */
-export async function generateCareSuggestions({ permissions, cycle, recentLogs, documents }) {
+export async function generateCareSuggestions({
+  permissions,
+  cycle,
+  recentLogs,
+  documents,
+  useAi = true,
+}) {
   const ruleBased = generateRuleBasedSuggestions(permissions, cycle, recentLogs);
 
-  if (!isAiConfigured()) return ruleBased;
+  // `useAi: false` when the data's owner hasn't allowed AI processing.
+  if (!useAi || !isAiConfigured()) return ruleBased;
 
   const sections = [];
   if (permissions.shareCyclePhase && cycle) {

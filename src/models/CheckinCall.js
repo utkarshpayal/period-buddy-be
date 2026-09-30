@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { encryptFields } from '../utils/fieldEncryption.js';
 
 /**
  * CheckinCall — one outbound "Buddy" check-in call attempt (Sarvam Instant
@@ -61,5 +62,8 @@ checkinCallSchema.index(
   { userId: 1, dateKey: 1, attemptNumber: 1 },
   { unique: true, partialFilterExpression: { attemptNumber: { $exists: true } } },
 );
+
+// Free text is encrypted at rest (utils/fieldEncryption.js).
+checkinCallSchema.plugin(encryptFields, { fields: ['summary'] });
 
 export default mongoose.model('CheckinCall', checkinCallSchema);

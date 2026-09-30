@@ -1,3 +1,4 @@
+/* eslint-disable no-console -- this is a CLI script; console output is the UX */
 // Loaded first so modules pulled in by the routers see the same env as the
 // server (otherwise e.g. utils/jwt.js logs a spurious missing-secret error).
 import 'dotenv/config';

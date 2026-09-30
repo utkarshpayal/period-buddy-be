@@ -122,6 +122,34 @@ Response `200`:
 }
 ```
 
+Other answers (`utils/loginSecurity.js`):
+
+- `429` after `LOGIN_MAX_FAILURES` (5) wrong passwords in a row: the account is locked for `LOGIN_LOCK_MINUTES` (15), and the message says for how long.
+- Staff and doctors, when `STAFF_2FA_ENABLED=true`: `200` with no token and `data: { twoFactorRequired: true, challengeToken, method: "email", sentTo: "an***@thenura.care", expiresInMinutes: 10 }`. A 6-digit code has been emailed; finish with `POST /api/auth/login/verify-code`. Google sign-in answers `403` for these accounts.
+- Signing in on a device the account hasn't used before sends a "New sign-in" email, unless the person turned `newSignInAlerts` off.
+- Admin Workspace / CMS logins may send `X-Session-Mode: cookie`. With `STAFF_COOKIE_AUTH=true` and a staff role, the session is also set as an `HttpOnly; Secure; SameSite=Strict` cookie (`nura_staff_session`, path `/api`) and `data.sessionMode` is `"cookie"`. Requests may then authenticate with the cookie instead of `Authorization`; a cookie-authenticated write needs an allowed `Origin` (CSRF). A Bearer header always wins. Logout clears the cookie.
+
+### POST `/api/auth/login/verify-code`
+
+Payload `{ "challengeToken": "...", "code": "123456" }`. Answers like a successful login. `401` with "That code isn't right. N attempts left." or, after 5 wrong codes or 10 minutes, "This code has expired. Please sign in again…".
+
+### POST `/api/auth/login/resend-code`
+
+Payload `{ "challengeToken": "..." }`. Emails a new code (`429` within 30 seconds of the last one).
+
+A person with an authenticator app set up gets `data.method: "totp"` (no `sentTo`, nothing emailed): `verify-code` then takes the app's 6-digit code or one of their recovery codes (`xxxxx-xxxxx`, any case, dash optional). Each app code works once; each recovery code works once. `resend-code` answers `400` for these challenges. Setting up an app turns the second step on for that person even while `STAFF_2FA_ENABLED` is off.
+
+### Two-step sign-in with an authenticator app (staff and doctors)
+
+All need a signed-in staff or doctor account (`403` otherwise).
+
+- `GET /api/auth/2fa` → `{ required, method: "email" | "totp", totpEnabledAt, recoveryCodesLeft }`.
+- `POST /api/auth/2fa/totp/setup` → `{ secret, otpauthUrl }` to show as a QR code. Not active yet; `409` if an app is already on.
+- `POST /api/auth/2fa/totp/enable` with `{ "code": "123456" }` → `{ recoveryCodes: [8 codes] }`, shown once.
+- `POST /api/auth/2fa/totp/disable` with `{ "password": "..." }`: back to emailed codes.
+- `POST /api/auth/2fa/recovery-codes` with `{ "password": "..." }` → 8 new codes; the old ones stop working.
+- `POST /api/admin/staff/:id/reset-2fa` (`staff.manage`) and `POST /api/doctor/admin/:id/reset-2fa` (`doctors.manage`, Doctor profile id): turn someone's app off when they lost their phone and codes. Audit-logged (`two_factor.reset`). Staff and doctor lists include `authenticator` / `userId.twoFactor.totpEnabledAt`.
+
 ### POST `/api/auth/onboarding`
 
 Payload:
@@ -169,8 +197,10 @@ Payload:
 Response:
 
 ```json
-{ "success": true, "statusCode": 200, "message": "Password changed successfully", "data": null }
+{ "success": true, "statusCode": 200, "message": "Password changed successfully", "data": null, "token": "<new session token>" }
 ```
+
+Every other device is signed out. This device gets a new session in `token`; a client that ignores it simply signs in again.
 
 ### POST `/api/auth/logout`
 
@@ -180,6 +210,27 @@ Response:
 { "success": true, "statusCode": 200, "message": "Logout successful", "data": null }
 ```
 
+Ends this device's session on the server: its token stops working immediately.
+
+### Sessions
+
+Every sign-in is a revocable session (`utils/sessions.js`). App sessions last `JWT_EXPIRE` (7d), staff sessions `STAFF_SESSION_TTL` (12h). A token whose session was ended gets `401` with the message "You have been signed out. Please sign in again." (see `docs/SECURITY.md`).
+
+- `GET /api/auth/sessions` → `{ sessions: [{ id, platform, appVersion, userAgent, signedInAt, lastActiveAt, expiresAt, current }] }`. The app sends `X-Device-Id` and `X-App-Version` so devices can be told apart.
+- `DELETE /api/auth/sessions/:id`: sign one of your devices out.
+- `POST /api/auth/logout-all`: sign out everywhere, this device included.
+
+### Privacy
+
+- `GET /api/auth/privacy` → `{ consents: { aiProcessing: { granted, version, updatedAt, currentVersion, providers, allowedNow } }, settings: { hideNotificationDetails, aiChatRetentionDays, aiChatRetentionOptions, newSignInAlerts } }`. `granted: null` means never asked.
+- `PUT /api/auth/privacy/settings` with any of `{ "hideNotificationDetails": boolean, "aiChatRetentionDays": 0 | 30 | 90 | 365, "newSignInAlerts": boolean }`; answers like `GET`. `hideNotificationDetails` (default on) makes pushes say "You have a new update. Open the app to see it."; the in-app notification keeps the real text. `aiChatRetentionDays` deletes Nura AI and document chats older than that (0 = keep). `newSignInAlerts` (default on) is the new-device email.
+- `PUT /api/auth/privacy/ai-consent` with `{ "granted": true | false }`. With `false`, every AI feature (Nura AI chat, document reading and chat, report summaries, speech, voice, check-in calls) is off for the person: AI endpoints answer `403` with `code: "AI_CONSENT_REQUIRED"`, uploads are stored with `extractionStatus: "skipped"`, and health reports come without the AI analysis. Never-asked accounts are allowed until `AI_CONSENT_ENFORCED=true`.
+- `GET /api/auth/export-data`: everything stored about the person as one JSON download ("Download my data"). Documents come with one-hour download links. At most once every 5 minutes (`429` otherwise).
+
+### Documents
+
+Medical documents are private. `fileUrl` in document responses is a signed link valid for 10 minutes; ask for the document again (`GET /api/documents/:id`) to get a fresh one.
+
 ### DELETE `/api/auth/delete-account`
 
 Payload:
@@ -188,7 +239,7 @@ Payload:
 { "password": "SecurePass123!" }
 ```
 
-Response: the account is soft-deleted. The user row is kept (email renamed to `deleted_<id>_<email>`, `deletedAt` set, can never be reactivated), and everything linked to it is torn down right away: the user's community posts are hidden, their comments, likes and poll votes on other people's posts and reels are removed (counts adjusted), partner and buddy links are ended (the other side gets a `partner_disconnected` / `buddy_ended` socket event), nominations are removed, open consultations are cancelled, and push tokens, reminders and check-in calls are switched off. Health data stays until the owner runs the public self-service purge (`POST /api/auth/account/delete/request` → `/confirm`), which also finds accounts that were already soft-deleted and hard-deletes the data and uploaded files. `403` for staff and doctor accounts, which are offboarded by an admin.
+Response: the account is soft-deleted. The user row is kept (email renamed to `deleted_<id>_<email>`, `deletedAt` set, can never be reactivated), and everything linked to it is torn down right away: the user's community posts are hidden, their comments, likes and poll votes on other people's posts and reels are removed (counts adjusted), partner and buddy links are ended (the other side gets a `partner_disconnected` / `buddy_ended` socket event), nominations are removed, open consultations are cancelled, and push tokens, reminders and check-in calls are switched off. Health data is erased for good `ACCOUNT_PURGE_AFTER_DAYS` (30) days later by `utils/accountPurgeRunner.js`, or straight away if the owner runs the public self-service purge (`POST /api/auth/account/delete/request` → `/confirm`), which also finds accounts that were already soft-deleted and hard-deletes the data and uploaded files. `403` for staff and doctor accounts, which are offboarded by an admin.
 
 ### GET `/api/auth/dashboard`
 

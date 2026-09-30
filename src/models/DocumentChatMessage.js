@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { encryptFields } from '../utils/fieldEncryption.js';
 
 const documentChatMessageSchema = new mongoose.Schema(
   {
@@ -10,5 +11,8 @@ const documentChatMessageSchema = new mongoose.Schema(
 );
 
 documentChatMessageSchema.index({ userId: 1, createdAt: 1 });
+
+// Free text is encrypted at rest (utils/fieldEncryption.js).
+documentChatMessageSchema.plugin(encryptFields, { fields: ['text'] });
 
 export default mongoose.model('DocumentChatMessage', documentChatMessageSchema);
