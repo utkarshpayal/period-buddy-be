@@ -56,9 +56,9 @@ A local backend `.env` was seen with `NODE_ENV=production` and the `cluster0` At
 
 ## 4. Process and ongoing
 
-- [x] **CI checks** on every PR in all repos (`.github/workflows/security.yml`): `npm audit --omit=dev --audit-level=high`, gitleaks, CodeQL. Backend and Admin audit findings fixed; lint warnings cleared. The app's audit is blocking too, through `audit-ci` with two reviewed exceptions in `audit-ci.jsonc` (postcss and brace-expansion were patched with npm overrides).
+- [x] **CI checks** on every PR in all five repos (marketing site added 2026-09-30) (`.github/workflows/security.yml`): `npm audit --omit=dev --audit-level=high`, gitleaks, CodeQL. Backend and Admin audit findings fixed; lint warnings cleared. The app's audit is blocking too, through `audit-ci` with two reviewed exceptions in `audit-ci.jsonc` (postcss and brace-expansion were patched with npm overrides).
 - [ ] **Backups.** Confirm Atlas backups are encrypted; do one test restore and time it.
-- [ ] **Secrets manager.** Move `JWT_SECRET`, AWS, Sarvam, Cashfree, Resend and Firebase keys out of `.env` files; least-privilege AWS IAM; rotate anything that has been on a laptop.
+- [ ] **Secrets manager.** Production reads every secret from AWS Secrets Manager (`nura/api/env`) since 2026-09-25. Still to do: take the production values out of developer `.env` files (a separate dev database and keys), least-privilege IAM users instead of the root account, and rotate anything that has been on a laptop or in a chat.
 - [ ] **Vendor agreements.** A data processing agreement with Sarvam, confirming whether they keep or train on data (then say so on the Privacy screen). Check what Firebase, Resend and Cashfree receive.
 - [ ] **Privacy policy and consent at sign-up.** Update the policy for encryption, 30-day deletion, AI consent and data export; record which policy version each person accepted.
 - [ ] **Key rotation** of `DATA_ENCRYPTION_KEYS` yearly (steps in SECURITY.md).
