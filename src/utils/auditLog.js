@@ -47,6 +47,7 @@ export const AUDIT_ACTIONS = {
   PUSH_SCHEDULE_CANCELLED: 'push_schedule.cancelled',
   CMS_FEATURES_UPDATED: 'cms.features_updated',
   CMS_HOME_UPDATED: 'cms.home_updated',
+  CMS_SCREEN_UPDATED: 'cms.screen_layout_updated',
   CMS_THEME_UPDATED: 'cms.theme_updated',
   CMS_BANNER_CREATED: 'cms.banner_created',
   CMS_BANNER_UPDATED: 'cms.banner_updated',

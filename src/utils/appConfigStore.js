@@ -29,6 +29,11 @@ const sectionData = (config, section) => {
       return { features: config.features ?? [], customTiles: config.customTiles ?? [] };
     case 'homeSections':
       return { homeSections: config.homeSections ?? [] };
+    case 'screenSections':
+      return {
+        screenSections: config.screenSections ?? {},
+        screenTitles: config.screenTitles ?? {},
+      };
     case 'theme':
       return { theme: config.theme ?? { light: {}, dark: {} } };
     case 'settings':

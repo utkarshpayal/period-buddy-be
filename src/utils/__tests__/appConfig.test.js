@@ -5,12 +5,18 @@ import {
   isColor,
   mergeFeatures,
   mergeHomeSections,
+  mergeScreenSections,
+  parseAllScreenSections,
   parseBannerInput,
   parseFeatures,
   parseHomeSections,
+  parseScreenSections,
+  parseScreenTitle,
+  mergeScreenTitles,
+  toPublicSection,
   parseTheme,
 } from '../appConfig.js';
-import { FEATURE_CATALOG, HOME_SECTIONS } from '../../constants/appCatalog.js';
+import { FEATURE_CATALOG, HOME_SECTIONS, SCREEN_SECTIONS } from '../../constants/appCatalog.js';
 
 test('isColor accepts hex and rgb(a), rejects anything else', () => {
   for (const c of ['#fff', '#E8618F', '#E8618F80', 'rgb(1, 2, 3)', 'rgba(242, 143, 176, 0.18)']) {
@@ -100,6 +106,130 @@ test('home sections merge in saved order and keep unsaved ones', () => {
   assert.equal(merged[0].key, 'insights');
   assert.equal(merged[0].visible, false);
   assert.ok(parseHomeSections([{ key: 'nope', order: 0 }]).error);
+});
+
+test('screen sections: every screen merges to its full catalog in saved order', () => {
+  const merged = mergeScreenSections({
+    care_hub: [
+      { key: 'tiles', visible: true, order: 0 },
+      { key: 'promo', visible: true, order: 1 },
+      { key: 'intro', visible: false, order: 2 },
+    ],
+  });
+  assert.deepEqual(Object.keys(merged), Object.keys(SCREEN_SECTIONS));
+  assert.deepEqual(
+    merged.care_hub.map((s) => [s.key, s.visible]),
+    [
+      ['tiles', true],
+      ['promo', true],
+      ['intro', false],
+    ],
+  );
+  // Screens never saved are the defaults.
+  assert.deepEqual(
+    merged.profile.map((s) => s.key),
+    SCREEN_SECTIONS.profile.map((s) => s.key),
+  );
+  assert.equal(
+    merged.profile.every((s) => s.visible),
+    true,
+  );
+});
+
+test('screen sections: unknown screens and keys are refused, required blocks stay visible', () => {
+  assert.ok(parseScreenSections('tracker', []).error);
+  assert.ok(parseScreenSections('profile', [{ key: 'weekStrip', order: 0 }]).error);
+  assert.match(
+    parseScreenSections('profile', [{ key: 'logout', visible: false, order: 0 }]).error,
+    /can be moved but not hidden/,
+  );
+  const ok = parseScreenSections('wellness_hub', [
+    { key: 'tiles', visible: true, order: 0 },
+    { key: 'promo', visible: false, order: 1 },
+  ]);
+  assert.equal(ok.sections[1].key, 'promo');
+  assert.equal(ok.sections[1].visible, false);
+  // A required block saved hidden (e.g. before it became required) shows anyway.
+  const merged = mergeScreenSections({ care_hub: [{ key: 'tiles', visible: false, order: 0 }] });
+  assert.equal(merged.care_hub.find((s) => s.key === 'tiles').visible, true);
+});
+
+test('screen sections: a restored snapshot drops screens and blocks that no longer exist', () => {
+  const { screenSections } = parseAllScreenSections({
+    profile: [
+      { key: 'stats', visible: false, order: 0 },
+      { key: 'retired', visible: true, order: 1 },
+    ],
+    oldScreen: [{ key: 'x', order: 0 }],
+  });
+  assert.deepEqual(Object.keys(screenSections), ['profile']);
+  assert.deepEqual(
+    screenSections.profile.map((x) => [x.key, x.visible]),
+    [['stats', false]],
+  );
+});
+
+test('blocks: text only where the catalog allows it, and the default text saves as no override', () => {
+  const ok = parseScreenSections('care_hub', [
+    { key: 'intro', order: 0, text: '  Your health, forecast. ' },
+  ]);
+  assert.equal(ok.sections[0].text, 'Your health, forecast.');
+  const same = parseScreenSections('care_hub', [
+    { key: 'intro', order: 0, text: 'Forecasts and insights for your health.' },
+  ]);
+  assert.equal(same.sections[0].text, null);
+  assert.match(
+    parseScreenSections('care_hub', [{ key: 'tiles', order: 0, text: 'x' }]).error,
+    /no text/,
+  );
+  assert.match(
+    parseHomeSections([{ key: 'insights', order: 0, text: 'x'.repeat(41) }]).error,
+    /at most 40/,
+  );
+  const merged = mergeHomeSections([{ key: 'insights', order: 0, text: 'For you' }]);
+  const insights = merged.find((s) => s.key === 'insights');
+  assert.equal(insights.text, 'For you');
+  assert.equal(insights.textDefault, 'Insights');
+  assert.equal(toPublicSection(insights).textDefault, undefined);
+});
+
+test('blocks: audience and schedule narrow optional blocks only', () => {
+  const ok = parseScreenSections('profile', [
+    {
+      key: 'stats',
+      order: 0,
+      audience: { segment: 'premium' },
+      startAt: '2026-10-01T00:00:00Z',
+      endAt: '2026-10-10T00:00:00Z',
+    },
+  ]);
+  assert.equal(ok.sections[0].audience.segment, 'premium');
+  assert.equal(ok.sections[0].endAt.toISOString(), '2026-10-10T00:00:00.000Z');
+  assert.match(
+    parseScreenSections('profile', [{ key: 'logout', order: 0, audience: { segment: 'free' } }])
+      .error,
+    /always shown/,
+  );
+  assert.match(
+    parseScreenSections('profile', [
+      { key: 'stats', order: 0, startAt: '2026-10-10', endAt: '2026-10-01' },
+    ]).error,
+    /end must be after/,
+  );
+  assert.ok(
+    parseHomeSections([{ key: 'weekStrip', order: 0, audience: { segment: 'vip' } }]).error,
+  );
+});
+
+test('hub titles: hubs only, default saves as no override', () => {
+  assert.equal(parseScreenTitle('care_hub', ' Health ').value, 'Health');
+  assert.equal(parseScreenTitle('care_hub', 'Care & Insights').value, null);
+  assert.ok(parseScreenTitle('profile', 'Me').error);
+  assert.ok(parseScreenTitle('explore_hub', 'x'.repeat(31)).error);
+  assert.deepEqual(mergeScreenTitles({ explore_hub: 'Discover' }).explore_hub, {
+    title: 'Discover',
+    default: 'Explore',
+  });
 });
 
 test('parseTheme keeps valid known tokens and drops empty ones', () => {

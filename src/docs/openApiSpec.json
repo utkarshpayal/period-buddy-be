@@ -23784,6 +23784,69 @@
         }
       }
     },
+    "/api/app-config/usage": {
+      "post": {
+        "tags": [
+          "App Config"
+        ],
+        "summary": "Batched feature usage beacon from the app.",
+        "description": "Batched feature usage beacon from the app. Body: { events: [{ itemKey, kind: open|tap }] } (≤ 50); X-Device-Id header counts unique devices. Unknown items are skipped\n\n**Access:** Public",
+        "operationId": "post__api_app_config_usage",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/cms/config": {
       "get": {
         "tags": [
@@ -23995,6 +24058,104 @@
         }
       }
     },
+    "/api/cms/screens/{screen}": {
+      "put": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Save the block order and visibility of one other screen",
+        "description": "Save the block order and visibility of one other screen (profile | care_hub | wellness_hub | explore_hub). Body: { sections: [{ key, visible, order }], version? } — version is the screenSections section's; blocks marked required can move but not be hidden\n\n**Access:** Private (cms.manage)\n\n**Permission:** `cms.manage` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "put__api_cms_screens__screen",
+        "parameters": [
+          {
+            "name": "screen",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: screen"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/cms/theme": {
       "put": {
         "tags": [
@@ -24155,7 +24316,7 @@
           "App CMS"
         ],
         "summary": "Publish history, newest first.",
-        "description": "Publish history, newest first. Query: section (features | homeSections | theme | settings)\n\n**Access:** Private (cms.read)\n\n**Permission:** `cms.read` (see `config/permissions.js`; Super Admin holds all).",
+        "description": "Publish history, newest first. Query: section (features | homeSections | screenSections | theme | settings)\n\n**Access:** Private (cms.read)\n\n**Permission:** `cms.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_cms_revisions",
         "responses": {
           "200": {
@@ -24322,6 +24483,63 @@
         "summary": "Launch stats per item key",
         "description": "Launch stats per item key (feature key or link:<tileId>): { stats: { [itemKey]: { waiting, toNotify, deviceOnly, lastNotifiedAt, lockedTaps } } }\n\n**Access:** Private (cms.read)\n\n**Permission:** `cms.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_cms_launches",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/cms/usage": {
+      "get": {
+        "tags": [
+          "App CMS"
+        ],
+        "summary": "Feature usage over the last days",
+        "description": "Feature usage over the last days (query days: 7 | 30 | 90, default 30): { days: [YYYY-MM-DD], items: { [itemKey]: { opens, taps, devices, daily: [{ opens, taps }] } } }\n\n**Access:** Private (cms.read)\n\n**Permission:** `cms.read` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "get__api_cms_usage",
         "responses": {
           "200": {
             "description": "Successful operation",

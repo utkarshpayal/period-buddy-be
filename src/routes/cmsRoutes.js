@@ -40,6 +40,16 @@ router.put('/features', requirePermission(P.CMS_MANAGE), appConfigController.upd
  */
 router.put('/home', requirePermission(P.CMS_MANAGE), appConfigController.updateHomeSections);
 /**
+ * @route   PUT /api/cms/screens/:screen
+ * @desc    Save the block order and visibility of one other screen (profile | care_hub | wellness_hub | explore_hub). Body: { sections: [{ key, visible, order }], version? } — version is the screenSections section's; blocks marked required can move but not be hidden
+ * @access  Private (cms.manage)
+ */
+router.put(
+  '/screens/:screen',
+  requirePermission(P.CMS_MANAGE),
+  appConfigController.updateScreenSections,
+);
+/**
  * @route   PUT /api/cms/theme
  * @desc    Save theme colour overrides. Body: { theme: { light: { token: color }, dark: { token: color } }, version? }; an empty value restores the app default
  * @access  Private (cms.manage)
@@ -55,7 +65,7 @@ router.put('/settings', requirePermission(P.CMS_MANAGE), appConfigController.upd
 
 /**
  * @route   GET /api/cms/revisions
- * @desc    Publish history, newest first. Query: section (features | homeSections | theme | settings)
+ * @desc    Publish history, newest first. Query: section (features | homeSections | screenSections | theme | settings)
  * @access  Private (cms.read)
  */
 router.get('/revisions', requirePermission(P.CMS_READ), appConfigController.listRevisions);
@@ -76,6 +86,12 @@ router.post(
  * @access  Private (cms.read)
  */
 router.get('/launches', requirePermission(P.CMS_READ), appConfigController.getLaunchStats);
+/**
+ * @route   GET /api/cms/usage
+ * @desc    Feature usage over the last days (query days: 7 | 30 | 90, default 30): { days: [YYYY-MM-DD], items: { [itemKey]: { opens, taps, devices, daily: [{ opens, taps }] } } }
+ * @access  Private (cms.read)
+ */
+router.get('/usage', requirePermission(P.CMS_READ), appConfigController.getUsage);
 /**
  * @route   GET /api/cms/launches/:itemKey/waitlist
  * @desc    Everyone who tapped "Notify me" on an item, newest first (up to 5000), with their name, email and phone when signed in

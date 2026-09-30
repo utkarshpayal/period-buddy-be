@@ -3,6 +3,8 @@ import AppBanner from '../models/AppBanner.js';
 import AppConfigRevision from '../models/AppConfigRevision.js';
 import LaunchInterest from '../models/LaunchInterest.js';
 import LaunchStat from '../models/LaunchStat.js';
+import FeatureUsage from '../models/FeatureUsage.js';
+import FeatureUsageDevice from '../models/FeatureUsageDevice.js';
 import User from '../models/User.js';
 import PushBroadcast, { MAX_SELECTED_RECIPIENTS } from '../models/PushBroadcast.js';
 import { countAudience, enqueueBroadcast } from '../utils/pushBroadcastWorker.js';
@@ -26,6 +28,7 @@ import {
   FEATURE_PLACEMENTS,
   FEATURE_SIZES,
   MAX_CUSTOM_TILES,
+  SCREEN_TITLES,
   THEME_TOKENS,
   TILE_ACTIONS,
   TILE_COLOR_KEYS,
@@ -36,14 +39,21 @@ import {
   bannerStatus,
   mergeFeatures,
   mergeHomeSections,
+  mergeScreenSections,
+  mergeScreenTitles,
   mergeSettings,
   parseBannerInput,
   parseCustomTiles,
   parseFeatures,
+  parseAllScreenSections,
+  parseAllScreenTitles,
   parseHomeSections,
+  parseScreenSections,
+  parseScreenTitle,
   parseSettings,
   parseTheme,
   toPublicBanner,
+  toPublicSection,
 } from '../utils/appConfig.js';
 import {
   acceptsNotify,
@@ -56,6 +66,13 @@ import {
   resolveLaunch,
   testerKind,
 } from '../utils/launch.js';
+import {
+  USAGE_RANGES,
+  dayOf,
+  summarizeUsage,
+  tallyUsageEvents,
+  usageDays,
+} from '../utils/featureUsage.js';
 
 const liveBannerFilter = (now) => ({
   active: true,
@@ -158,7 +175,18 @@ export const getAppConfig = async (req, res, next) => {
       version: config?.version ?? 0,
       features: features.map(({ defaults: _d, icon: _i, route: _r, ...f }) => forViewer(f, f.key)),
       customTiles: tiles.map((t) => forViewer(t, `link:${t.id}`)),
-      homeSections: mergeHomeSections(config?.homeSections).map(({ label: _l, ...s }) => s),
+      homeSections: mergeHomeSections(config?.homeSections).map(toPublicSection),
+      screenSections: Object.fromEntries(
+        Object.entries(mergeScreenSections(config?.screenSections)).map(([screen, list]) => [
+          screen,
+          list.map(toPublicSection),
+        ]),
+      ),
+      screenTitles: Object.fromEntries(
+        Object.entries(mergeScreenTitles(config?.screenTitles))
+          .filter(([, t]) => t.title)
+          .map(([screen, t]) => [screen, t.title]),
+      ),
       theme: { light: config?.theme?.light ?? {}, dark: config?.theme?.dark ?? {} },
       settings: mergeSettings(config?.settings),
       banners: banners.map(toPublicBanner),
@@ -275,6 +303,49 @@ export const notifyLaunch = async (req, res, next) => {
   }
 };
 
+/**
+ * POST /api/app-config/usage — the app's batched usage beacon: body
+ * { events: [{ itemKey, kind: open | tap }] } (≤ 50), X-Device-Id for
+ * unique devices. Fire and forget: bad events are skipped, never refused.
+ */
+export const trackUsage = async (req, res, next) => {
+  try {
+    const tally = tallyUsageEvents(req.body);
+    if (tally.size) {
+      const day = dayOf(new Date());
+      await FeatureUsage.bulkWrite(
+        [...tally].map(([itemKey, t]) => ({
+          updateOne: {
+            filter: { itemKey, day },
+            update: { $inc: { opens: t.opens, taps: t.taps } },
+            upsert: true,
+          },
+        })),
+        { ordered: false },
+      );
+      const deviceId = isDeviceId(req.get('X-Device-Id')) ? req.get('X-Device-Id') : null;
+      if (deviceId) {
+        await FeatureUsageDevice.bulkWrite(
+          [...tally.keys()].map((itemKey) => ({
+            updateOne: {
+              filter: { itemKey, day, deviceId },
+              update: { $setOnInsert: { itemKey, day, deviceId, createdAt: new Date() } },
+              upsert: true,
+            },
+          })),
+          { ordered: false },
+        ).catch((error) => {
+          // Two batches from one device racing: the entry exists either way.
+          if (error?.code !== 11000 && !error?.writeErrors) throw error;
+        });
+      }
+    }
+    return sendResponse(res, HTTP_STATUS.OK, 'Recorded', {});
+  } catch (error) {
+    next(error);
+  }
+};
+
 /** POST /api/app-config/launch/:itemKey/tap — the app's beacon for a tap on a locked tile. */
 export const trackLockedTap = async (req, res, next) => {
   try {
@@ -295,6 +366,7 @@ const editableState = (config) => ({
   sectionVersions: {
     features: config?.sectionVersions?.features ?? 0,
     homeSections: config?.sectionVersions?.homeSections ?? 0,
+    screenSections: config?.sectionVersions?.screenSections ?? 0,
     theme: config?.sectionVersions?.theme ?? 0,
     settings: config?.sectionVersions?.settings ?? 0,
   },
@@ -303,6 +375,8 @@ const editableState = (config) => ({
   features: mergeFeatures(config?.features).map(withLaunch),
   customTiles: (config?.customTiles ?? []).map(publicTile),
   homeSections: mergeHomeSections(config?.homeSections),
+  screenSections: mergeScreenSections(config?.screenSections),
+  screenTitles: mergeScreenTitles(config?.screenTitles),
   theme: { light: config?.theme?.light ?? {}, dark: config?.theme?.dark ?? {} },
   settings: mergeSettings(config?.settings),
 });
@@ -492,6 +566,33 @@ export const updateHomeSections = async (req, res, next) => {
   }
 };
 
+/**
+ * PUT /api/cms/screens/:screen — body: { sections: [{ key, visible, order,
+ * text?, audience?, startAt?, endAt? }], title?, version? }. Saves one
+ * screen's blocks (and a hub's title); `version` is the screenSections section's.
+ */
+export const updateScreenSections = async (req, res, next) => {
+  try {
+    const { screen } = req.params;
+    const parsed = parseScreenSections(screen, req.body?.sections);
+    if (parsed.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, parsed.error);
+    const title = parseScreenTitle(screen, req.body?.title);
+    if (title.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, title.error);
+    return await publish(req, res, {
+      section: 'screenSections',
+      set: {
+        [`screenSections.${screen}`]: parsed.sections,
+        ...(Object.hasOwn(SCREEN_TITLES, screen) && { [`screenTitles.${screen}`]: title.value }),
+      },
+      audit: AUDIT_ACTIONS.CMS_SCREEN_UPDATED,
+      message: 'Screen layout published',
+      metadata: { screen },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 /** PUT /api/cms/theme — body: { theme: { light: {...}, dark: {...} }, version? }. */
 export const updateTheme = async (req, res, next) => {
   try {
@@ -580,6 +681,13 @@ export const restoreRevision = async (req, res, next) => {
       const parsed = parseHomeSections(d.homeSections || []);
       if (parsed.error) return sendError(res, HTTP_STATUS.CONFLICT, parsed.error);
       set = { homeSections: parsed.sections };
+    } else if (revision.section === 'screenSections') {
+      const parsed = parseAllScreenSections(d.screenSections);
+      if (parsed.error) return sendError(res, HTTP_STATUS.CONFLICT, parsed.error);
+      set = {
+        screenSections: parsed.screenSections,
+        screenTitles: parseAllScreenTitles(d.screenTitles),
+      };
     } else if (revision.section === 'theme') {
       const parsed = parseTheme(d.theme || {});
       if (parsed.error) return sendError(res, HTTP_STATUS.CONFLICT, parsed.error);
@@ -604,6 +712,36 @@ export const restoreRevision = async (req, res, next) => {
       metadata: { section: revision.section, revisionId: String(revision._id) },
     });
     return respondWithConfig(res, 'Revision restored');
+  } catch (error) {
+    next(error);
+  }
+};
+
+/* ---------------------------------- Usage --------------------------------- */
+
+/**
+ * GET /api/cms/usage?days=7|30|90 — per item key over the last `days` UTC
+ * days: { days: [...], items: { [itemKey]: { opens, taps, devices, daily } } }.
+ * `devices` counts distinct app installs that opened or tapped it.
+ */
+export const getUsage = async (req, res, next) => {
+  try {
+    const range = USAGE_RANGES.includes(Number(req.query.days)) ? Number(req.query.days) : 30;
+    const days = usageDays(range);
+    const since = { $gte: days[0] };
+    const [rows, devices] = await Promise.all([
+      FeatureUsage.find({ day: since }).select('itemKey day opens taps -_id').lean(),
+      FeatureUsageDevice.aggregate([
+        { $match: { day: since } },
+        { $group: { _id: { itemKey: '$itemKey', deviceId: '$deviceId' } } },
+        { $group: { _id: '$_id.itemKey', n: { $sum: 1 } } },
+      ]),
+    ]);
+    const deviceCounts = Object.fromEntries(devices.map((d) => [d._id, d.n]));
+    return sendResponse(res, HTTP_STATUS.OK, 'Usage fetched', {
+      days,
+      items: summarizeUsage(rows, deviceCounts, days),
+    });
   } catch (error) {
     next(error);
   }

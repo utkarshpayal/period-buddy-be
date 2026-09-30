@@ -13,6 +13,9 @@ import {
   FEATURE_SIZES,
   HOME_SECTIONS,
   MAX_CUSTOM_TILES,
+  SCREEN_SECTIONS,
+  SCREEN_TITLES,
+  SCREEN_TITLE_MAX,
   THEME_TOKEN_KEYS,
   TILE_COLOR_KEYS,
   TILE_ICONS,
@@ -20,7 +23,6 @@ import {
 import { isValidNotificationRoute } from './notificationRoute.js';
 
 const CATALOG_BY_KEY = new Map(FEATURE_CATALOG.map((f) => [f.key, f]));
-const SECTION_BY_KEY = new Map(HOME_SECTIONS.map((s) => [s.key, s]));
 
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const RGBA =
@@ -302,37 +304,188 @@ export const parseCustomTiles = (value) => {
   return { tiles };
 };
 
-/* ------------------------------ Home sections ------------------------------ */
+/* --------------------------- Home & screen sections --------------------------- */
 
-export const parseHomeSections = (value) => {
-  if (!Array.isArray(value)) return { error: 'homeSections must be a list' };
+/** An optional ISO date: `{ value: Date | null }` or `{ error }`. */
+const optionalDate = (v, label) => {
+  if (v === undefined || v === null || v === '') return { value: null };
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? { error: `Invalid ${label} date` } : { value: d };
+};
+
+const isEveryone = (a) =>
+  a.segment === 'all' && a.platforms.length === 0 && !a.minAppVersion && !a.maxAppVersion;
+
+/**
+ * `[{ key, visible, order, text?, audience?, startAt?, endAt? }]` checked
+ * against one screen's `catalog` of blocks. `text` only on blocks that
+ * declare it (null = the app's default); `audience` and the show-between
+ * dates narrow who sees a block and when, so required blocks can't have them.
+ */
+const parseSectionList = (value, catalog, what) => {
+  if (!Array.isArray(value)) return { error: `${what} sections must be a list` };
+  const byKey = new Map(catalog.map((s) => [s.key, s]));
   const seen = new Set();
   const sections = [];
   for (const raw of value) {
-    if (!SECTION_BY_KEY.has(raw?.key)) return { error: `Unknown home section "${raw?.key}"` };
-    if (seen.has(raw.key)) return { error: `Home section "${raw.key}" is listed twice` };
+    const known = byKey.get(raw?.key);
+    if (!known) return { error: `Unknown ${what} section "${raw?.key}"` };
+    if (seen.has(raw.key)) return { error: `${what} section "${raw.key}" is listed twice` };
     seen.add(raw.key);
     const order = Number(raw.order);
     if (!Number.isInteger(order) || order < 0 || order > 99) {
       return { error: `Invalid order for "${raw.key}"` };
     }
-    sections.push({ key: raw.key, visible: raw.visible !== false, order });
+    if (known.required && raw.visible === false) {
+      return { error: `"${known.label}" can be moved but not hidden` };
+    }
+
+    let text = { value: null };
+    if (raw.text !== undefined && raw.text !== null && raw.text !== '') {
+      if (!known.text) return { error: `"${known.label}" has no text to change` };
+      text = optionalText(raw.text, known.text.max, `${known.label} text`);
+      if (text.error) return text;
+      // The app's own text is saved as "no override", so a later change to
+      // the default in the app still reaches this block.
+      if (text.value === known.text.default) text.value = null;
+    }
+
+    const audience = parseAudience(raw.audience);
+    if (audience.error) return { error: `${known.label}: ${audience.error}` };
+    const startAt = optionalDate(raw.startAt, `${known.label} start`);
+    const endAt = optionalDate(raw.endAt, `${known.label} end`);
+    if (startAt.error || endAt.error) return startAt.error ? startAt : endAt;
+    if (startAt.value && endAt.value && endAt.value <= startAt.value) {
+      return { error: `${known.label}: the end must be after the start` };
+    }
+    const narrowed = !isEveryone(audience.audience) || startAt.value || endAt.value;
+    if (known.required && narrowed) {
+      return { error: `"${known.label}" is always shown, so it can't be targeted or scheduled` };
+    }
+
+    sections.push({
+      key: raw.key,
+      visible: raw.visible !== false,
+      order,
+      text: text.value,
+      audience: audience.audience,
+      startAt: startAt.value,
+      endAt: endAt.value,
+    });
   }
   return { sections };
 };
 
-/** Every known section, saved visibility/order applied, sorted for display. */
-export const mergeHomeSections = (saved = []) => {
-  const savedByKey = new Map(saved.map((s) => [s.key, s]));
-  return HOME_SECTIONS.map((d) => {
-    const s = savedByKey.get(d.key) || {};
-    return {
-      key: d.key,
-      label: d.label,
-      visible: s.visible ?? true,
-      order: Number.isInteger(s.order) ? s.order : d.order,
-    };
-  }).sort((a, b) => a.order - b.order);
+/**
+ * Every block in `catalog`, saved settings applied, sorted for display.
+ * `text` is the override (null = default); the catalog's `textLabel`,
+ * `textDefault` and `textMax` tell the CMS what can be edited.
+ */
+const mergeSectionList = (catalog, saved = []) => {
+  const savedByKey = new Map((Array.isArray(saved) ? saved : []).map((s) => [s?.key, s]));
+  return catalog
+    .map((d) => {
+      const s = savedByKey.get(d.key) || {};
+      return {
+        key: d.key,
+        label: d.label,
+        ...('required' in d && { required: d.required }),
+        ...(d.text && {
+          textLabel: d.text.label,
+          textDefault: d.text.default,
+          textMax: d.text.max,
+        }),
+        visible: d.required ? true : (s.visible ?? true),
+        order: Number.isInteger(s.order) ? s.order : d.order,
+        text: d.text && typeof s.text === 'string' && s.text ? s.text : null,
+        audience: d.required
+          ? { ...DEFAULT_AUDIENCE }
+          : { ...DEFAULT_AUDIENCE, ...(s.audience ?? {}) },
+        startAt: (!d.required && s.startAt) || null,
+        endAt: (!d.required && s.endAt) || null,
+      };
+    })
+    .sort((a, b) => a.order - b.order);
+};
+
+/** What the app gets for a merged block: no CMS labels. */
+export const toPublicSection = ({ key, visible, order, text, audience, startAt, endAt }) => ({
+  key,
+  visible,
+  order,
+  text,
+  audience,
+  startAt,
+  endAt,
+});
+
+export const parseHomeSections = (value) => parseSectionList(value, HOME_SECTIONS, 'Home');
+
+export const mergeHomeSections = (saved = []) => mergeSectionList(HOME_SECTIONS, saved);
+
+/** One screen's blocks, e.g. ('profile', [{ key, visible, order }]). */
+export const parseScreenSections = (screen, value) => {
+  if (!Object.hasOwn(SCREEN_SECTIONS, screen)) return { error: `Unknown screen "${screen}"` };
+  return parseSectionList(value, SCREEN_SECTIONS[screen], screen);
+};
+
+/** Every screen's blocks: `{ profile: [...], care_hub: [...], ... }`. */
+export const mergeScreenSections = (saved = {}) =>
+  Object.fromEntries(
+    Object.entries(SCREEN_SECTIONS).map(([screen, catalog]) => [
+      screen,
+      mergeSectionList(catalog, saved?.[screen]),
+    ]),
+  );
+
+/** A hub's title override: `{ value: string | null }` or `{ error }`. */
+export const parseScreenTitle = (screen, value) => {
+  if (value === undefined || value === null || value === '') return { value: null };
+  if (!Object.hasOwn(SCREEN_TITLES, screen)) return { error: 'This screen has no title to change' };
+  const t = optionalText(value, SCREEN_TITLE_MAX, 'Title');
+  if (t.error) return t;
+  return { value: t.value === SCREEN_TITLES[screen] ? null : t.value };
+};
+
+/** `{ care_hub: { title, default } … }` for every screen with a title. */
+export const mergeScreenTitles = (saved = {}) =>
+  Object.fromEntries(
+    Object.entries(SCREEN_TITLES).map(([screen, dflt]) => [
+      screen,
+      {
+        title: typeof saved?.[screen] === 'string' && saved[screen] ? saved[screen] : null,
+        default: dflt,
+      },
+    ]),
+  );
+
+/** Saved hub titles re-validated (a restored snapshot); bad ones are dropped. */
+export const parseAllScreenTitles = (value) => {
+  const out = {};
+  for (const [screen, title] of Object.entries(value && typeof value === 'object' ? value : {})) {
+    const t = parseScreenTitle(screen, title);
+    if (!t.error && t.value) out[screen] = t.value;
+  }
+  return out;
+};
+
+/**
+ * A whole `screenSections` snapshot (from a revision) re-validated screen
+ * by screen; screens or blocks the catalog no longer has are dropped.
+ */
+export const parseAllScreenSections = (value) => {
+  const out = {};
+  for (const [screen, list] of Object.entries(value && typeof value === 'object' ? value : {})) {
+    if (!Object.hasOwn(SCREEN_SECTIONS, screen) || !Array.isArray(list)) continue;
+    const keys = new Set(SCREEN_SECTIONS[screen].map((s) => s.key));
+    const parsed = parseScreenSections(
+      screen,
+      list.filter((s) => keys.has(s?.key)),
+    );
+    if (parsed.error) return parsed;
+    out[screen] = parsed.sections;
+  }
+  return { screenSections: out };
 };
 
 /* ---------------------------------- Theme ---------------------------------- */

@@ -38,5 +38,11 @@ router.post('/launch/:itemKey/notify', optionalAuth, appConfigController.notifyL
  * @access  Public
  */
 router.post('/launch/:itemKey/tap', appConfigController.trackLockedTap);
+/**
+ * @route   POST /api/app-config/usage
+ * @desc    Batched feature usage beacon from the app. Body: { events: [{ itemKey, kind: open|tap }] } (≤ 50); X-Device-Id header counts unique devices. Unknown items are skipped
+ * @access  Public
+ */
+router.post('/usage', appConfigController.trackUsage);
 
 export default router;
