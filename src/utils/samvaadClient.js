@@ -32,6 +32,11 @@ const API_BASE_URL = process.env.API_BASE_URL;
 // a no-answer attempt, while staying short enough that a leaked token is
 // low-risk. The webhook is the backup save path if it does expire.
 const CALL_TOKEN_TTL = process.env.SAMVAAD_CALL_TOKEN_TTL || '2h';
+// Both call tokens go to Sarvam, a third party, so they're scoped: the call
+// token only works for POST /api/cycle/log and the webhook token only for the
+// webhook (middleware/authMiddleware.js), never as a sign-in.
+export const CALL_TOKEN_SCOPE = 'checkin_call';
+export const WEBHOOK_TOKEN_SCOPE = 'checkin_webhook';
 
 // The webhook correlation token (see webhook_config.metadata below) is
 // intentionally longer-lived than CALL_TOKEN_TTL — that one bounds a token
@@ -124,7 +129,8 @@ async function readJsonOrThrow(response, action) {
  * configured with such a tool — the primary data path back to us is still
  * the webhook (see checkin-call/webhook route), which needs no token at all.
  */
-export const issueCallToken = (userId) => generateToken({ userId }, { expiresIn: CALL_TOKEN_TTL });
+export const issueCallToken = (userId) =>
+  generateToken({ userId, scope: CALL_TOKEN_SCOPE }, { expiresIn: CALL_TOKEN_TTL });
 
 /**
  * Mints the token checkinCallWebhook verifies to trust `metadata.userId` —
@@ -133,7 +139,12 @@ export const issueCallToken = (userId) => generateToken({ userId }, { expiresIn:
  */
 export const issueWebhookToken = (userId, dateKey, callId) =>
   generateToken(
-    { userId, dateKey, ...(callId ? { callId: String(callId) } : {}) },
+    {
+      userId,
+      dateKey,
+      scope: WEBHOOK_TOKEN_SCOPE,
+      ...(callId ? { callId: String(callId) } : {}),
+    },
     { expiresIn: WEBHOOK_TOKEN_TTL },
   );
 

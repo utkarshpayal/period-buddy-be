@@ -1,6 +1,6 @@
 import { WebSocketServer } from 'ws';
 import url from 'url';
-import { verifyToken } from '../utils/jwt.js';
+import { resolveToken } from '../utils/sessions.js';
 import logger from '../utils/logger.js';
 import Consultation from '../models/Consultation.js';
 import Doctor from '../models/Doctor.js';
@@ -92,7 +92,11 @@ export const initWebSocket = (server) => {
     const hasToken = token && token !== 'null' && token !== 'undefined' && token.trim() !== '';
     if (hasToken) {
       try {
-        const decoded = verifyToken(token);
+        // Same session check as REST: a logged-out or revoked token can't
+        // open a socket either.
+        const { decoded } = await resolveToken(token);
+        // Scoped call tokens (utils/samvaadClient.js) never open a socket.
+        if (decoded.scope) throw new Error('Scoped token');
         userId = decoded.userId;
       } catch (err) {
         logger.warn('ws_auth_failed', {
@@ -206,7 +210,7 @@ export const initWebSocket = (server) => {
           // 'join' entirely and inject messages into any room by name.
           if (!clientMetadata.get(ws)?.rooms.has(room)) return;
 
-          logger.info('ws_message_received', { userId, room, text: text.substring(0, 50) });
+          logger.info('ws_message_received', { userId, room, length: text.length });
 
           // Broadcast to the room
           broadcastToRoom(room, {

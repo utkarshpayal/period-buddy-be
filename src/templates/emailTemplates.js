@@ -283,6 +283,52 @@ export const getAccountDeletionOtpEmailTemplate = ({ firstName, otp, expiryMinut
 };
 
 /**
+ * Second sign-in step for staff and doctors (utils/loginSecurity.js): the
+ * code asked for after the password.
+ */
+export const getLoginCodeEmailTemplate = ({ firstName, otp, expiryMinutes }) => {
+  const content = `
+    <span class="badge">Sign-in code</span>
+    <h2 style="margin-top: 0; color: ${BRAND.foreground}; font-size: 24px; font-weight: 600;">Hi ${escapeHtml(firstName) || 'there'},</h2>
+    <p>Use this code to finish signing in to your Nura workspace.</p>
+
+    <div style="text-align: center; margin: 32px 0;">
+      <span style="display: inline-block; font-family: 'Courier New', monospace; font-size: 36px; font-weight: 700; letter-spacing: 10px; color: ${BRAND.foreground}; background-color: ${BRAND.surfaceSoft}; padding: 16px 24px; border-radius: 12px;">
+        ${otp}
+      </span>
+    </div>
+
+    <p>This code expires in <strong>${expiryMinutes} minutes</strong>. <strong>If you didn't just sign in</strong>, someone knows your password: change it now and tell your Super Admin.</p>
+    <div class="divider"></div>
+    <p style="margin-bottom: 0;">Warmly,</p>
+    <p style="font-weight: 600; margin-top: 4px; color: ${BRAND.primary};">The Nura Team</p>
+  `;
+  return emailLayout('Your Nura sign-in code', content);
+};
+
+/**
+ * "New sign-in to your account" (utils/loginSecurity.js), sent when an
+ * account signs in on a device it hasn't used before.
+ */
+export const getNewSignInTemplate = ({ firstName, device, when }) => {
+  const content = `
+    <span class="badge">New sign-in</span>
+    <h2 style="margin-top: 0; color: ${BRAND.foreground}; font-size: 24px; font-weight: 600;">Hi ${escapeHtml(firstName) || 'there'},</h2>
+    <p>Your Nura account was just signed in on a new device.</p>
+    <p style="background-color: ${BRAND.surfaceSoft}; padding: 12px 16px; border-radius: 12px;">
+      <strong>Device:</strong> ${escapeHtml(device)}<br/>
+      <strong>When:</strong> ${escapeHtml(when)}
+    </p>
+    <p>If this was you, there's nothing to do.</p>
+    <p><strong>If it wasn't you</strong>, change your password now. In the app, Profile → Data privacy &amp; security also lets you sign that device out.</p>
+    <div class="divider"></div>
+    <p style="margin-bottom: 0;">Warmly,</p>
+    <p style="font-weight: 600; margin-top: 4px; color: ${BRAND.primary};">The Nura Team</p>
+  `;
+  return emailLayout('New sign-in to your Nura account', content);
+};
+
+/**
  * Sent when someone signs in with valid credentials to an account an admin
  * has suspended (utils/accountStatus.js, throttled to once per 24h).
  */

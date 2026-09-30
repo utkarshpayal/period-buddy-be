@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { encryptFields } from '../utils/fieldEncryption.js';
 
 // A single Nura Companion chat session. Messages are embedded rather than a
 // separate collection — sessions are short-lived, per-user conversations
@@ -44,5 +45,8 @@ const qaChatSessionSchema = new mongoose.Schema(
 );
 
 qaChatSessionSchema.index({ userId: 1, lastMessageAt: -1 });
+
+// Free text is encrypted at rest (utils/fieldEncryption.js).
+qaChatSessionSchema.plugin(encryptFields, { fields: ['title', 'messages.text'] });
 
 export default mongoose.model('QaChatSession', qaChatSessionSchema);

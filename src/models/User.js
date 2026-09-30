@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { hashPassword } from '../utils/password.js';
+import { encryptFields } from '../utils/fieldEncryption.js';
 import { userRoleEnum, genderEnum } from '../enums/enums.js';
 
 const userSchema = new mongoose.Schema(
@@ -26,7 +27,10 @@ const userSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
       trim: true,
-      match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please provide a valid email'],
+      // Any domain ending (.care, .info, .digital…): the old pattern only
+      // allowed 2-3 letters, which rejected every @thenura.care address.
+      // Signup already checks the format properly (schemas/authSchema.js).
+      match: [/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/, 'Please provide a valid email'],
     },
     password: {
       // Not required for Google-only accounts (no googleId => must have a password).
@@ -64,6 +68,45 @@ const userSchema = new mongoose.Schema(
       default: userRoleEnum.USER,
     },
     lastLogin: { type: Date },
+    // Any token issued before this is refused (log out everywhere, password
+    // change, deletion, suspension); see utils/sessions.js.
+    sessionsRevokedAt: { type: Date },
+    // Choices under the privacy settings (utils/privacy.js). Unset = never asked.
+    consents: {
+      aiProcessing: {
+        granted: { type: Boolean },
+        version: { type: String },
+        updatedAt: { type: Date },
+      },
+    },
+    // Throttles "Download my data" (authController.exportData).
+    lastDataExportAt: { type: Date, select: false },
+    // Per-account lockout after repeated wrong passwords (utils/loginSecurity.js).
+    failedLoginCount: { type: Number, default: 0, select: false },
+    lockUntil: { type: Date, select: false },
+    // Staff / doctor two-step sign-in with an authenticator app (utils/totp.js,
+    // controllers/twoFactorController.js). Without it they get emailed codes.
+    // The secrets are encrypted at rest and never leave the server after setup.
+    twoFactor: {
+      totpSecret: { type: String, select: false },
+      pendingTotpSecret: { type: String, select: false },
+      totpEnabledAt: { type: Date },
+      // Last accepted time step, so a code can't be used twice.
+      lastTotpStep: { type: Number, select: false },
+      // sha256 of each unused recovery code.
+      recoveryCodeHashes: { type: [String], select: false, default: undefined },
+    },
+    // Privacy settings (app: Profile → Data privacy & security).
+    privacySettings: {
+      // Pushes say "You have a new update" instead of their text, so a
+      // locked phone never shows health details (models/Notification.js).
+      hideNotificationDetails: { type: Boolean, default: true },
+      // Nura AI chats older than this are deleted (utils/retentionRunner.js).
+      // 0 = keep until the person deletes them.
+      aiChatRetentionDays: { type: Number, default: 0, enum: [0, 30, 90, 365] },
+      // Email when the account signs in on a new device (utils/loginSecurity.js).
+      newSignInAlerts: { type: Boolean, default: true },
+    },
 
     // Profile
     profilePicture: { type: String },
@@ -152,8 +195,18 @@ userSchema.pre('save', async function (next) {
 userSchema.methods.toJSON = function () {
   const obj = this.toObject({ virtuals: false });
   delete obj.password;
+  delete obj.failedLoginCount;
+  delete obj.lockUntil;
+  if (obj.twoFactor) {
+    obj.twoFactor = { totpEnabledAt: obj.twoFactor.totpEnabledAt ?? null };
+  }
   return obj;
 };
+
+// Authenticator secrets are encrypted at rest (utils/fieldEncryption.js).
+userSchema.plugin(encryptFields, {
+  fields: ['twoFactor.totpSecret', 'twoFactor.pendingTotpSecret'],
+});
 
 userSchema.index({ email: 1 });
 userSchema.index({ isActive: 1, createdAt: -1 });

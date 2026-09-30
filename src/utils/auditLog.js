@@ -7,6 +7,8 @@ import logger from './logger.js';
  */
 export const AUDIT_ACTIONS = {
   USER_STATUS_CHANGED: 'user.status_changed',
+  // A staff member opened someone's account (their personal details).
+  USER_VIEWED: 'user.viewed',
   DOCTOR_INVITED: 'doctor.invited',
   DOCTOR_UPDATED: 'doctor.updated',
   DOCTOR_DEACTIVATED: 'doctor.deactivated',
@@ -79,6 +81,10 @@ export const AUDIT_ACTIONS = {
   STAFF_ROLE_CHANGED: 'staff.role_changed',
   STAFF_STATUS_CHANGED: 'staff.status_changed',
   STAFF_REMOVED: 'staff.removed',
+  // Two-step sign-in with an authenticator app (controllers/twoFactorController.js).
+  TWO_FACTOR_ENABLED: 'two_factor.enabled',
+  TWO_FACTOR_DISABLED: 'two_factor.disabled',
+  TWO_FACTOR_RESET: 'two_factor.reset',
 };
 
 /**

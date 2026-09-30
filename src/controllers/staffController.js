@@ -18,7 +18,7 @@ import {
 import { cancelPendingChangeRequests, suspendAccount } from '../utils/accountLifecycle.js';
 
 const STAFF_FIELDS =
-  'firstName lastName email role isActive mustSetPassword lastLogin invitedBy createdAt updatedAt';
+  'firstName lastName email role isActive mustSetPassword lastLogin invitedBy createdAt updatedAt twoFactor.totpEnabledAt';
 
 const displayName = (user) => `${user?.firstName || ''} ${user?.lastName || ''}`.trim();
 
@@ -41,6 +41,8 @@ const serializeStaff = (user, actorRole) => {
       ? { id: String(invitedBy._id), name: displayName(invitedBy), email: invitedBy.email }
       : null,
     canManage: canManageRole(actorRole, plain.role),
+    // Signs in with an authenticator app (controllers/twoFactorController.js).
+    authenticator: Boolean(plain.twoFactor?.totpEnabledAt),
   };
 };
 

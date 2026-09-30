@@ -12,6 +12,7 @@ export const ERROR_MESSAGES = {
   NO_TOKEN: 'No authentication token provided',
   INVALID_TOKEN: 'Invalid or expired token',
   TOKEN_EXPIRED: 'Authentication token has expired',
+  SESSION_REVOKED: 'You have been signed out. Please sign in again.',
 
   // Server Errors
   INTERNAL_SERVER_ERROR: 'Internal server error',

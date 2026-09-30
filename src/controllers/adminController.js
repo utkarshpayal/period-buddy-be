@@ -104,6 +104,13 @@ export const getUser = async (req, res, next) => {
       Document.countDocuments({ userId: user._id }),
       Consultation.countDocuments({ userId: user._id }),
     ]);
+    // Who looked at whose personal details, for the audit log.
+    recordAudit({
+      req,
+      action: AUDIT_ACTIONS.USER_VIEWED,
+      resourceType: 'user',
+      resourceId: user._id,
+    });
 
     return sendResponse(res, HTTP_STATUS.OK, 'User fetched', {
       user: withAccountState(user),

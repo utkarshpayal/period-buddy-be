@@ -19,6 +19,7 @@ import {
 } from '../utils/apiHelpers.js';
 import { generateCareSuggestions } from '../utils/careSuggestionsAi.js';
 import { ACTIVE_ACCOUNT_FILTER } from '../utils/accountStatus.js';
+import { aiAllowed } from '../utils/privacy.js';
 
 /** Whether the other side of a pairing is a live account. Deleting an
  * account severs the pairing (utils/accountLifecycle.js), but a suspended
@@ -330,7 +331,7 @@ export const getPartnerSharedData = async (req, res, next) => {
     // Streak is low-sensitivity engagement info (not personal health data),
     // so it's shown to any connected partner regardless of the four
     // permission toggles above.
-    const ownerUser = await User.findById(myProfile.partnerId).select('streakCount');
+    const ownerUser = await User.findById(myProfile.partnerId).select('streakCount consents');
     if (ownerUser) {
       data.streak = { count: ownerUser.streakCount ?? 0 };
     }
@@ -375,6 +376,8 @@ export const getPartnerSharedData = async (req, res, next) => {
         cycle: data.cycle,
         recentLogs: data.recentSymptoms || [],
         documents,
+        // It's the owner's data going to the AI provider: their consent counts.
+        useAi: aiAllowed(ownerUser),
       });
 
       if (partnerProfile) {

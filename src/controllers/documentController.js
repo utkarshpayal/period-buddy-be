@@ -3,7 +3,7 @@ import DocumentChatMessage from '../models/DocumentChatMessage.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { buildPagination, getPagination, isValidObjectId } from '../utils/apiHelpers.js';
-import { uploadBufferToS3, deleteFromS3 } from '../utils/s3.js';
+import { uploadBufferToS3, deleteFromS3, getSignedViewUrl } from '../utils/s3.js';
 import { assertAllowedUpload } from '../utils/fileValidation.js';
 import {
   createChatCompletion,
@@ -12,6 +12,17 @@ import {
 } from '../utils/sarvamClient.js';
 import { broadcastToRoom } from '../config/websocket.js';
 import logger from '../utils/logger.js';
+import { aiAllowed } from '../utils/privacy.js';
+
+/**
+ * A document as clients see it: `fileUrl` is a fresh 10-minute signed link
+ * (documents live in a private S3 folder), and the storage key stays on the
+ * server.
+ */
+const presentDocument = async (doc) => {
+  const { fileKey, ...rest } = doc.toJSON ? doc.toJSON() : doc;
+  return { ...rest, fileUrl: await getSignedViewUrl({ key: fileKey }) };
+};
 
 const MAX_CONTEXT_DOCS = 20;
 const MAX_TEXT_PER_DOC = 4000;
@@ -69,7 +80,7 @@ export const uploadDocument = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, validationError.message);
     }
 
-    const { url, key } = await uploadBufferToS3({
+    const { key } = await uploadBufferToS3({
       buffer: req.file.buffer,
       mimeType: req.file.mimetype,
       originalName: req.file.originalname,
@@ -87,13 +98,13 @@ export const uploadDocument = async (req, res, next) => {
       title: title.trim(),
       docType,
       documentDate: parsedDate,
-      fileUrl: url,
       fileKey: key,
       mimeType: req.file.mimetype,
       originalFileName: req.file.originalname,
       fileSize: req.file.size,
       extractedText: '',
-      extractionStatus: 'pending',
+      // Reading the file sends it to our AI provider: not without consent.
+      extractionStatus: aiAllowed(req.user) ? 'pending' : 'skipped',
     });
 
     logger.info('document_uploaded', {
@@ -104,9 +115,13 @@ export const uploadDocument = async (req, res, next) => {
       extractionStatus: 'pending',
     });
 
-    sendResponse(res, HTTP_STATUS.CREATED, 'Document uploaded', { document });
+    sendResponse(res, HTTP_STATUS.CREATED, 'Document uploaded', {
+      document: await presentDocument(document),
+    });
 
-    runExtraction(document, req.file.buffer, req.file.mimetype);
+    if (document.extractionStatus === 'pending') {
+      runExtraction(document, req.file.buffer, req.file.mimetype);
+    }
   } catch (error) {
     logger.error('document_upload_error', { userId: req.userId, error: error.message });
     next(error);
@@ -179,7 +194,7 @@ export const listDocuments = async (req, res, next) => {
     ]);
 
     return sendResponse(res, HTTP_STATUS.OK, 'Documents fetched', {
-      documents,
+      documents: await Promise.all(documents.map(presentDocument)),
       pagination: buildPagination({ page, limit, total }),
     });
   } catch (error) {
@@ -200,7 +215,9 @@ export const getDocument = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Document not found');
     }
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Document fetched', { document });
+    return sendResponse(res, HTTP_STATUS.OK, 'Document fetched', {
+      document: await presentDocument(document),
+    });
   } catch (error) {
     logger.error('document_get_error', { userId: req.userId, error: error.message });
     next(error);

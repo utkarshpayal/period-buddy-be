@@ -9,12 +9,13 @@ const userSessionSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    token: { type: String, required: true, unique: true }, // JWT jti or hashed token
+    token: { type: String, required: true, unique: true }, // sha256 of the token's `sid` (utils/sessions.js)
     deviceInfo: {
       platform: { type: String, trim: true }, // 'ios' | 'android' | 'web'
       deviceId: { type: String, trim: true },
       appVersion: { type: String, trim: true },
     },
+    userAgent: { type: String, trim: true },
     ipAddress: { type: String, trim: true },
     lastActiveAt: { type: Date, default: Date.now },
     expiresAt: { type: Date, required: true },

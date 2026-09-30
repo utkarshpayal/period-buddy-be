@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { encryptFields } from '../utils/fieldEncryption.js';
 
 /**
  * BuddyMessage — a single shared message stream per pairing.
@@ -33,5 +34,8 @@ const buddyMessageSchema = new mongoose.Schema(
 );
 
 buddyMessageSchema.index({ matchId: 1, sentAt: -1 });
+
+// Free text is encrypted at rest (utils/fieldEncryption.js).
+buddyMessageSchema.plugin(encryptFields, { fields: ['text'] });
 
 export default mongoose.model('BuddyMessage', buddyMessageSchema);

@@ -60,6 +60,8 @@ import genzRoutes from './src/routes/genzRoutes.js';
 import circleRoutes from './src/routes/circleRoutes.js';
 import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
 import adminSubscriptionRoutes from './src/routes/adminSubscriptionRoutes.js';
+import { startAccountPurgeRunner, stopAccountPurgeRunner } from './src/utils/accountPurgeRunner.js';
+import { startRetentionRunner, stopRetentionRunner } from './src/utils/retentionRunner.js';
 import { setupSwagger } from './src/docs/swagger.js';
 
 const app = express();
@@ -79,6 +81,8 @@ connectDB().then(() => {
   startBroadcastWorker();
   startPushScheduler();
   startLaunchScheduler();
+  startAccountPurgeRunner();
+  startRetentionRunner();
 });
 
 /* ──────────────────────────────────────────────────────────
@@ -292,6 +296,8 @@ const gracefulShutdown = async (signal) => {
     stopBroadcastWorker();
     stopPushScheduler();
     stopLaunchScheduler();
+    stopAccountPurgeRunner();
+    stopRetentionRunner();
     // Stop accepting new WS connections and close existing ones.
     if (wss) {
       for (const client of wss.clients) {

@@ -1,5 +1,6 @@
 import express from 'express';
 import * as doctorController from '../controllers/doctorController.js';
+import * as twoFactorController from '../controllers/twoFactorController.js';
 import { uploadContentMedia } from '../controllers/uploadController.js';
 import { authenticate, authorize } from '../middleware/authMiddleware.js';
 import { requirePermission } from '../middleware/rbac.js';
@@ -46,6 +47,17 @@ router.post(
   authenticate,
   requirePermission(PERMISSIONS.DOCTORS_MANAGE),
   doctorController.resendInvite,
+);
+/**
+ * @route   POST /api/doctor/admin/:id/reset-2fa
+ * @desc    Turn off a doctor's authenticator app (lost phone and recovery codes)
+ * @access  Private (doctors.manage)
+ */
+router.post(
+  '/admin/:id/reset-2fa',
+  authenticate,
+  requirePermission(PERMISSIONS.DOCTORS_MANAGE),
+  twoFactorController.resetDoctorTwoFactor,
 );
 router.delete(
   '/admin/:id',

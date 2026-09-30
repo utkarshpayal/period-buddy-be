@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { authenticate } from '../middleware/authMiddleware.js';
 import * as speechController from '../controllers/speechController.js';
+import { requireAiConsent } from '../utils/privacy.js';
 
 const router = express.Router();
 
@@ -20,7 +21,12 @@ const upload = multer({
 router.use(authenticate);
 
 router.get('/languages', speechController.getLanguages);
-router.post('/transcribe', upload.single('file'), speechController.transcribeAudio);
-router.post('/synthesize', speechController.synthesizeSpeech);
+router.post(
+  '/transcribe',
+  requireAiConsent,
+  upload.single('file'),
+  speechController.transcribeAudio,
+);
+router.post('/synthesize', requireAiConsent, speechController.synthesizeSpeech);
 
 export default router;
