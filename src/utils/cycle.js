@@ -47,8 +47,11 @@ export const formatDisplayDate = (date, options = {}) =>
 
 // A day counts as menstruation for episode-grouping when it has any recorded
 // flow other than 'none'. Spotting is included — a period that opens with a
-// spotting day still starts on that day.
+// spotting day still starts on that day. But spotting on its own (mid-cycle
+// ovulation spotting, breakthrough bleeding) is not a period: an episode
+// needs at least one day of real flow, see derivePeriodEpisodes.
 const isBleedingLog = (log) => Boolean(log?.dateKey && log.flow && log.flow !== 'none');
+const isFlowLog = (log) => isBleedingLog(log) && log.flow !== 'spotting';
 
 // Sort thresholds — tuned to be robust rather than clever.
 export const RECENT_CYCLE_WINDOW = 6; // only the last N cycles drive the estimate
@@ -112,6 +115,8 @@ const rejectOutliers = (values) => {
  * Consecutive bleeding days (tolerating up to `maxGap` skipped/unlogged days)
  * form one episode. Returns episodes in chronological order, each as
  * `{ startKey, endKey }` where `startKey` is the *actual* period start.
+ * Episodes made only of spotting days are dropped, so a day of mid-cycle
+ * spotting can't restart the cycle and move every prediction.
  */
 export const derivePeriodEpisodes = (logs = [], { maxGap = 1 } = {}) => {
   const bleedingKeys = [...new Set(logs.filter(isBleedingLog).map((log) => log.dateKey))].sort();
@@ -134,7 +139,13 @@ export const derivePeriodEpisodes = (logs = [], { maxGap = 1 } = {}) => {
   });
 
   if (current) episodes.push(current);
-  return episodes;
+
+  const flowKeys = new Set(logs.filter(isFlowLog).map((log) => log.dateKey));
+  return episodes.filter((episode) =>
+    bleedingKeys.some(
+      (key) => key >= episode.startKey && key <= episode.endKey && flowKeys.has(key),
+    ),
+  );
 };
 
 /**

@@ -79,7 +79,12 @@ export const runDailyNotificationTick = async () => {
       // concurrent tick invocation could otherwise read the same stale
       // guard value for two overlapping runs and create duplicate
       // notifications/pushes before either persisted it.
+      // Pregnancy Mode pauses the period and fertile-window reminders (the
+      // app's toggle says so); the daily "log today" nudge still goes out.
+      const cyclePaused = Boolean(settings.pregnancyMode);
+
       if (
+        !cyclePaused &&
         settings.remindersEnabled &&
         predictions.nextPeriodDaysAway === (settings.reminderDaysBefore ?? 2)
       ) {
@@ -106,6 +111,7 @@ export const runDailyNotificationTick = async () => {
       // ovulation itself), so there's still time to act on it, rather than
       // on ovulation day itself.
       if (
+        !cyclePaused &&
         (settings.ovulationReminder || settings.fertilityReminder) &&
         predictions.ovulationReliable &&
         todayKey === dateToDateKey(predictions.fertileWindowStartISO)

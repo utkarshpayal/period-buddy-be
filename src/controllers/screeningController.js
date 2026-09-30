@@ -76,7 +76,7 @@ const scoreAnswers = (questions, answers) => {
 const buildSummary = (condition, riskLevel, score) => {
   const label = CONDITION_LABELS[condition] || condition;
   const riskText = {
-    low: `Your responses show a low likelihood of indicators associated with ${label} (score: ${score}/100).`,
+    low: `Your responses matched few of the signs often linked with ${label} (score: ${score}/100). A low score does not rule it out: if any symptom worries you or keeps coming back, see a doctor.`,
     moderate: `Your responses show a moderate number of indicators sometimes associated with ${label} (score: ${score}/100).`,
     high: `Your responses show several indicators commonly associated with ${label} (score: ${score}/100).`,
   };

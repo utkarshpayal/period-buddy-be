@@ -73,7 +73,7 @@ const STOP_WORDS = new Set([
 const MIN_MATCH_SCORE = 15;
 
 const URGENT_PATTERNS = [
-  /\b(self[-\s]?harm|suicid(e|al)|kill myself)\b/i,
+  /\b(self[-\s]?harm|suicid(e|al)|kill(ing)? myself|end(ing)? my life|want to die|hurt(ing)? myself)\b/i,
   /\b(bleeding during pregnancy|pregnant and bleeding)\b/i,
   /\b(soaking|fills?)\b.*\b(pad|pads|tampon|tampons)\b/i,
   /\b(faint|fainting|dizzy|dizziness)\b/i,
@@ -81,7 +81,7 @@ const URGENT_PATTERNS = [
   /\b(severe|unbearable|worst)\b.*\b(pain|cramp|cramps)\b/i,
 ];
 export const URGENT_COMPANION_REPLY =
-  'This could need urgent help. If you are soaking pads quickly, feeling faint, have fever with pelvic pain, severe one-sided or unbearable pain, bleeding during pregnancy, or thoughts of self-harm, contact emergency care or a trusted local clinician now.';
+  'This could need urgent help. If you are soaking pads quickly, feeling faint, have fever with pelvic pain, severe one-sided or unbearable pain, or bleeding during pregnancy, go to the nearest hospital or call 112 now. If you are having thoughts of harming yourself, you are not alone: call Tele-MANAS on 14416 (free, 24 hours) or 112, and tell someone you trust.';
 
 export const hasUrgentPattern = (query) => URGENT_PATTERNS.some((pattern) => pattern.test(query));
 
