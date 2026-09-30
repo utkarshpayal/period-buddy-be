@@ -55,6 +55,28 @@ export const describeConsents = (user) => ({
   },
 });
 
+/** What a push says when the person hides notification details. */
+export const PRIVATE_PUSH = {
+  title: 'The Nura',
+  body: 'You have a new update. Open the app to see it.',
+};
+
+/** "Hide notification details" is on unless the person turned it off. */
+export const hidesNotificationDetails = (user) =>
+  user?.privacySettings?.hideNotificationDetails !== false;
+
+/**
+ * The push to actually send this person: the real one, or neutral text with
+ * no banner image (which could show details too) when they hide details.
+ * Every device push goes through this: automatic ones, admin test pushes and
+ * broadcasts. Tapping still opens the right screen (data is kept).
+ */
+export const pushFor = (user, { title, body, data }) => {
+  if (!hidesNotificationDetails(user)) return { title, body, data };
+  const { image: _image, ...rest } = data || {};
+  return { ...PRIVATE_PUSH, data: rest };
+};
+
 /** Choices for how long Nura AI chats are kept (0 = until deleted). */
 export const AI_CHAT_RETENTION_OPTIONS = [0, 30, 90, 365];
 

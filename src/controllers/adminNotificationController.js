@@ -22,6 +22,7 @@ import {
   laneFor,
 } from '../utils/pushBroadcastWorker.js';
 import { parseNotificationData } from '../utils/notificationRoute.js';
+import { hidesNotificationDetails, pushFor } from '../utils/privacy.js';
 import PushSchedule from '../models/PushSchedule.js';
 import { describeSchedule, nextOccurrence, parseScheduleInput } from '../utils/pushSchedule.js';
 
@@ -173,7 +174,9 @@ export const sendTestNotification = async (req, res, next) => {
     const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     if (!email) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Email is required');
 
-    const user = await User.findOne({ email }).select('_id notificationToken notificationsEnabled');
+    const user = await User.findOne({ email }).select(
+      '_id notificationToken notificationsEnabled privacySettings',
+    );
     if (!user) return sendError(res, HTTP_STATUS.NOT_FOUND, 'No user with that email');
     if (!user.notificationToken) {
       return sendError(
@@ -190,15 +193,21 @@ export const sendTestNotification = async (req, res, next) => {
       );
     }
 
-    const messageId = await sendPushNotification(user.notificationToken, {
-      title: msg.title,
-      body: msg.body,
-      data: {
-        type: 'system',
-        test: 'true',
-        ...pushData.data,
-      },
-    });
+    // Same rule as every other push: a person who hides notification details
+    // gets the neutral text, and the admin is told so.
+    const detailsHidden = hidesNotificationDetails(user);
+    const messageId = await sendPushNotification(
+      user.notificationToken,
+      pushFor(user, {
+        title: msg.title,
+        body: msg.body,
+        data: {
+          type: 'system',
+          test: 'true',
+          ...pushData.data,
+        },
+      }),
+    );
     if (!messageId) {
       return sendError(res, HTTP_STATUS.BAD_GATEWAY, 'Firebase rejected the notification');
     }
@@ -211,7 +220,14 @@ export const sendTestNotification = async (req, res, next) => {
       metadata: { title: msg.title },
     });
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Test notification sent', { messageId });
+    return sendResponse(
+      res,
+      HTTP_STATUS.OK,
+      detailsHidden
+        ? 'Test notification sent. This user hides notification details, so their phone shows the neutral text.'
+        : 'Test notification sent',
+      { messageId, detailsHidden },
+    );
   } catch (error) {
     next(error);
   }

@@ -3,6 +3,7 @@ import Notification from '../models/Notification.js';
 import PushBroadcast from '../models/PushBroadcast.js';
 import { sendPushBatch, FCM_MAX_BATCH_SIZE } from './fcm.js';
 import { parsePositiveInt } from './apiHelpers.js';
+import { hidesNotificationDetails, pushFor } from './privacy.js';
 import logger from './logger.js';
 
 /**
@@ -59,6 +60,24 @@ export const countAudience = async (audience, userIds) => {
     }),
   ]);
   return { totalUsers, totalWithToken };
+};
+
+/**
+ * Splits a page of users into the device tokens that get the real push and
+ * the ones that get the neutral text ("Hide notification details", on by
+ * default). Users who turned notifications off get no push. Deduped: one
+ * device can be registered on multiple accounts, and if any of them hides
+ * details the device gets the neutral text.
+ */
+export const splitTokensByPrivacy = (users) => {
+  const open = new Set();
+  const hidden = new Set();
+  for (const u of users) {
+    if (u.notificationsEnabled === false || !u.notificationToken) continue;
+    (hidesNotificationDetails(u) ? hidden : open).add(u.notificationToken);
+  }
+  for (const token of hidden) open.delete(token);
+  return { open: [...open], hidden: [...hidden] };
 };
 
 const sendWithRetry = async (tokens, payload, broadcastId) => {
@@ -139,7 +158,7 @@ const processBroadcast = async (id) => {
       })
         .sort({ _id: 1 })
         .limit(BATCH_SIZE)
-        .select('_id notificationToken notificationsEnabled')
+        .select('_id notificationToken notificationsEnabled privacySettings')
         .lean();
 
       if (users.length === 0) {
@@ -170,18 +189,20 @@ const processBroadcast = async (id) => {
         );
       }
 
-      // Dedupe: one device can be registered on multiple accounts.
       // Users who turned notifications off in the app still get the inbox row
-      // above, just no device push.
-      const tokens = [
-        ...new Set(
-          users
-            .filter((u) => u.notificationsEnabled !== false)
-            .map((u) => u.notificationToken)
-            .filter(Boolean),
-        ),
-      ];
-      const result = await sendWithRetry(tokens, payload, id);
+      // above, just no device push. Those who hide notification details get
+      // the neutral text; the inbox row keeps the real one.
+      const { open, hidden } = splitTokensByPrivacy(users);
+      const result = { successCount: 0, failureCount: 0, deadTokens: [] };
+      for (const [tokens, message] of [
+        [open, payload],
+        [hidden, pushFor(null, payload)],
+      ]) {
+        const sent = await sendWithRetry(tokens, message, id);
+        result.successCount += sent.successCount;
+        result.failureCount += sent.failureCount;
+        result.deadTokens.push(...sent.deadTokens);
+      }
 
       if (result.deadTokens.length > 0) {
         await User.updateMany(
