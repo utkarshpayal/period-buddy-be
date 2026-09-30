@@ -1234,7 +1234,7 @@ Search active accounts (name, email, phone; min 2 chars, max 20 results) to hand
 
 ### POST `/api/admin/notifications/test`
 
-Sends the message immediately to one account's device.
+Sends the message immediately to one account's device. Answers `{ messageId, detailsHidden }`: when the account hides notification details (the default), the phone gets the neutral "You have a new update" text and `detailsHidden` is `true`. Broadcasts follow the same rule per recipient.
 
 ```json
 { "title": "Welcome to The Nura Care", "body": "2 days left until your period starts", "email": "someone@example.com" }

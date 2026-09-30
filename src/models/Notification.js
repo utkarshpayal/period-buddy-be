@@ -2,12 +2,7 @@ import mongoose from 'mongoose';
 import User from './User.js';
 import { sendPushNotification } from '../utils/fcm.js';
 import logger from '../utils/logger.js';
-
-/** What a push says when the person hides notification details. */
-export const PRIVATE_PUSH = {
-  title: 'The Nura',
-  body: 'You have a new update. Open the app to see it.',
-};
+import { pushFor } from '../utils/privacy.js';
 
 /** Notification — in-app notification records. */
 const notificationSchema = new mongoose.Schema(
@@ -67,18 +62,14 @@ notificationSchema.post('save', async function (doc) {
       // "Hide notification details" (on unless the person turned it off):
       // a locked phone shows neutral text, the details stay in the app's
       // notification list. Tapping still opens the right screen (data).
-      const hide = user.privacySettings?.hideNotificationDetails !== false;
-      await sendPushNotification(user.notificationToken, {
-        title: hide ? PRIVATE_PUSH.title : doc.title,
-        body: hide ? PRIVATE_PUSH.body : doc.body,
-        data: {
-          notificationId: String(doc._id),
-          type: doc.type,
-          ...(doc.data || {}),
-          // A banner image could show details too.
-          ...(hide && { image: undefined }),
-        },
-      });
+      await sendPushNotification(
+        user.notificationToken,
+        pushFor(user, {
+          title: doc.title,
+          body: doc.body,
+          data: { notificationId: String(doc._id), type: doc.type, ...(doc.data || {}) },
+        }),
+      );
     }
   } catch (error) {
     logger.error('notification_push_send_failed', {
