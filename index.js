@@ -60,6 +60,9 @@ import genzRoutes from './src/routes/genzRoutes.js';
 import circleRoutes from './src/routes/circleRoutes.js';
 import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
 import adminSubscriptionRoutes from './src/routes/adminSubscriptionRoutes.js';
+import clinicalFinanceRoutes from './src/routes/clinicalFinanceRoutes.js';
+import { cashfreePayoutWebhook } from './src/controllers/payoutWebhookController.js';
+import { startPayoutRunner, stopPayoutRunner } from './src/utils/payoutRunner.js';
 import { startAccountPurgeRunner, stopAccountPurgeRunner } from './src/utils/accountPurgeRunner.js';
 import { startRetentionRunner, stopRetentionRunner } from './src/utils/retentionRunner.js';
 import { setupSwagger } from './src/docs/swagger.js';
@@ -83,6 +86,7 @@ connectDB().then(() => {
   startLaunchScheduler();
   startAccountPurgeRunner();
   startRetentionRunner();
+  startPayoutRunner();
 });
 
 /* ──────────────────────────────────────────────────────────
@@ -125,6 +129,14 @@ if (rateLimitEnabled) {
   app.use('/api', apiLimiter);
   logger.info('rate_limiting_enabled', { action: 'rate_limiting_enabled' });
 }
+
+// Cashfree Payouts webhook: needs the raw body for its HMAC signature, so it
+// is registered before express.json() parses it away.
+app.post(
+  '/api/payouts/webhook/cashfree',
+  express.raw({ type: '*/*', limit: '1mb' }),
+  cashfreePayoutWebhook,
+);
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
@@ -231,6 +243,7 @@ app.use('/api/subscriptions', subscriptionRoutes);
 // once (adminRoutes has no catch-all, so a request under /api/admin/
 // subscriptions/* would otherwise fall through its middleware first too).
 app.use('/api/admin/subscriptions', adminSubscriptionRoutes);
+app.use('/api/admin/clinical-finance', clinicalFinanceRoutes);
 app.use('/api/admin/hr', hrRoutes);
 app.use('/api/sign', signRoutes);
 app.use('/api/admin', adminRoutes);
@@ -298,6 +311,7 @@ const gracefulShutdown = async (signal) => {
     stopLaunchScheduler();
     stopAccountPurgeRunner();
     stopRetentionRunner();
+    stopPayoutRunner();
     // Stop accepting new WS connections and close existing ones.
     if (wss) {
       for (const client of wss.clients) {

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PERMISSIONS as P,
+  STAFF_ROLES,
   canApproveDepartment,
   canManageRole,
   getAssignableRoles,
@@ -60,4 +61,12 @@ test('approvers are scoped to their department', () => {
   assert.equal(canApproveDepartment('app_admin', 'app'), false);
   assert.ok(canApproveDepartment('admin', 'content'));
   assert.ok(canApproveDepartment('admin', 'app'));
+});
+
+test('doctor commission & payouts: only Super Admin and Clinical Admin', () => {
+  const holders = Object.keys(STAFF_ROLES).filter(
+    (role) => hasPermission(role, P.PAYOUTS_READ) || hasPermission(role, P.PAYOUTS_MANAGE),
+  );
+  assert.deepEqual(holders.sort(), ['admin', 'clinical_admin']);
+  for (const role of holders) assert.ok(hasPermission(role, P.PAYOUTS_MANAGE));
 });

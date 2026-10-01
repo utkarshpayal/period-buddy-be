@@ -41,6 +41,9 @@ export const PERMISSIONS = {
   // Clinical
   DOCTORS_READ: 'doctors.read',
   DOCTORS_MANAGE: 'doctors.manage',
+  // Doctor commission, earnings ledger and wallet withdrawals
+  PAYOUTS_READ: 'payouts.read',
+  PAYOUTS_MANAGE: 'payouts.manage',
 
   // Organisation
   STAFF_MANAGE: 'staff.manage',
@@ -133,7 +136,7 @@ export const STAFF_ROLES = {
     label: 'Clinical Admin',
     department: DEPARTMENTS.CLINICAL,
     level: 2,
-    permissions: [P.DOCTORS_READ, P.DOCTORS_MANAGE],
+    permissions: [P.DOCTORS_READ, P.DOCTORS_MANAGE, P.PAYOUTS_READ, P.PAYOUTS_MANAGE],
   },
 };
 

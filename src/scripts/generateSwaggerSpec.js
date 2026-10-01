@@ -18,6 +18,7 @@ const APP_LEVEL_ROUTES = [
   { method: 'GET', path: '/health', group: 'Health', middleware: [] },
   { method: 'GET', path: '/health/ready', group: 'Health', middleware: [] },
   { method: 'GET', path: '/api/payments/return', group: 'Payments', middleware: [] },
+  { method: 'POST', path: '/api/payouts/webhook/cashfree', group: 'Payouts', middleware: [] },
   { method: 'POST', path: '/api/logout', group: 'Auth', middleware: ['authenticate'] },
 ];
 
@@ -236,6 +237,11 @@ const TAGS_METADATA = [
       'Super Admin paywall controls: subscription plans, feature gating, dynamic pricing, and coupon codes',
   },
   {
+    name: 'Clinical Finance',
+    description:
+      'Clinical Admin: doctor commission, earnings ledger, withdrawals via Cashfree Payouts (payouts.read / payouts.manage), and the Cashfree Payouts webhook',
+  },
+  {
     name: 'Super Admin',
     description:
       'Platform analytics, user directory, account status moderation, and platform-wide controls',
@@ -312,6 +318,7 @@ function determineTag(r) {
 
   if (g === 'Health' || p.startsWith('/health')) return 'System & Health';
   if (p === '/api/payments/return') return 'System & Health';
+  if (g === 'clinicalFinance' || g === 'Payouts') return 'Clinical Finance';
   if (g === 'Auth' || g === 'auth') return 'Authentication';
   if (g === 'cycle') return 'Cycle Tracking';
   if (g === 'habit') return 'Habits & Wellness';

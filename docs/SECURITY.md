@@ -42,6 +42,7 @@ Checked against the live secret (`nura/api/env`) and deploys on **2026-09-30**. 
 | `STAFF_COOKIE_AUTH` | ⏳ `false`. Turn on together with the `ALLOWED_ORIGINS` change. |
 | `AI_CONSENT_ENFORCED` | ⏳ `false`, on purpose until the app release with the AI consent switch is out and `minVersion` is raised in the CMS. |
 | `AWS_S3_KMS_KEY_ID` | Not set: documents use SSE-S3. |
+| `CASHFREE_PAYOUT_*` | Not set: doctor withdrawals are paid manually. Doctors' bank account numbers are encrypted at rest (`DoctorPayoutMethod`), and every view of them by staff is audited (`doctor_payout_method.viewed`). |
 | `encryptExistingData.js --apply` | ❓ Not recorded as run. Do a dry run to see how many old rows are still plain text. |
 | `applyS3Privacy.js --apply` | ❓ Not recorded as run. |
 | Git history of all five repos | ✅ Scanned with gitleaks on 2026-09-30. All repos are private; the only real secret in history is an old Cashfree **sandbox** key in `.env.example` (removed 2026-09-25, not the live key). Revoke it in the Cashfree sandbox dashboard. |
