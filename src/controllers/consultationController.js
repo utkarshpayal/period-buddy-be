@@ -15,6 +15,12 @@ import {
   isPaymentConfigured,
   cashfreeMode,
 } from '../utils/cashfreeClient.js';
+import {
+  recordConsultationEarning,
+  releaseConsultationEarning,
+  reverseConsultationEarnings,
+  safeEarningHook,
+} from '../utils/doctorWallet.js';
 
 /**
  * Doctors are only bookable while their login account is live — a suspended
@@ -306,6 +312,8 @@ export const verifyConsultationPayment = async (req, res, next) => {
     await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: 10 } });
     // Increment doctor consultation count
     await Doctor.findByIdAndUpdate(consultation.doctorId, { $inc: { totalConsultations: 1 } });
+    // The doctor's earning (net of commission), on hold until the session is completed.
+    await safeEarningHook('paid', () => recordConsultationEarning(claimed));
 
     logger.info('consultation_booked', {
       action: 'consultation_booked',
@@ -443,6 +451,9 @@ export const completeConsultation = async (req, res, next) => {
     if (!consultation)
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Active consultation not found');
 
+    await safeEarningHook('completed', () =>
+      releaseConsultationEarning(consultation._id, consultation.completedAt),
+    );
     return sendResponse(res, HTTP_STATUS.OK, 'Consultation completed', consultation);
   } catch (error) {
     next(error);
@@ -464,6 +475,10 @@ export const cancelConsultation = async (req, res, next) => {
 
     if (!consultation)
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Cancellable consultation not found');
+
+    await safeEarningHook('cancelled', () =>
+      reverseConsultationEarnings(consultation._id, 'Cancelled by the patient'),
+    );
 
     return sendResponse(res, HTTP_STATUS.OK, 'Consultation cancelled', consultation);
   } catch (error) {

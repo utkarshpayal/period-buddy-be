@@ -307,6 +307,7 @@ Keep it a single valid JSON object.
 | Uploads (S3) | `AWS_S3_BUCKET` (`thenura`), `AWS_REGION` (`us-east-1`, the bucket's region), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
 | Google sign-in | `GOOGLE_WEB_CLIENT_ID`, `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_ANDROID_CLIENT_ID`, `GOOGLE_EXPO_CLIENT_ID` |
 | Payments (Cashfree) | `CASHFREE_APP_ID`, `CASHFREE_SECRET_KEY`, `CASHFREE_ENV` (`production`) |
+| Doctor payouts (Cashfree Payouts, optional) | `CASHFREE_PAYOUT_CLIENT_ID`, `CASHFREE_PAYOUT_CLIENT_SECRET`, `CASHFREE_PAYOUT_PUBLIC_KEY`, `CASHFREE_PAYOUT_ENV`. Not set yet: withdrawals are paid manually by a Clinical Admin. |
 | AI chat / speech (Sarvam) | `SARVAM_API_KEY`, `SARVAM_CHAT_MODEL`, `SARVAM_TTS_MODEL`, `SARVAM_STT_MODEL` |
 | Check-in phone calls (Sarvam Outbound) | `SARVAM_OUTBOUND_API_KEY`, `SARVAM_ORG_ID`, `SARVAM_WORKSPACE_ID`, `SARVAM_APP_ID`, `SARVAM_APP_VERSION`, `SARVAM_CONNECTION_ID`, `SARVAM_AGENT_PHONE_NUMBER`, `SAMVAAD_CALL_TOKEN_TTL` |
 | Schedulers | `ENABLE_IN_PROCESS_SCHEDULER` (`true`, must stay on for this single-server setup), `CHECKIN_CALL_SCHEDULER_SECRET`, `NOTIFICATION_SCHEDULER_SECRET` |
@@ -330,6 +331,7 @@ secret (for production), then deploy. Adding it only to `.env.example` does noth
 | **Firebase (FCM)** project `the-nura-2b4a2` | Push notifications | `FIREBASE_SERVICE_ACCOUNT_JSON` | Android channel id must match the app (`default`). |
 | **Resend** | All email: OTP, invites, newsletter, contact, suspension notices | `RESEND_API_KEY`, `MAIL_FROM` | `MAIL_FROM`'s domain must be verified in Resend. |
 | **Cashfree** | Consultation + subscription payments | `CASHFREE_*` | Production mode. |
+| **Cashfree Payouts** | Doctors' wallet withdrawals (optional) | `CASHFREE_PAYOUT_*` | Not activated yet. Needs: Payouts activated on the account, a funded Payouts balance, a 2FA public key (the server IP isn't an Elastic IP), and the webhook `https://www.backend.thenura.care/api/payouts/webhook/cashfree`. |
 | **Sarvam AI** (`api.sarvam.ai`) | AI chat, speech-to-text, text-to-speech, document OCR | `SARVAM_API_KEY`, models | |
 | **Sarvam Instant Outbound** (`apps.sarvam.ai`) | "Buddy" check-in phone calls | `SARVAM_OUTBOUND_*`, etc. | Calls back to `API_BASE_URL/.../checkin-call/webhook`, so the URL must be publicly reachable. |
 | **Google Cloud (OAuth)** | "Sign in with Google" | `GOOGLE_*_CLIENT_ID` | |

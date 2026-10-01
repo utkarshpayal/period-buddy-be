@@ -838,6 +838,48 @@ Marks active consultation completed.
 
 Cancels pending or paid consultation.
 
+## Doctor Wallet & Payouts
+
+Commission on paid consultations, each doctor's wallet and withdrawals. Amounts in responses are rupees (stored as paise). Design: the Admin Workspace repo's `docs/doctor-payouts.md`.
+
+### Doctor (role `doctor`)
+
+| Method | Path | What it does |
+|---|---|---|
+| GET | `/api/doctor/wallet` | `{ wallet, rules, methods, adjustments }`: available / on hold / withdrawn, the doctor's commission %, hold days, withdrawal limits, `provider` (`manual`/`cashfree`) |
+| GET | `/api/doctor/wallet/payouts?page=&limit=` | The doctor's withdrawals, newest first |
+| POST | `/api/doctor/wallet/payouts` | `{ amount, methodId }` + header `Idempotency-Key` (8–64 chars). 201 created, 200 if the key was already used. 409 with `code` `INSUFFICIENT_BALANCE` / `BELOW_MINIMUM` / `ABOVE_MAXIMUM` / `PAYOUT_IN_PROGRESS` / `PAYOUTS_PAUSED` / `METHOD_COOLDOWN` |
+| POST | `/api/doctor/wallet/payouts/:id/cancel` | Only while `requested` |
+| POST | `/api/doctor/wallet/methods` | `{ type: "upi", accountHolderName, vpa, password }` or `{ type: "bank", accountHolderName, accountNumber, confirmAccountNumber, ifsc, password }`. Wrong password → 403. Max 3 active |
+| DELETE | `/api/doctor/wallet/methods/:id` | 409 while a withdrawal to it is open |
+| POST | `/api/doctor/wallet/methods/:id/default` | Make it the default |
+
+`GET /api/doctor/payments` now also returns `net` and `commission` totals and an `earning` (gross / commission / net / `availableAt`) on each payment; `GET /api/doctor/dashboard` also returns `wallet`.
+
+### Clinical Admin (`payouts.read`; writes need `payouts.manage`)
+
+All under `/api/admin/clinical-finance`, every write audited.
+
+| Method | Path | What it does |
+|---|---|---|
+| GET | `/overview` | Gross, commission, doctors' share, on hold, withdrawable, paid out, awaiting approval |
+| GET / PUT | `/settings` | `defaultCommissionPercent`, `holdDays`, `autoReleaseDays`, `payoutProvider` (`manual`/`cashfree`; `cashfree` needs the keys), `payoutsEnabled`, `requireApproval`, `minWithdrawal`, `maxWithdrawal`, `newMethodCooldownHours` |
+| GET | `/doctors?page=&search=` | Each doctor's rate and wallet |
+| PATCH | `/doctors/:id/commission` | `{ commissionPercent: number \| null }` (null = default) |
+| GET | `/earnings?doctorId=&status=on_hold\|available\|reversed&type=consultation\|adjustment&page=` | Ledger |
+| POST | `/earnings/:id/reverse` | `{ reason }` |
+| POST | `/adjustments` | `{ doctorId, amount (negative = debit), note }` |
+| GET | `/payouts?status=a,b&doctorId=&page=` | Withdrawal queue |
+| POST | `/payouts/:id/approve` | Cashfree payouts: approve and send |
+| POST | `/payouts/:id/mark-paid` | Manual payouts: `{ reference (UTR), note? }` |
+| GET | `/payouts/:id/method` | Full bank / UPI details to pay by hand (audited) |
+| POST | `/payouts/:id/reject` | `{ note }`, emailed to the doctor; the amount returns to the wallet |
+| POST | `/payouts/:id/sync` | Re-check a Cashfree payout now |
+
+### POST `/api/payouts/webhook/cashfree` (public)
+
+Cashfree Payouts V2 webhook. Verified with `x-webhook-signature` (base64 HMAC-SHA256 of `x-webhook-timestamp` + raw body, keyed with `CASHFREE_PAYOUT_CLIENT_SECRET`); the payout's status is then fetched from Cashfree rather than read from the body. 401 on a bad signature, otherwise 200.
+
 ## Q&A Companion
 
 ### GET `/api/questions?search=cramps&page=1&limit=10`

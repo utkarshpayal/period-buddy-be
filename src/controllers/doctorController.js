@@ -30,6 +30,15 @@ import { describeAccess, isStaffRole } from '../config/permissions.js';
 import { isDeletedAccount } from '../utils/accountStatus.js';
 import { retireDoctorProfiles, suspendAccount } from '../utils/accountLifecycle.js';
 import { startSession } from '../utils/sessions.js';
+import DoctorEarning from '../models/DoctorEarning.js';
+import { describeEarning } from './doctorWalletController.js';
+import {
+  computeWallet,
+  describeWallet,
+  releaseConsultationEarning,
+  reverseConsultationEarnings,
+  safeEarningHook,
+} from '../utils/doctorWallet.js';
 
 /**
  * Populate the patient on a consultation, but never expose a deleted
@@ -457,7 +466,7 @@ export const getDashboard = async (req, res, next) => {
     const doctor = await getDoctorForUser(req.userId);
     if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor profile not found');
 
-    const [statusCounts, paid, recent] = await Promise.all([
+    const [statusCounts, paid, recent, wallet] = await Promise.all([
       Consultation.aggregate([
         { $match: { doctorId: doctor._id } },
         { $group: { _id: '$status', count: { $sum: 1 } } },
@@ -470,6 +479,7 @@ export const getDashboard = async (req, res, next) => {
         .populate(patientPopulate('firstName lastName email profilePicture'))
         .sort({ createdAt: -1 })
         .limit(6),
+      computeWallet(doctor._id),
     ]);
 
     const counts = statusCounts.reduce((acc, row) => ({ ...acc, [row._id]: row.count }), {});
@@ -494,6 +504,8 @@ export const getDashboard = async (req, res, next) => {
         paidSessions: paid[0]?.count || 0,
         currency: doctor.currency,
       },
+      // Net of commission, from the wallet (see utils/doctorWallet.js).
+      wallet: describeWallet(wallet),
       recentBookings: recent,
     });
   } catch (error) {
@@ -821,6 +833,10 @@ export const completeConsultation = async (req, res, next) => {
     consultation.status = 'completed';
     consultation.completedAt = new Date();
     await consultation.save();
+    // Starts the hold; after it the earning is withdrawable.
+    await safeEarningHook('completed', () =>
+      releaseConsultationEarning(consultation._id, consultation.completedAt),
+    );
 
     return sendResponse(res, HTTP_STATUS.OK, 'Consultation completed', consultation);
   } catch (error) {
@@ -841,6 +857,9 @@ export const cancelConsultation = async (req, res, next) => {
     consultation.status = 'cancelled';
     consultation.completedAt = new Date();
     await consultation.save();
+    await safeEarningHook('cancelled', () =>
+      reverseConsultationEarnings(consultation._id, 'Cancelled by the doctor'),
+    );
 
     return sendResponse(res, HTTP_STATUS.OK, 'Consultation cancelled', consultation);
   } catch (error) {
@@ -852,7 +871,34 @@ export const cancelConsultation = async (req, res, next) => {
  * Doctor — payments / earnings
  * ------------------------------------------------------------------------- */
 
-/** GET /api/doctor/payments — paid sessions plus totals. */
+/** Attach each consultation's earning (gross / commission / net / when
+ * withdrawable). Sessions paid before commission tracking started have none. */
+const withEarnings = async (payments) => {
+  const earnings = await DoctorEarning.find({
+    type: 'consultation',
+    consultationId: { $in: payments.map((p) => p._id) },
+  }).lean();
+  const byId = new Map(earnings.map((e) => [String(e.consultationId), describeEarning(e)]));
+  return payments.map((p) => ({ ...p.toJSON(), earning: byId.get(String(p._id)) || null }));
+};
+
+/** Net totals over every earning, for the Payments header. */
+const earningTotals = async (doctorId) => {
+  const [row] = await DoctorEarning.aggregate([
+    { $match: { doctorId, type: 'consultation', status: 'active' } },
+    {
+      $group: {
+        _id: null,
+        net: { $sum: '$netMinor' },
+        commission: { $sum: '$commissionMinor' },
+      },
+    },
+  ]);
+  return { net: (row?.net || 0) / 100, commission: (row?.commission || 0) / 100 };
+};
+
+/** GET /api/doctor/payments — paid sessions plus totals. Each payment also
+ * carries `earning` (commission split), and `net`/`commission` total them. */
 export const getPayments = async (req, res, next) => {
   try {
     const doctor = await getDoctorForUser(req.userId);
@@ -870,7 +916,8 @@ export const getPayments = async (req, res, next) => {
         total,
         count: payments.length,
         currency: doctor.currency,
-        payments,
+        ...(await earningTotals(doctor._id)),
+        payments: await withEarnings(payments),
       });
     }
 
@@ -895,7 +942,8 @@ export const getPayments = async (req, res, next) => {
       total: totals?.total ?? 0,
       count,
       currency: doctor.currency,
-      payments,
+      ...(await earningTotals(doctor._id)),
+      payments: await withEarnings(payments),
       pagination: buildPagination({ page, limit, total: count }),
     });
   } catch (error) {

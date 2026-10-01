@@ -63,6 +63,7 @@ import { deletedEmailFor, originalEmailOf } from './accountStatus.js';
 import { isStaffRole } from '../config/permissions.js';
 import { userRoleEnum } from '../enums/enums.js';
 import logger from './logger.js';
+import { reverseConsultationEarnings, safeEarningHook } from './doctorWallet.js';
 
 const OPEN_CONSULTATION_STATUSES = ['pending', 'paid', 'active'];
 
@@ -249,6 +250,12 @@ export const retireDoctorProfiles = async (filter, { reason }) => {
       { _id: { $in: open.map((c) => c._id) } },
       { status: 'cancelled', completedAt: new Date() },
     );
+    await safeEarningHook('cancelled', () =>
+      reverseConsultationEarnings(
+        open.map((c) => c._id),
+        'Cancelled: doctor no longer available',
+      ),
+    );
 
     for (const consultation of open) {
       const paid = consultation.paymentStatus === 'paid';
@@ -297,6 +304,12 @@ export const cancelPatientConsultations = async (userId, { reason }) => {
   await Consultation.updateMany(
     { _id: { $in: open.map((c) => c._id) } },
     { status: 'cancelled', completedAt: new Date() },
+  );
+  await safeEarningHook('cancelled', () =>
+    reverseConsultationEarnings(
+      open.map((c) => c._id),
+      'Cancelled: patient deleted their account',
+    ),
   );
   for (const consultation of open) {
     if (consultation.paymentStatus === 'paid') {

@@ -28,6 +28,13 @@ const doctorSchema = new mongoose.Schema(
     hospital: { type: String, trim: true },
 
     isAvailable: { type: Boolean, default: true },
+
+    /** Platform commission override in basis points (1% = 100). null = the
+     * Clinical Admin's default (ClinicalPayoutSettings.defaultCommissionBps).
+     * select: false, since the patient app lists Doctor docs as-is; read it
+     * with .select('+commissionBps'). */
+    commissionBps: { type: Number, default: null, min: 0, max: 10_000, select: false },
+
     totalConsultations: { type: Number, default: 0 },
 
     /** @deprecated availability is now managed by DoctorAvailability collection */

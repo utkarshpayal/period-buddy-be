@@ -1,11 +1,13 @@
 import express from 'express';
 import * as doctorController from '../controllers/doctorController.js';
 import * as twoFactorController from '../controllers/twoFactorController.js';
+import * as walletController from '../controllers/doctorWalletController.js';
 import { uploadContentMedia } from '../controllers/uploadController.js';
 import { authenticate, authorize } from '../middleware/authMiddleware.js';
 import { requirePermission } from '../middleware/rbac.js';
 import { PERMISSIONS } from '../config/permissions.js';
 import { mediaUpload } from '../middleware/mediaUpload.js';
+import { authLimiter, noopLimiter, rateLimitEnabled } from '../middleware/rateLimiters.js';
 
 const router = express.Router();
 
@@ -120,6 +122,63 @@ router.patch(
 );
 
 router.get('/payments', authenticate, authorize('doctor'), doctorController.getPayments);
+
+/* ---------------------------------------------------------------------------
+ * Doctor — wallet & withdrawals (utils/doctorWallet.js)
+ * ------------------------------------------------------------------------- */
+
+// Adding a payout method checks the password: cap wrong guesses like login.
+const passwordLimiter = rateLimitEnabled ? authLimiter : noopLimiter;
+const doctorOnly = [authenticate, authorize('doctor')];
+
+/**
+ * @route   GET /api/doctor/wallet
+ * @desc    Wallet balances (available, on hold, withdrawn), commission and withdrawal rules, payout methods
+ * @access  Private (doctor)
+ */
+router.get('/wallet', ...doctorOnly, walletController.getWallet);
+
+/**
+ * @route   GET /api/doctor/wallet/payouts
+ * @desc    The doctor's withdrawals, newest first (?page=&limit=)
+ * @access  Private (doctor)
+ */
+router.get('/wallet/payouts', ...doctorOnly, walletController.getMyPayouts);
+
+/**
+ * @route   POST /api/doctor/wallet/payouts
+ * @desc    Request a withdrawal { amount, methodId } with an Idempotency-Key header
+ * @access  Private (doctor)
+ */
+router.post('/wallet/payouts', ...doctorOnly, walletController.createPayoutRequest);
+
+/**
+ * @route   POST /api/doctor/wallet/payouts/:id/cancel
+ * @desc    Cancel a withdrawal that is still awaiting approval
+ * @access  Private (doctor)
+ */
+router.post('/wallet/payouts/:id/cancel', ...doctorOnly, walletController.cancelMyPayout);
+
+/**
+ * @route   POST /api/doctor/wallet/methods
+ * @desc    Add a bank account or UPI ID for withdrawals (needs the account password)
+ * @access  Private (doctor)
+ */
+router.post('/wallet/methods', passwordLimiter, ...doctorOnly, walletController.addMethod);
+
+/**
+ * @route   DELETE /api/doctor/wallet/methods/:id
+ * @desc    Remove a payout method
+ * @access  Private (doctor)
+ */
+router.delete('/wallet/methods/:id', ...doctorOnly, walletController.removeMethod);
+
+/**
+ * @route   POST /api/doctor/wallet/methods/:id/default
+ * @desc    Make a payout method the default
+ * @access  Private (doctor)
+ */
+router.post('/wallet/methods/:id/default', ...doctorOnly, walletController.makeDefaultMethod);
 
 router.get('/availability', authenticate, authorize('doctor'), doctorController.getAvailability);
 router.put('/availability', authenticate, authorize('doctor'), doctorController.setAvailability);

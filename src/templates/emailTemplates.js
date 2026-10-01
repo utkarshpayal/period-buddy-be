@@ -441,3 +441,39 @@ export const getStaffInviteTemplate = ({
   `;
   return emailLayout('Your Nura Workspace invitation', content);
 };
+
+/**
+ * Doctor wallet emails (utils/doctorWallet.js): payout sent / failed /
+ * rejected, and payout method added / removed. `lines` are [label, value]
+ * pairs shown in a box; `tone: 'danger'` for failures and security notices.
+ */
+export const getDoctorPayoutTemplate = ({
+  name,
+  badge,
+  heading,
+  body,
+  lines = [],
+  footer,
+  tone,
+}) => {
+  const badgeStyle =
+    tone === 'danger'
+      ? ` style="background-color: ${BRAND.dangerLight}; color: ${BRAND.danger};"`
+      : '';
+  const box = lines.length
+    ? `<p style="background-color: ${BRAND.surfaceSoft}; padding: 12px 16px; border-radius: 12px;">${lines
+        .map(([label, value]) => `<strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}`)
+        .join('<br/>')}</p>`
+    : '';
+  const content = `
+    <span class="badge"${badgeStyle}>${escapeHtml(badge)}</span>
+    <h2 style="margin-top: 0; color: ${BRAND.foreground}; font-size: 24px; font-weight: 600;">Hi ${escapeHtml(name) || 'Doctor'},</h2>
+    <p>${escapeHtml(body)}</p>
+    ${box}
+    ${footer ? `<p>${escapeHtml(footer)}</p>` : ''}
+    <div class="divider"></div>
+    <p style="margin-bottom: 0;">Warmly,</p>
+    <p style="font-weight: 600; margin-top: 4px; color: ${BRAND.primary};">The Nura Team</p>
+  `;
+  return emailLayout(heading, content);
+};

@@ -13,6 +13,16 @@ export const AUDIT_ACTIONS = {
   DOCTOR_UPDATED: 'doctor.updated',
   DOCTOR_DEACTIVATED: 'doctor.deactivated',
   DOCTOR_INVITE_RESENT: 'doctor.invite_resent',
+  // Commission & payouts (controllers/clinicalFinanceController.js)
+  PAYOUT_SETTINGS_UPDATED: 'payout_settings.updated',
+  DOCTOR_COMMISSION_UPDATED: 'doctor.commission_updated',
+  DOCTOR_EARNING_REVERSED: 'doctor_earning.reversed',
+  DOCTOR_WALLET_ADJUSTED: 'doctor_wallet.adjusted',
+  DOCTOR_PAYOUT_APPROVED: 'doctor_payout.approved',
+  DOCTOR_PAYOUT_REJECTED: 'doctor_payout.rejected',
+  DOCTOR_PAYOUT_MARKED_PAID: 'doctor_payout.marked_paid',
+  // A staff member opened a doctor's full bank / UPI details to pay by hand.
+  DOCTOR_PAYOUT_METHOD_VIEWED: 'doctor_payout_method.viewed',
   CONTENT_CREATED: 'content.created',
   CONTENT_UPDATED: 'content.updated',
   CONTENT_VISIBILITY_CHANGED: 'content.visibility_changed',
