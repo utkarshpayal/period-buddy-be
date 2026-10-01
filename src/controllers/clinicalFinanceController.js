@@ -162,7 +162,7 @@ export const updateSettings = async (req, res, next) => {
 export const getOverview = async (req, res, next) => {
   try {
     const now = new Date();
-    const [earnings, payouts, settings] = await Promise.all([
+    const [earnings, payouts, settings, releasedByDoctor, debitedByDoctor] = await Promise.all([
       DoctorEarning.aggregate([
         { $match: { status: 'active', currency: 'INR' } },
         {
@@ -189,19 +189,39 @@ export const getOverview = async (req, res, next) => {
         { $group: { _id: '$status', total: { $sum: '$amountMinor' }, count: { $sum: 1 } } },
       ]),
       getPayoutSettings(),
+      // Per doctor, so one doctor below zero (after a debit) doesn't hide
+      // what the others are owed.
+      DoctorEarning.aggregate([
+        { $match: { status: 'active', currency: 'INR', availableAt: { $ne: null, $lte: now } } },
+        { $group: { _id: '$doctorId', total: { $sum: '$netMinor' } } },
+      ]),
+      DoctorPayout.aggregate([
+        {
+          $match: {
+            currency: 'INR',
+            status: { $in: ['requested', 'approved', 'processing', 'success'] },
+          },
+        },
+        { $group: { _id: '$doctorId', total: { $sum: '$amountMinor' } } },
+      ]),
     ]);
     const e = earnings[0] || {};
+    const debitedMap = new Map(debitedByDoctor.map((row) => [String(row._id), row.total]));
+    const owedAvailable = releasedByDoctor.reduce(
+      (sum, row) => sum + Math.max(0, row.total - (debitedMap.get(String(row._id)) || 0)),
+      0,
+    );
     const p = Object.fromEntries(payouts.map((row) => [row._id, row]));
     const amt = (s) => p[s]?.total || 0;
-    const debited = amt('requested') + amt('approved') + amt('processing') + amt('success');
     return sendResponse(res, HTTP_STATUS.OK, 'Overview fetched', {
       currency: 'INR',
       gross: fromMinor(e.gross),
       commission: fromMinor(e.commission),
       doctorNet: fromMinor(e.net),
       onHold: fromMinor(e.onHold),
-      // What doctors could withdraw right now, summed (net of open requests).
-      owedAvailable: fromMinor((e.net || 0) - (e.onHold || 0) - debited),
+      // What doctors could withdraw right now (net of open requests), each
+      // doctor counted at zero or more.
+      owedAvailable: fromMinor(owedAvailable),
       paidOut: fromMinor(amt('success')),
       inFlight: fromMinor(amt('approved') + amt('processing')),
       awaitingApproval: { count: p.requested?.count || 0, amount: fromMinor(amt('requested')) },

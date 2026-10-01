@@ -72,12 +72,14 @@ const DISPATCH_LEASE_MS = 2 * 60_000;
 /* ------------------------------- Settings ------------------------------ */
 
 export const getPayoutSettings = async () => {
+  // Not .lean(): hydrating applies schema defaults to fields added after the
+  // row was created (e.g. autoReleaseDays), so every caller sees one value.
   const settings = await ClinicalPayoutSettings.findOneAndUpdate(
     { key: 'default' },
     { $setOnInsert: { key: 'default' } },
     { upsert: true, new: true, setDefaultsOnInsert: true },
-  ).lean();
-  return settings;
+  );
+  return settings.toObject();
 };
 
 /** Which way new withdrawals are paid: Cashfree only when chosen AND set up. */
@@ -162,6 +164,14 @@ export const releaseConsultationEarning = async (consultationId, completedAt = n
     { new: true },
   );
   if (updated) return updated;
+  // Already released by auto-release: just record the completion, so a later
+  // cancel/reconcile treats it as a completed session.
+  const marked = await DoctorEarning.findOneAndUpdate(
+    { type: 'consultation', consultationId, status: 'active', completedAt: null },
+    { $set: { completedAt } },
+    { new: true },
+  );
+  if (marked) return marked;
   // No earning yet (its hook failed): create it, already released.
   const existing = await DoctorEarning.exists({ type: 'consultation', consultationId });
   if (!existing) return recordConsultationEarning(consultationId, { settings });
@@ -219,7 +229,9 @@ const lockWallet = (doctorId, session) =>
  */
 export const computeWallet = async (doctorId, { session, now = new Date() } = {}) => {
   const id = new mongoose.Types.ObjectId(String(doctorId));
-  const [earnings, payouts] = await Promise.all([
+  // Inside a transaction the two reads must run one after the other: MongoDB
+  // doesn't support parallel operations on one transaction's session.
+  const earningsQuery = () =>
     DoctorEarning.aggregate([
       { $match: { doctorId: id, status: 'active', currency: WALLET_CURRENCY } },
       {
@@ -250,12 +262,15 @@ export const computeWallet = async (doctorId, { session, now = new Date() } = {}
           },
         },
       },
-    ]).session(session || null),
+    ]).session(session || null);
+  const payoutsQuery = () =>
     DoctorPayout.aggregate([
       { $match: { doctorId: id, currency: WALLET_CURRENCY } },
       { $group: { _id: '$status', total: { $sum: '$amountMinor' }, count: { $sum: 1 } } },
-    ]).session(session || null),
-  ]);
+    ]).session(session || null);
+  const [earnings, payouts] = session
+    ? [await earningsQuery(), await payoutsQuery()]
+    : await Promise.all([earningsQuery(), payoutsQuery()]);
 
   const e = earnings[0] || {};
   const byStatus = Object.fromEntries(payouts.map((p) => [p._id, p]));
@@ -665,12 +680,23 @@ export const approvePayout = async (payoutId, adminId) => {
  */
 export const markPayoutPaid = async (payoutId, adminId, reference, note) => {
   const now = new Date();
-  const approved = await transition(payoutId, 'approved', {
+  // One compare-and-set, so a crash can't leave it half done. 'approved' is
+  // accepted too, for manual payouts left there by an older build.
+  const paid = await transition(payoutId, 'success', {
     by: 'admin',
+    from: ['requested', 'approved'],
     where: { provider: 'manual' },
-    set: { approvedBy: adminId, approvedAt: now },
+    note: note || `Paid manually, ref ${reference}`,
+    set: {
+      utr: reference,
+      paidManuallyBy: adminId,
+      approvedBy: adminId,
+      approvedAt: now,
+      completedAt: now,
+      nextCheckAt: null,
+    },
   });
-  if (!approved) {
+  if (!paid) {
     const existing = await DoctorPayout.findById(payoutId).select('provider status').lean();
     if (!existing) throw new WalletError('Withdrawal not found', 404, 'NOT_FOUND');
     if (existing.provider !== 'manual') {
@@ -680,23 +706,8 @@ export const markPayoutPaid = async (payoutId, adminId, reference, note) => {
         'NOT_MANUAL',
       );
     }
-    if (existing.status !== 'approved') {
-      throw new WalletError(
-        'Only a requested withdrawal can be marked as paid',
-        409,
-        'NOT_PAYABLE',
-      );
-    }
-  }
-  const paid = await transition(payoutId, 'success', {
-    by: 'admin',
-    from: ['approved'],
-    where: { provider: 'manual' },
-    note: note || `Paid manually, ref ${reference}`,
-    set: { utr: reference, paidManuallyBy: adminId, completedAt: now, nextCheckAt: null },
-  });
-  if (!paid)
     throw new WalletError('Only a requested withdrawal can be marked as paid', 409, 'NOT_PAYABLE');
+  }
   logger.info('doctor_payout_marked_paid', {
     action: 'doctor_payout_marked_paid',
     payoutId: String(paid._id),
