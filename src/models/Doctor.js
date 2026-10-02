@@ -46,6 +46,10 @@ const doctorSchema = new mongoose.Schema(
 
     totalConsultations: { type: Number, default: 0 },
 
+    /** Set when an admin deletes the doctor for good (deleteDoctorAccount).
+     * The row stays for earnings and consultation history; lists hide it. */
+    deletedAt: { type: Date, default: null },
+
     /** @deprecated availability is now managed by DoctorAvailability collection */
     availability: { type: String, default: 'Available today' },
   },

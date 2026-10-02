@@ -86,6 +86,28 @@ router.delete(
   requirePermission(PERMISSIONS.DOCTORS_MANAGE),
   doctorController.deactivateDoctor,
 );
+/**
+ * @route   POST /api/doctor/admin/:id/reactivate
+ * @desc    Undo a deactivation (login and weekly slots back, bookings stay paused)
+ * @access  Private (doctors.manage)
+ */
+router.post(
+  '/admin/:id/reactivate',
+  authenticate,
+  requirePermission(PERMISSIONS.DOCTORS_MANAGE),
+  doctorController.reactivateDoctor,
+);
+/**
+ * @route   DELETE /api/doctor/admin/:id/account
+ * @desc    Delete a doctor for good (refused while their wallet holds money)
+ * @access  Private (doctors.manage)
+ */
+router.delete(
+  '/admin/:id/account',
+  authenticate,
+  requirePermission(PERMISSIONS.DOCTORS_MANAGE),
+  doctorController.deleteDoctorAccount,
+);
 
 /* ---------------------------------------------------------------------------
  * Doctor — everything below requires the doctor role

@@ -28,7 +28,11 @@ import { userRoleEnum } from '../enums/enums.js';
 import { INVITE_EXPIRY_HOURS, buildInviteUrl } from '../utils/invite.js';
 import { describeAccess, isStaffRole } from '../config/permissions.js';
 import { isDeletedAccount } from '../utils/accountStatus.js';
-import { retireDoctorProfiles, suspendAccount } from '../utils/accountLifecycle.js';
+import {
+  retireDoctorProfiles,
+  softDeleteAccount,
+  suspendAccount,
+} from '../utils/accountLifecycle.js';
 import { startSession } from '../utils/sessions.js';
 import DoctorEarning from '../models/DoctorEarning.js';
 import { describeEarning } from './doctorWalletController.js';
@@ -195,7 +199,9 @@ export const inviteDoctor = async (req, res, next) => {
 export const listDoctorsForAdmin = async (req, res, next) => {
   try {
     const { search } = req.query;
-    const filter = {};
+    // Deleted doctors (deleteDoctorAccount) stay in the database for
+    // earnings history but leave the admin list.
+    const filter = { deletedAt: null };
     if (search) {
       filter.$or = [
         { name: { $regex: escapeRegex(search), $options: 'i' } },
@@ -352,6 +358,122 @@ export const deactivateDoctor = async (req, res, next) => {
       resourceId: doctor._id,
     });
     return sendResponse(res, HTTP_STATUS.OK, 'Doctor deactivated', doctor);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/doctor/admin/:id/reactivate (admin) — undo a deactivation: the
+ * login works again and the weekly slots come back, but bookings stay
+ * paused until an admin or the doctor resumes them, and reels the doctor
+ * hid stay hidden (the doctor shows them again from their portal). A doctor
+ * who never set a password needs a fresh invite (`needsInvite`).
+ */
+export const reactivateDoctor = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid doctor id');
+    }
+    const doctor = await Doctor.findById(req.params.id);
+    if (!doctor || doctor.deletedAt)
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor not found');
+    if (!doctor.userId) {
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        'This doctor has no login account to reactivate',
+      );
+    }
+
+    const user = await User.findById(doctor.userId);
+    if (!user) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor account not found');
+    if (isDeletedAccount(user)) {
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        'This account was deleted and cannot be reactivated',
+      );
+    }
+    if (user.isActive) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'This doctor is already active');
+    }
+
+    user.isActive = true;
+    user.$locals.skipPasswordHash = true;
+    await user.save();
+    await DoctorAvailability.updateMany({ doctorId: doctor._id }, { isAvailable: true });
+    doctor.isAvailable = false;
+    await doctor.save();
+
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.DOCTOR_REACTIVATED,
+      resourceType: 'doctor',
+      resourceId: doctor._id,
+    });
+    return sendResponse(res, HTTP_STATUS.OK, 'Doctor reactivated', {
+      doctor,
+      needsInvite: Boolean(user.mustSetPassword),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * DELETE /api/doctor/admin/:id/account (admin) — remove a doctor for good:
+ * taken out of service like a deactivation, the login account deleted (its
+ * email freed, so the same person can be invited again later) and the
+ * profile photo removed. Refused while their wallet still holds money or a
+ * payout is open, so nobody loses earnings. The Doctor row is kept, marked
+ * deleted, for consultation and earnings history.
+ */
+export const deleteDoctorAccount = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid doctor id');
+    }
+    const doctor = await Doctor.findById(req.params.id).select('+avatarKey');
+    if (!doctor || doctor.deletedAt)
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor not found');
+
+    const wallet = await computeWallet(doctor._id);
+    if (
+      wallet.availableMinor > 0 ||
+      wallet.onHoldMinor > 0 ||
+      wallet.inFlightMinor > 0 ||
+      wallet.openPayouts > 0
+    ) {
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        "Settle this doctor's wallet first: their balance, held earnings and open payouts must all be zero",
+      );
+    }
+
+    await retireDoctorProfiles({ _id: doctor._id }, { reason: 'doctor_deleted' });
+    if (doctor.userId) {
+      const user = await User.findById(doctor.userId);
+      if (user && !isDeletedAccount(user)) await softDeleteAccount(user);
+    }
+
+    const avatarKey = doctor.avatarKey;
+    doctor.deletedAt = new Date();
+    doctor.isAvailable = false;
+    doctor.avatarUrl = undefined;
+    doctor.avatarKey = undefined;
+    await doctor.save();
+    if (avatarKey) await deleteFromS3(avatarKey);
+
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.DOCTOR_DELETED,
+      resourceType: 'doctor',
+      resourceId: doctor._id,
+      metadata: { name: doctor.name, email: doctor.email },
+    });
+    return sendResponse(res, HTTP_STATUS.OK, 'Doctor deleted', { _id: doctor._id });
   } catch (error) {
     next(error);
   }
