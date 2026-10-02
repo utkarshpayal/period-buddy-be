@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { encryptFields } from '../utils/fieldEncryption.js';
 
 const consultationSchema = new mongoose.Schema(
   {
@@ -29,7 +30,11 @@ const consultationSchema = new mongoose.Schema(
     },
     meetingLink: { type: String, trim: true },
     prescription: { type: String, trim: true },
-    feedback: { type: String, trim: true },
+    // The patient's rating of a completed session (POST /api/consultation/:id/rating),
+    // once only; `feedback` is its optional comment (encrypted, see below).
+    rating: { type: Number, min: 1, max: 5 },
+    feedback: { type: String, trim: true, maxlength: 500 },
+    ratedAt: { type: Date },
 
     cashfreeOrderId: { type: String, index: true },
 
@@ -46,5 +51,7 @@ consultationSchema.index({ userId: 1, doctorId: 1 });
 consultationSchema.index({ userId: 1, status: 1 });
 // Doctor portal's paginated bookings list (GET /api/doctor/consultations).
 consultationSchema.index({ doctorId: 1, createdAt: -1 });
+
+consultationSchema.plugin(encryptFields, { fields: ['feedback'] });
 
 export default mongoose.model('Consultation', consultationSchema);

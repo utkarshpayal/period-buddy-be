@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import Doctor from '../models/Doctor.js';
 import Consultation from '../models/Consultation.js';
 import ConsultationMessage from '../models/ConsultationMessage.js';
@@ -341,6 +342,73 @@ export const getMyConsultations = async (req, res, next) => {
       .sort({ createdAt: -1 });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Consultations fetched', consultations);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** Doctor.rating / ratingCount from every rated session of `doctorId`. */
+export const recomputeDoctorRating = async (doctorId) => {
+  const [stats] = await Consultation.aggregate([
+    { $match: { doctorId: new mongoose.Types.ObjectId(String(doctorId)), rating: { $gte: 1 } } },
+    { $group: { _id: null, average: { $avg: '$rating' }, count: { $sum: 1 } } },
+  ]);
+  if (!stats) return;
+  await Doctor.updateOne(
+    { _id: doctorId },
+    { rating: Math.round(stats.average * 10) / 10, ratingCount: stats.count },
+  );
+};
+
+/**
+ * POST /api/consultation/:id/rating — the patient rates a completed session,
+ * once: `{ rating: 1-5, comment?: string }`. Updates the doctor's average.
+ */
+export const rateConsultation = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid consultation id');
+    }
+    const rating = Number(req.body?.rating);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Rating must be a whole number from 1 to 5');
+    }
+    const comment = typeof req.body?.comment === 'string' ? req.body.comment.trim() : '';
+    if (comment.length > 500) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Keep the comment under 500 characters');
+    }
+
+    const consultation = await Consultation.findOne({ _id: req.params.id, userId: req.userId });
+    if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation not found');
+    if (consultation.status !== 'completed') {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'You can rate a session once it has ended');
+    }
+
+    // Atomic "not rated yet" check, so a double tap can't rate twice.
+    const rated = await Consultation.findOneAndUpdate(
+      {
+        _id: consultation._id,
+        userId: req.userId,
+        status: 'completed',
+        rating: { $exists: false },
+      },
+      { $set: { rating, ratedAt: new Date(), ...(comment ? { feedback: comment } : {}) } },
+      { new: true },
+    );
+    if (!rated) {
+      return sendError(res, HTTP_STATUS.CONFLICT, 'You have already rated this session');
+    }
+
+    await recomputeDoctorRating(rated.doctorId);
+    logger.info('consultation_rated', {
+      action: 'consultation_rated',
+      userId: req.userId,
+      consultationId: rated._id,
+      rating,
+    });
+
+    await rated.populate('doctorId');
+    return sendResponse(res, HTTP_STATUS.OK, 'Thanks for rating your session', rated);
   } catch (error) {
     next(error);
   }

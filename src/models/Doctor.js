@@ -14,7 +14,11 @@ const doctorSchema = new mongoose.Schema(
 
     name: { type: String, required: true, trim: true },
     specialty: { type: String, required: true, trim: true },
+    // Average of patients' session ratings, kept in step by
+    // recomputeDoctorRating (consultationController). Only meaningful once
+    // ratingCount > 0; clients show "New" before that.
     rating: { type: Number, default: 4.5, min: 1, max: 5 },
+    ratingCount: { type: Number, default: 0 },
     pricePerSession: { type: Number, required: true },
     currency: { type: String, default: 'USD' },
     /** @deprecated replaced by avatarUrl; kept for app builds that still read it. */

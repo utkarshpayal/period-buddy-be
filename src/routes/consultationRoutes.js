@@ -61,6 +61,13 @@ router.post('/:id/message', authenticate, consultationController.sendMessage);
 router.patch('/:id/complete', authenticate, consultationController.completeConsultation);
 
 /**
+ * @route   POST /api/consultation/:id/rating
+ * @desc    Rate a completed session once (rating 1-5, optional comment up to 500 chars)
+ * @access  Private (the patient)
+ */
+router.post('/:id/rating', authenticate, consultationController.rateConsultation);
+
+/**
  * @route   PATCH /api/consultation/:id/cancel
  * @desc    Cancel a pending/paid consultation
  * @access  Private

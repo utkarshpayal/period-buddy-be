@@ -248,7 +248,6 @@ export const updateDoctorByAdmin = async (req, res, next) => {
       'avatarEmoji',
       'education',
       'isAvailable',
-      'rating',
     ]);
 
     const doctor = await Doctor.findByIdAndUpdate(req.params.id, updates, {
@@ -615,6 +614,7 @@ export const getDashboard = async (req, res, next) => {
         avatarEmoji: doctor.avatarEmoji,
         avatarUrl: doctor.avatarUrl,
         rating: doctor.rating,
+        ratingCount: doctor.ratingCount,
         isAvailable: doctor.isAvailable,
       },
       stats: {
