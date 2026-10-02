@@ -17,7 +17,12 @@ const doctorSchema = new mongoose.Schema(
     rating: { type: Number, default: 4.5, min: 1, max: 5 },
     pricePerSession: { type: Number, required: true },
     currency: { type: String, default: 'USD' },
+    /** @deprecated replaced by avatarUrl; kept for app builds that still read it. */
     avatarEmoji: { type: String, default: '👩‍⚕️' },
+    /** Profile photo shown to patients (public S3 URL under doctors/<id>/avatar). */
+    avatarUrl: { type: String, trim: true },
+    /** S3 key of avatarUrl, so a replaced or removed photo can be deleted. */
+    avatarKey: { type: String, select: false },
     bio: { type: String, trim: true },
     languages: [{ type: String }],
 

@@ -42,14 +42,16 @@ const getClient = () => {
 
 /**
  * Folders whose objects are meant to be seen by anyone with the link:
- * profile pictures and community media (users/), content media (content/),
- * CMS banners, notification images, company assets and legacy uploads/.
+ * profile pictures and community media (users/), clinician profile photos
+ * (doctors/), content media (content/), CMS banners, notification images,
+ * company assets and legacy uploads/.
  * Everything else, above all medical-documents/, is private: never covered
  * by the public-read policy and only served through short-lived signed URLs
  * (getSignedViewUrl). Add a folder here only if its files are public by design.
  */
 export const PUBLIC_PREFIXES = [
   'users/',
+  'doctors/',
   'content/',
   'cms/',
   'notifications/',

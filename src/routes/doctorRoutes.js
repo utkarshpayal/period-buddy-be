@@ -6,7 +6,7 @@ import { uploadContentMedia } from '../controllers/uploadController.js';
 import { authenticate, authorize } from '../middleware/authMiddleware.js';
 import { requirePermission } from '../middleware/rbac.js';
 import { PERMISSIONS } from '../config/permissions.js';
-import { mediaUpload } from '../middleware/mediaUpload.js';
+import { imageUpload, mediaUpload } from '../middleware/mediaUpload.js';
 import { authLimiter, noopLimiter, rateLimitEnabled } from '../middleware/rateLimiters.js';
 
 const router = express.Router();
@@ -44,6 +44,25 @@ router.patch(
   requirePermission(PERMISSIONS.DOCTORS_MANAGE),
   doctorController.updateDoctorByAdmin,
 );
+/**
+ * @route   POST /api/doctor/admin/:id/avatar
+ * @desc    Set a doctor's profile photo (multipart `file`, image up to 5 MB);
+ *          DELETE removes it
+ * @access  Private (doctors.manage)
+ */
+router.post(
+  '/admin/:id/avatar',
+  authenticate,
+  requirePermission(PERMISSIONS.DOCTORS_MANAGE),
+  imageUpload.single('file'),
+  doctorController.uploadDoctorAvatarByAdmin,
+);
+router.delete(
+  '/admin/:id/avatar',
+  authenticate,
+  requirePermission(PERMISSIONS.DOCTORS_MANAGE),
+  doctorController.removeDoctorAvatarByAdmin,
+);
 router.post(
   '/admin/:id/resend-invite',
   authenticate,
@@ -74,6 +93,19 @@ router.delete(
 
 router.get('/me', authenticate, authorize('doctor'), doctorController.getMyProfile);
 router.put('/me', authenticate, authorize('doctor'), doctorController.updateMyProfile);
+/**
+ * @route   POST /api/doctor/me/avatar
+ * @desc    Upload own profile photo (multipart `file`, image up to 5 MB); DELETE removes it
+ * @access  Private (doctor)
+ */
+router.post(
+  '/me/avatar',
+  authenticate,
+  authorize('doctor'),
+  imageUpload.single('file'),
+  doctorController.uploadMyAvatar,
+);
+router.delete('/me/avatar', authenticate, authorize('doctor'), doctorController.removeMyAvatar);
 
 router.get('/dashboard', authenticate, authorize('doctor'), doctorController.getDashboard);
 

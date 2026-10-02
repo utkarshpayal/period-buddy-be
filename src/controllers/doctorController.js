@@ -32,6 +32,8 @@ import { retireDoctorProfiles, suspendAccount } from '../utils/accountLifecycle.
 import { startSession } from '../utils/sessions.js';
 import DoctorEarning from '../models/DoctorEarning.js';
 import { describeEarning } from './doctorWalletController.js';
+import { deleteFromS3, uploadBufferToS3 } from '../utils/s3.js';
+import { assertAllowedUpload } from '../utils/fileValidation.js';
 import {
   computeWallet,
   describeWallet,
@@ -457,6 +459,127 @@ export const updateMyProfile = async (req, res, next) => {
 };
 
 /* ---------------------------------------------------------------------------
+ * Profile photo (doctor self-service and admin)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Store `file` as the doctor's profile photo under `doctors/<id>/avatar/`
+ * (a public folder: patients see it in the app), delete the photo it
+ * replaces, and show it on the doctor's reels. Returns an error message for
+ * a bad file, else null.
+ */
+const replaceDoctorAvatar = async (doctorId, file) => {
+  if (!file) return { error: 'Choose an image to upload' };
+  let mimeType;
+  try {
+    mimeType = assertAllowedUpload(file.buffer, ['image']);
+  } catch (validationError) {
+    return { error: validationError.message };
+  }
+
+  const doctor = await Doctor.findById(doctorId).select('+avatarKey');
+  if (!doctor) return { notFound: true };
+
+  const { url, key } = await uploadBufferToS3({
+    buffer: file.buffer,
+    mimeType,
+    originalName: file.originalname,
+    folder: `doctors/${doctor._id}/avatar`,
+  });
+  const previousKey = doctor.avatarKey;
+  doctor.avatarUrl = url;
+  doctor.avatarKey = key;
+  await doctor.save();
+  if (previousKey) await deleteFromS3(previousKey);
+  await Reel.updateMany({ creatorId: reelCreatorId(doctor._id) }, { creatorAvatar: url });
+  return { doctor: await Doctor.findById(doctor._id) };
+};
+
+const removeDoctorAvatar = async (doctorId) => {
+  const doctor = await Doctor.findById(doctorId).select('+avatarKey');
+  if (!doctor) return { notFound: true };
+  const previousKey = doctor.avatarKey;
+  doctor.avatarUrl = undefined;
+  doctor.avatarKey = undefined;
+  await doctor.save();
+  if (previousKey) await deleteFromS3(previousKey);
+  await Reel.updateMany({ creatorId: reelCreatorId(doctor._id) }, { $unset: { creatorAvatar: 1 } });
+  return { doctor: await Doctor.findById(doctor._id) };
+};
+
+const sendAvatarResult = (res, result, message) => {
+  if (result.notFound) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor profile not found');
+  if (result.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, result.error);
+  return sendResponse(res, HTTP_STATUS.OK, message, result.doctor);
+};
+
+/** POST /api/doctor/me/avatar — upload own profile photo (multipart `file`). */
+export const uploadMyAvatar = async (req, res, next) => {
+  try {
+    const doctor = await getDoctorForUser(req.userId);
+    if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor profile not found');
+    return sendAvatarResult(res, await replaceDoctorAvatar(doctor._id, req.file), 'Photo updated');
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** DELETE /api/doctor/me/avatar — remove own profile photo. */
+export const removeMyAvatar = async (req, res, next) => {
+  try {
+    const doctor = await getDoctorForUser(req.userId);
+    if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor profile not found');
+    return sendAvatarResult(res, await removeDoctorAvatar(doctor._id), 'Photo removed');
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/doctor/admin/:id/avatar (admin) — set a doctor's profile photo. */
+export const uploadDoctorAvatarByAdmin = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid doctor id');
+    }
+    const result = await replaceDoctorAvatar(req.params.id, req.file);
+    if (result.doctor) {
+      await recordAudit({
+        req,
+        action: AUDIT_ACTIONS.DOCTOR_UPDATED,
+        resourceType: 'doctor',
+        resourceId: result.doctor._id,
+        metadata: { fields: ['avatarUrl'] },
+      });
+    }
+    return sendAvatarResult(res, result, 'Photo updated');
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** DELETE /api/doctor/admin/:id/avatar (admin) — remove a doctor's profile photo. */
+export const removeDoctorAvatarByAdmin = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid doctor id');
+    }
+    const result = await removeDoctorAvatar(req.params.id);
+    if (result.doctor) {
+      await recordAudit({
+        req,
+        action: AUDIT_ACTIONS.DOCTOR_UPDATED,
+        resourceType: 'doctor',
+        resourceId: result.doctor._id,
+        metadata: { fields: ['avatarUrl'] },
+      });
+    }
+    return sendAvatarResult(res, result, 'Photo removed');
+  } catch (error) {
+    next(error);
+  }
+};
+
+/* ---------------------------------------------------------------------------
  * Doctor — dashboard
  * ------------------------------------------------------------------------- */
 
@@ -490,6 +613,7 @@ export const getDashboard = async (req, res, next) => {
         name: doctor.name,
         specialty: doctor.specialty,
         avatarEmoji: doctor.avatarEmoji,
+        avatarUrl: doctor.avatarUrl,
         rating: doctor.rating,
         isAvailable: doctor.isAvailable,
       },
@@ -1072,7 +1196,8 @@ export const createReel = async (req, res, next) => {
       title: title.trim(),
       creatorId: reelCreatorId(doctor._id),
       creatorName: doctor.name,
-      creatorAvatar: doctor.avatarEmoji,
+      // Unset without a photo, so the app shows its default creator image.
+      creatorAvatar: doctor.avatarUrl || undefined,
       duration: duration || '0:30',
       category: category || doctor.specialty || 'Wellness',
       verified: true,

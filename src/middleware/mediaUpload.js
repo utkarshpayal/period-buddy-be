@@ -45,3 +45,22 @@ export const mediaUpload = multer({
     return cb(new Error('Only video, audio, or image uploads are supported'));
   },
 });
+
+const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif'];
+
+/** Profile photos: images only, up to 5 MB. */
+export const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) return cb(null, true);
+    const extension = path.extname(file.originalname).toLowerCase();
+    if (IMAGE_EXTENSIONS.includes(extension)) {
+      file.mimetype = MIME_TYPE_BY_EXTENSION[extension];
+      return cb(null, true);
+    }
+    const error = new Error('Only image uploads are supported');
+    error.statusCode = 400;
+    return cb(error);
+  },
+});

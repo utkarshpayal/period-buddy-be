@@ -52,6 +52,13 @@ export const errorHandler = (err, req, res, _next) => {
     });
   }
 
+  // Upload limits (multer), e.g. a photo over imageUpload's 5 MB
+  if (err.name === 'MulterError') {
+    const message =
+      err.code === 'LIMIT_FILE_SIZE' ? 'That file is too large' : 'That upload could not be read';
+    return res.status(400).json({ success: false, statusCode: HTTP_STATUS.BAD_REQUEST, message });
+  }
+
   // JWT errors
   if (err.name === 'JsonWebTokenError') {
     return res
