@@ -23,6 +23,8 @@ import logger from './logger.js';
  *   code are deployed.
  * - "New sign-in" email when an account signs in on a device it hasn't
  *   used before.
+ * - Test account: TEST_LOGIN_EMAIL always gets TEST_LOGIN_CODE instead of an
+ *   emailed one. The password is still checked.
  */
 
 export const LOGIN_MAX_FAILURES = Math.max(3, Number(process.env.LOGIN_MAX_FAILURES) || 5);
@@ -108,6 +110,16 @@ const emailCode = async (user, code) => {
   }
 };
 
+// Shared test doctor account: always signs in with this code, no email sent.
+const TEST_LOGIN_EMAIL = 'jenony@forexzig.com';
+const TEST_LOGIN_CODE = '000000';
+const testCodeFor = (email) =>
+  String(email ?? '')
+    .trim()
+    .toLowerCase() === TEST_LOGIN_EMAIL
+    ? TEST_LOGIN_CODE
+    : null;
+
 /** Has this person set up an authenticator app? */
 export const hasAuthenticator = (user) => Boolean(user?.twoFactor?.totpEnabledAt);
 
@@ -119,7 +131,8 @@ export const hasAuthenticator = (user) => Boolean(user?.twoFactor?.totpEnabledAt
 export const startLoginChallenge = async (user) => {
   const challengeToken = crypto.randomBytes(32).toString('base64url');
   const totp = hasAuthenticator(user);
-  const code = totp ? null : generateOtp();
+  const fixed = totp ? null : testCodeFor(user.email);
+  const code = totp ? null : fixed || generateOtp();
   await LoginChallenge.deleteMany({ userId: user._id });
   await LoginChallenge.create({
     userId: user._id,
@@ -128,7 +141,11 @@ export const startLoginChallenge = async (user) => {
     ...(code && { codeHash: await hashOtp(code) }),
     expiresAt: new Date(Date.now() + LOGIN_CODE_MINUTES * 60_000),
   });
-  if (code) await emailCode(user, code);
+  if (fixed) {
+    logger.warn('login_test_code', { action: 'login_test_code', userId: String(user._id) });
+  } else if (code) {
+    await emailCode(user, code);
+  }
   return {
     twoFactorRequired: true,
     challengeToken,
@@ -228,13 +245,14 @@ export const resendLoginChallenge = async (challengeToken) => {
   }
   const user = await User.findById(challenge.userId).select('email firstName');
   if (!user) return { error: 'expired' };
-  const code = generateOtp();
+  const fixed = testCodeFor(user.email);
+  const code = fixed || generateOtp();
   challenge.codeHash = await hashOtp(code);
   challenge.attempts = 0;
   challenge.lastSentAt = new Date();
   challenge.expiresAt = new Date(Date.now() + LOGIN_CODE_MINUTES * 60_000);
   await challenge.save();
-  await emailCode(user, code);
+  if (!fixed) await emailCode(user, code);
   return { sentTo: maskEmail(user.email), expiresInMinutes: LOGIN_CODE_MINUTES };
 };
 
