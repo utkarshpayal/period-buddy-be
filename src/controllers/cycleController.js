@@ -34,6 +34,28 @@ const NOT_DISCUSSED = 'not_discussed';
 const sanitizeEnumField = (value) =>
   typeof value === 'string' && value.trim().toLowerCase() === NOT_DISCUSSED ? undefined : value;
 
+// Fields a full-day save (`replace: true`) unsets when it leaves them out.
+// symptoms/isIntimate aren't here: the upsert always writes them.
+const CLEARABLE_LOG_FIELDS = [
+  'flow',
+  'mood',
+  'moods',
+  'energy',
+  'note',
+  'sleepHours',
+  'waterIntake',
+  'weight',
+  'temperature',
+  'stressLevel',
+  'medication',
+  'digestion',
+  'digestions',
+  'skin',
+  'skins',
+  'discharge',
+  'exercise',
+];
+
 const sanitizeNumberField = (value) => {
   const stripped = sanitizeEnumField(value);
   if (stripped === undefined || stripped === null || stripped === '') return undefined;
@@ -70,6 +92,7 @@ export const upsertCycleLog = async (userId, payload) => {
     exercise,
     moods,
     timezoneOffsetMinutes,
+    replace,
   } = payload;
 
   // The client's local "today" — day logs are keyed by local date, so the
@@ -83,6 +106,17 @@ export const upsertCycleLog = async (userId, payload) => {
 
   if (!dateKey || !validateDateKey(dateKey)) {
     throw Object.assign(new Error('dateKey is required (YYYY-MM-DD)'), {
+      status: HTTP_STATUS.BAD_REQUEST,
+    });
+  }
+
+  // No logging ahead of today. Without the client's offset, allow a day of
+  // slack past UTC so a user east of UTC can still log their local today.
+  const latestAllowedKey = Number.isFinite(tzOffset)
+    ? clientTodayKey
+    : new Date(Date.now() + 24 * 60 * 60000).toISOString().slice(0, 10);
+  if (dateKey > latestAllowedKey) {
+    throw Object.assign(new Error("Future days can't be logged yet"), {
       status: HTTP_STATUS.BAD_REQUEST,
     });
   }
@@ -174,6 +208,19 @@ export const upsertCycleLog = async (userId, payload) => {
       'exercise',
     ],
   );
+
+  // `replace: true` (the app's full "Save Log") means the payload is the whole
+  // day: any field it leaves out was cleared by the user and must be unset,
+  // otherwise the merge above would keep the old value (e.g. a flow picked by
+  // mistake). Partial writers — Quick Log, the voice agent, the check-in
+  // backfill — omit `replace` and keep merge semantics.
+  if (replace === true) {
+    const unset = {};
+    CLEARABLE_LOG_FIELDS.forEach((field) => {
+      if (update[field] === undefined) unset[field] = 1;
+    });
+    if (Object.keys(unset).length > 0) update.$unset = unset;
+  }
 
   // `wasNewlyCreated` is derived from the upsert's own result
   // (`updatedExisting`), not the earlier `isNewLog` pre-read — two
@@ -334,6 +381,64 @@ export const getDayLog = async (req, res, next) => {
 
     return sendResponse(res, HTTP_STATUS.OK, 'Day log fetched', log || null);
   } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * DELETE /api/cycle/log/:dateKey — Remove a day's log entirely
+ *
+ * Lets a user undo a log made on the wrong date. The upsert above skips
+ * undefined fields, so re-saving a day with everything deselected can't
+ * clear it (a stray `flow` would keep counting as a period day in
+ * predictions) — the whole document has to go. The "new log" wallet credit
+ * (+5, see upsertCycleLog) is taken back, floored at zero, so deleting and
+ * re-logging the same day can't farm tokens.
+ */
+export const deleteCycleLog = async (req, res, next) => {
+  try {
+    const { dateKey } = req.params;
+    if (!validateDateKey(dateKey)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'dateKey must be in YYYY-MM-DD format');
+    }
+
+    const deleted = await CycleLog.findOneAndDelete({ userId: req.userId, dateKey });
+    if (!deleted) {
+      return sendResponse(res, HTTP_STATUS.OK, 'No log for this day', { deleted: false });
+    }
+
+    const tzOffset = Number(req.query.timezoneOffsetMinutes);
+    const clientTodayKey = Number.isFinite(tzOffset)
+      ? new Date(Date.now() - tzOffset * 60000).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
+    const streakWindowStart = new Date();
+    streakWindowStart.setDate(streakWindowStart.getDate() - 730);
+    const recentLogs = await CycleLog.find({
+      userId: req.userId,
+      dateKey: { $gte: streakWindowStart.toISOString().slice(0, 10) },
+    })
+      .select('dateKey')
+      .lean();
+    const currentStreak = calculateTrackingStreak(recentLogs, clientTodayKey);
+
+    await User.findByIdAndUpdate(req.userId, [
+      {
+        $set: {
+          streakCount: currentStreak,
+          walletBalance: { $max: [0, { $subtract: [{ $ifNull: ['$walletBalance', 0] }, 5] }] },
+        },
+      },
+    ]);
+
+    logger.info('cycle_log_deleted', {
+      action: 'cycle_log_deleted',
+      userId: req.userId,
+      dateKey,
+    });
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Cycle log deleted', { deleted: true });
+  } catch (error) {
+    logger.error('cycle_log_delete_error', { userId: req.userId, error: error.message });
     next(error);
   }
 };

@@ -6,6 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 npm run dev           # Start with nodemon (auto-reload) — primary dev workflow
+npm run dev:local     # Same, but .env.local (gitignored) overrides .env first — e.g. local MongoDB + NODE_ENV=development
 npm start             # Start production server (node index.js)
 npm run lint          # ESLint check (eslint.config.js, flat config)
 npm run lint:fix      # ESLint with autofix

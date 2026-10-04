@@ -47,6 +47,13 @@ router.get('/logs', authenticate, cycleController.getMonthLogs);
 router.get('/log/:dateKey', authenticate, cycleController.getDayLog);
 
 /**
+ * @route   DELETE /api/cycle/log/:dateKey
+ * @desc    Delete a single day's log (e.g. one logged on the wrong date)
+ * @access  Private
+ */
+router.delete('/log/:dateKey', authenticate, cycleController.deleteCycleLog);
+
+/**
  * @route   GET /api/cycle/stats
  * @desc    Aggregated cycle stats (total days logged, top symptoms)
  * @access  Private

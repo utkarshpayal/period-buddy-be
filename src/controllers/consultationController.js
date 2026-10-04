@@ -19,6 +19,7 @@ import { DEFAULT_TIME_ZONE } from '../utils/timezone.js';
 import {
   cancelConsultationRecord,
   finalizePaidConsultation,
+  hasSessionStarted,
   notifyUserLive,
   publicConsultation,
   publicDoctor,
@@ -31,7 +32,6 @@ import {
   isPaymentConfigured,
   cashfreeMode,
 } from '../utils/cashfreeClient.js';
-import { releaseConsultationEarning, safeEarningHook } from '../utils/doctorWallet.js';
 
 /**
  * Doctors are only bookable while their login account is live and set up: a
@@ -711,31 +711,6 @@ export const sendMessage = async (req, res, next) => {
   }
 };
 
-/** PATCH /api/consultation/:id/complete — Mark a consultation as completed */
-export const completeConsultation = async (req, res, next) => {
-  try {
-    if (!isValidObjectId(req.params.id)) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid consultation id');
-    }
-
-    const consultation = await Consultation.findOneAndUpdate(
-      { _id: req.params.id, userId: req.userId, status: { $in: ['paid', 'active'] } },
-      { status: 'completed', completedAt: new Date() },
-      { new: true, runValidators: true },
-    );
-
-    if (!consultation)
-      return sendError(res, HTTP_STATUS.NOT_FOUND, 'Active consultation not found');
-
-    await safeEarningHook('completed', () =>
-      releaseConsultationEarning(consultation._id, consultation.completedAt),
-    );
-    return sendResponse(res, HTTP_STATUS.OK, 'Consultation completed', consultation);
-  } catch (error) {
-    next(error);
-  }
-};
-
 /** PATCH /api/consultation/:id/cancel — the patient cancels before the
  * session starts. A paid booking is queued for a refund. */
 export const cancelConsultation = async (req, res, next) => {
@@ -745,7 +720,9 @@ export const cancelConsultation = async (req, res, next) => {
     }
     const current = await Consultation.findOne({ _id: req.params.id, userId: req.userId });
     if (!current) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation not found');
-    if (current.status === 'paid' && current.scheduledFor && current.scheduledFor <= new Date()) {
+    // Until the slot starts. A chat message or call before then moves the
+    // booking to 'active', which must not take away the cancel and refund.
+    if (['paid', 'active'].includes(current.status) && hasSessionStarted(current)) {
       return sendError(
         res,
         HTTP_STATUS.BAD_REQUEST,
@@ -755,7 +732,11 @@ export const cancelConsultation = async (req, res, next) => {
 
     const consultation = await cancelConsultationRecord(
       { _id: current._id, userId: req.userId },
-      { by: 'patient', reason: req.body?.reason, fromStatuses: ['pending', 'paid'] },
+      {
+        by: 'patient',
+        reason: req.body?.reason,
+        fromStatuses: current.status === 'pending' ? ['pending'] : ['paid', 'active'],
+      },
     );
     if (!consultation) {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Cancellable consultation not found');

@@ -55,6 +55,7 @@ instead of calling the service (e.g. emails are logged, pushes are mocked).
 | Command | What it does |
 |---|---|
 | `npm run dev` | Start with nodemon (auto-reload) |
+| `npm run dev:local` | Same, with `.env.local` (gitignored) overriding `.env` — e.g. `MONGODB_URI=mongodb://localhost:27017/period-buddy`, `NODE_ENV=development` |
 | `npm start` | Start without reload (what the Docker image runs) |
 | `npm test` | Run the `node --test` suites in `src/**/__tests__/` |
 | `npm run lint` / `lint:fix` | ESLint |

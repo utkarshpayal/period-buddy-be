@@ -7,6 +7,7 @@ import logger from './logger.js';
 import { broadcastToRoom } from '../config/websocket.js';
 import {
   recordConsultationEarning,
+  releaseConsultationEarning,
   reverseConsultationEarnings,
   safeEarningHook,
 } from './doctorWallet.js';
@@ -252,4 +253,78 @@ export const finalizePaidConsultation = async (consultation) => {
     amount: claimed.amountPaid,
   });
   return { consultation: claimed, outcome: 'booked' };
+};
+
+/**
+ * True once a booked session's slot has started. Cancelling (patient) and
+ * completing (doctor) both turn on this, not on 'paid' vs 'active': a chat
+ * message or a call moves a booking to 'active' days before its slot, and
+ * that must not take away the patient's cancel/refund. Sessions booked before
+ * slots existed (no `scheduledFor`) count as started.
+ */
+export const hasSessionStarted = (consultation, now = new Date()) =>
+  !consultation?.scheduledFor || new Date(consultation.scheduledFor).getTime() <= now.getTime();
+
+/** How long after its slot ends a session nobody closed is completed automatically. */
+export const AUTO_COMPLETE_AFTER_MINUTES = 3 * 60;
+/** Sessions from before slots existed: completed this long after payment. */
+const LEGACY_AUTO_COMPLETE_DAYS = 7;
+
+/**
+ * Complete paid/active sessions whose slot ended AUTO_COMPLETE_AFTER_MINUTES
+ * ago and that the doctor never marked completed. Without this they stayed
+ * open forever: the patient saw "Upcoming" for a past date, couldn't book that
+ * doctor again and never got the rating prompt. Run from the scheduler tick;
+ * safe to run concurrently (each row is claimed atomically).
+ */
+export const completeOverdueConsultations = async (now = new Date()) => {
+  const slotCutoff = new Date(now.getTime() - AUTO_COMPLETE_AFTER_MINUTES * 60000);
+  const legacyCutoff = new Date(now.getTime() - LEGACY_AUTO_COMPLETE_DAYS * 86_400_000);
+  const overdue = await Consultation.find({
+    status: { $in: ['paid', 'active'] },
+    $or: [
+      { slotEndsAt: { $lte: slotCutoff } },
+      // A slot with no recorded end: an hour after it started.
+      {
+        slotEndsAt: null,
+        scheduledFor: { $lte: new Date(slotCutoff.getTime() - 60 * 60000) },
+      },
+      { scheduledFor: null, startedAt: { $lte: legacyCutoff } },
+    ],
+  })
+    .select('_id userId doctorId')
+    .limit(500)
+    .lean();
+
+  let completed = 0;
+  for (const row of overdue) {
+    try {
+      const done = await Consultation.findOneAndUpdate(
+        { _id: row._id, status: { $in: ['paid', 'active'] } },
+        { $set: { status: 'completed', completedAt: now } },
+        { new: true },
+      );
+      if (!done) continue;
+      completed += 1;
+      await safeEarningHook('completed', () =>
+        releaseConsultationEarning(done._id, done.completedAt),
+      );
+      const live = {
+        event: 'consultation_completed',
+        consultationId: String(done._id),
+        completedBy: 'system',
+      };
+      broadcastToRoom(`consultation_${done._id}`, live);
+      notifyUserLive(done.userId, live);
+      const doctor = await Doctor.findById(done.doctorId).select('userId').lean();
+      if (doctor?.userId) notifyUserLive(doctor.userId, live);
+    } catch (error) {
+      logger.error('consultation_auto_complete_failed', {
+        action: 'consultation_auto_complete_failed',
+        consultationId: String(row._id),
+        error: error.message,
+      });
+    }
+  }
+  return { overdue: overdue.length, completed };
 };
