@@ -17,7 +17,8 @@ const doctorAvailabilitySchema = new mongoose.Schema(
     }, // 0 = Sunday
     startTime: { type: String, required: true, trim: true }, // 'HH:MM'
     endTime: { type: String, required: true, trim: true }, // 'HH:MM'
-    timezone: { type: String, trim: true, default: 'UTC' },
+    // IANA zone the HH:MM times are in (e.g. "Asia/Kolkata"); see utils/timezone.js.
+    timezone: { type: String, trim: true, default: 'Asia/Kolkata' },
     isAvailable: { type: Boolean, default: true },
     maxSlots: { type: Number, default: 4, min: 1 },
   },

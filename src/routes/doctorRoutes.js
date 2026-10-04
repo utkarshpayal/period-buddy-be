@@ -6,7 +6,7 @@ import { uploadContentMedia } from '../controllers/uploadController.js';
 import { authenticate, authorize } from '../middleware/authMiddleware.js';
 import { requirePermission } from '../middleware/rbac.js';
 import { PERMISSIONS } from '../config/permissions.js';
-import { mediaUpload } from '../middleware/mediaUpload.js';
+import { imageUpload, mediaUpload } from '../middleware/mediaUpload.js';
 import { authLimiter, noopLimiter, rateLimitEnabled } from '../middleware/rateLimiters.js';
 
 const router = express.Router();
@@ -44,6 +44,25 @@ router.patch(
   requirePermission(PERMISSIONS.DOCTORS_MANAGE),
   doctorController.updateDoctorByAdmin,
 );
+/**
+ * @route   POST /api/doctor/admin/:id/avatar
+ * @desc    Set a doctor's profile photo (multipart `file`, image up to 5 MB);
+ *          DELETE removes it
+ * @access  Private (doctors.manage)
+ */
+router.post(
+  '/admin/:id/avatar',
+  authenticate,
+  requirePermission(PERMISSIONS.DOCTORS_MANAGE),
+  imageUpload.single('file'),
+  doctorController.uploadDoctorAvatarByAdmin,
+);
+router.delete(
+  '/admin/:id/avatar',
+  authenticate,
+  requirePermission(PERMISSIONS.DOCTORS_MANAGE),
+  doctorController.removeDoctorAvatarByAdmin,
+);
 router.post(
   '/admin/:id/resend-invite',
   authenticate,
@@ -67,6 +86,28 @@ router.delete(
   requirePermission(PERMISSIONS.DOCTORS_MANAGE),
   doctorController.deactivateDoctor,
 );
+/**
+ * @route   POST /api/doctor/admin/:id/reactivate
+ * @desc    Undo a deactivation (login and weekly slots back, bookings stay paused)
+ * @access  Private (doctors.manage)
+ */
+router.post(
+  '/admin/:id/reactivate',
+  authenticate,
+  requirePermission(PERMISSIONS.DOCTORS_MANAGE),
+  doctorController.reactivateDoctor,
+);
+/**
+ * @route   DELETE /api/doctor/admin/:id/account
+ * @desc    Delete a doctor for good (refused while their wallet holds money)
+ * @access  Private (doctors.manage)
+ */
+router.delete(
+  '/admin/:id/account',
+  authenticate,
+  requirePermission(PERMISSIONS.DOCTORS_MANAGE),
+  doctorController.deleteDoctorAccount,
+);
 
 /* ---------------------------------------------------------------------------
  * Doctor — everything below requires the doctor role
@@ -74,10 +115,34 @@ router.delete(
 
 router.get('/me', authenticate, authorize('doctor'), doctorController.getMyProfile);
 router.put('/me', authenticate, authorize('doctor'), doctorController.updateMyProfile);
+/**
+ * @route   POST /api/doctor/me/avatar
+ * @desc    Upload own profile photo (multipart `file`, image up to 5 MB); DELETE removes it
+ * @access  Private (doctor)
+ */
+router.post(
+  '/me/avatar',
+  authenticate,
+  authorize('doctor'),
+  imageUpload.single('file'),
+  doctorController.uploadMyAvatar,
+);
+router.delete('/me/avatar', authenticate, authorize('doctor'), doctorController.removeMyAvatar);
 
 router.get('/dashboard', authenticate, authorize('doctor'), doctorController.getDashboard);
 
 router.get('/consultations', authenticate, authorize('doctor'), doctorController.getConsultations);
+/**
+ * @route   GET /api/doctor/consultations/:id
+ * @desc    One of the doctor's bookings, with the patient
+ * @access  Private (doctor)
+ */
+router.get(
+  '/consultations/:id',
+  authenticate,
+  authorize('doctor'),
+  doctorController.getConsultation,
+);
 router.get(
   '/consultations/:id/patient',
   authenticate,
@@ -101,6 +166,17 @@ router.post(
   authenticate,
   authorize('doctor'),
   doctorController.startVideoCall,
+);
+/**
+ * @route   POST /api/doctor/consultations/:id/call/decline
+ * @desc    Decline a ringing video call from the patient
+ * @access  Private (doctor)
+ */
+router.post(
+  '/consultations/:id/call/decline',
+  authenticate,
+  authorize('doctor'),
+  doctorController.declineCall,
 );
 router.patch(
   '/consultations/:id/prescription',

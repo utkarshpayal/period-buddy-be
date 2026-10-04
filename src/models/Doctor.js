@@ -14,10 +14,20 @@ const doctorSchema = new mongoose.Schema(
 
     name: { type: String, required: true, trim: true },
     specialty: { type: String, required: true, trim: true },
+    // Average of patients' session ratings, kept in step by
+    // recomputeDoctorRating (consultationController). Only meaningful once
+    // ratingCount > 0; clients show "New" before that.
     rating: { type: Number, default: 4.5, min: 1, max: 5 },
+    ratingCount: { type: Number, default: 0 },
     pricePerSession: { type: Number, required: true },
-    currency: { type: String, default: 'USD' },
+    // INR only for now; controllers force it (wallet totals are INR).
+    currency: { type: String, default: 'INR' },
+    /** @deprecated replaced by avatarUrl; kept for app builds that still read it. */
     avatarEmoji: { type: String, default: '👩‍⚕️' },
+    /** Profile photo shown to patients (public S3 URL under doctors/<id>/avatar). */
+    avatarUrl: { type: String, trim: true },
+    /** S3 key of avatarUrl, so a replaced or removed photo can be deleted. */
+    avatarKey: { type: String, select: false },
     bio: { type: String, trim: true },
     languages: [{ type: String }],
 
@@ -36,6 +46,10 @@ const doctorSchema = new mongoose.Schema(
     commissionBps: { type: Number, default: null, min: 0, max: 10_000, select: false },
 
     totalConsultations: { type: Number, default: 0 },
+
+    /** Set when an admin deletes the doctor for good (deleteDoctorAccount).
+     * The row stays for earnings and consultation history; lists hide it. */
+    deletedAt: { type: Date, default: null },
 
     /** @deprecated availability is now managed by DoctorAvailability collection */
     availability: { type: String, default: 'Available today' },

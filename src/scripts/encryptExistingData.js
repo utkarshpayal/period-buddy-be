@@ -23,6 +23,7 @@ import {
 } from '../utils/fieldEncryption.js';
 import QaChatSession from '../models/QaChatSession.js';
 import ConsultationMessage from '../models/ConsultationMessage.js';
+import Consultation from '../models/Consultation.js';
 import DocumentChatMessage from '../models/DocumentChatMessage.js';
 import ScreeningAssessment from '../models/ScreeningAssessment.js';
 import CycleLog from '../models/CycleLog.js';
@@ -39,6 +40,7 @@ import User from '../models/User.js';
 export const ENCRYPTED = [
   [QaChatSession, ['title', 'messages.text']],
   [ConsultationMessage, ['text']],
+  [Consultation, ['feedback']],
   [DocumentChatMessage, ['text']],
   [ScreeningAssessment, ['summary', 'doctorDiscussionSummary', 'answers'], ['answers']],
   [CycleLog, ['note']],

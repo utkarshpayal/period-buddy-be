@@ -113,4 +113,18 @@ router.post('/payouts/:id/mark-paid', manage, finance.markPayoutPaidById);
  */
 router.get('/payouts/:id/method', manage, finance.getPayoutMethodById);
 
+/**
+ * @route   GET /api/admin/clinical-finance/refunds
+ * @desc    Cancelled paid consultations owed a refund (?status=processed for done ones)
+ * @access  Private (payouts.read)
+ */
+router.get('/refunds', read, finance.listRefunds);
+
+/**
+ * @route   POST /api/admin/clinical-finance/refunds/:id/processed
+ * @desc    Mark a consultation refund as made (optional reference)
+ * @access  Private (payouts.manage)
+ */
+router.post('/refunds/:id/processed', manage, finance.markRefundProcessed);
+
 export default router;
