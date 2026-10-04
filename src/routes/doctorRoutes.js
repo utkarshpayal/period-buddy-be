@@ -132,6 +132,17 @@ router.delete('/me/avatar', authenticate, authorize('doctor'), doctorController.
 router.get('/dashboard', authenticate, authorize('doctor'), doctorController.getDashboard);
 
 router.get('/consultations', authenticate, authorize('doctor'), doctorController.getConsultations);
+/**
+ * @route   GET /api/doctor/consultations/:id
+ * @desc    One of the doctor's bookings, with the patient
+ * @access  Private (doctor)
+ */
+router.get(
+  '/consultations/:id',
+  authenticate,
+  authorize('doctor'),
+  doctorController.getConsultation,
+);
 router.get(
   '/consultations/:id/patient',
   authenticate,
@@ -155,6 +166,17 @@ router.post(
   authenticate,
   authorize('doctor'),
   doctorController.startVideoCall,
+);
+/**
+ * @route   POST /api/doctor/consultations/:id/call/decline
+ * @desc    Decline a ringing video call from the patient
+ * @access  Private (doctor)
+ */
+router.post(
+  '/consultations/:id/call/decline',
+  authenticate,
+  authorize('doctor'),
+  doctorController.declineCall,
 );
 router.patch(
   '/consultations/:id/prescription',

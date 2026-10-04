@@ -21,7 +21,7 @@ import {
   pickDefined,
   sendPaginatedList,
 } from '../utils/apiHelpers.js';
-import { broadcastToRoom } from '../config/websocket.js';
+import { broadcastToRoom, sendRawToRoom } from '../config/websocket.js';
 import { sendMail } from '../utils/mailer.js';
 import { getDoctorInviteTemplate } from '../templates/emailTemplates.js';
 import { userRoleEnum } from '../enums/enums.js';
@@ -37,12 +37,14 @@ import { startSession } from '../utils/sessions.js';
 import DoctorEarning from '../models/DoctorEarning.js';
 import { describeEarning } from './doctorWalletController.js';
 import { deleteFromS3, uploadBufferToS3 } from '../utils/s3.js';
+import { validateWeeklyRanges } from '../utils/consultationSlots.js';
+import { DEFAULT_TIME_ZONE } from '../utils/timezone.js';
+import { cancelConsultationRecord, notifyUserLive } from '../utils/consultationLifecycle.js';
 import { assertAllowedUpload } from '../utils/fileValidation.js';
 import {
   computeWallet,
   describeWallet,
   releaseConsultationEarning,
-  reverseConsultationEarnings,
   safeEarningHook,
 } from '../utils/doctorWallet.js';
 
@@ -73,9 +75,55 @@ const patientPopulate = (select) => ({
 const meetingLinkFor = (consultationId) =>
   `https://meet.jit.si/PeriodBuddy-Consult-${consultationId}`;
 
+/** An https URL of a file this API uploaded (our bucket / public base), so a
+ * doctor can't send patients arbitrary or `javascript:` links as attachments. */
+const isOwnUploadUrl = (value) => {
+  try {
+    const url = new URL(String(value));
+    if (url.protocol !== 'https:') return false;
+    const bucket = process.env.AWS_S3_BUCKET;
+    const region = process.env.AWS_REGION;
+    const allowed = [
+      process.env.AWS_S3_PUBLIC_URL_BASE && new URL(process.env.AWS_S3_PUBLIC_URL_BASE).host,
+      bucket && region && `${bucket}.s3.${region}.amazonaws.com`,
+      bucket && `${bucket}.s3.amazonaws.com`,
+    ].filter(Boolean);
+    return allowed.includes(url.host);
+  } catch {
+    return false;
+  }
+};
+
 /** Resolve the Doctor profile backing the currently logged-in doctor User.
  * Returns null when the account has no linked profile. */
 const getDoctorForUser = async (userId) => Doctor.findOne({ userId });
+
+/** Session fee: whole rupees, 1 to 1,00,000. Returns the number or null. */
+const MAX_SESSION_FEE = 100000;
+const parsePrice = (value) => {
+  const price = Number(value);
+  return Number.isFinite(price) && price >= 1 && price <= MAX_SESSION_FEE
+    ? Math.round(price)
+    : null;
+};
+const PRICE_ERROR = `Session fee must be between ₹1 and ₹${MAX_SESSION_FEE.toLocaleString('en-IN')}`;
+
+/**
+ * Fee and currency from a profile update: INR is the only currency for now
+ * (wallet and payouts are INR), so `currency` is ignored and always INR.
+ * Returns `{ error }` or the cleaned updates.
+ */
+const cleanFeeUpdates = (updates) => {
+  const next = { ...updates };
+  delete next.currency;
+  if (next.pricePerSession !== undefined) {
+    const price = parsePrice(next.pricePerSession);
+    if (price === null) return { error: PRICE_ERROR };
+    next.pricePerSession = price;
+    next.currency = 'INR';
+  }
+  return { updates: next };
+};
 
 /** creatorId string used to scope Reels to a doctor. */
 const reelCreatorId = (doctorId) => `doctor_${doctorId}`;
@@ -93,7 +141,6 @@ export const inviteDoctor = async (req, res, next) => {
       email,
       specialty,
       pricePerSession,
-      currency,
       bio,
       languages,
       experience,
@@ -105,8 +152,8 @@ export const inviteDoctor = async (req, res, next) => {
     if (!name?.trim() || !email?.trim() || !specialty?.trim()) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'name, email, and specialty are required');
     }
-    if (pricePerSession == null || Number.isNaN(Number(pricePerSession))) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'A valid pricePerSession is required');
+    if (parsePrice(pricePerSession) === null) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, PRICE_ERROR);
     }
 
     const normalizedEmail = email.trim().toLowerCase();
@@ -144,8 +191,8 @@ export const inviteDoctor = async (req, res, next) => {
       email: normalizedEmail,
       name: name.trim(),
       specialty: specialty.trim(),
-      pricePerSession: Number(pricePerSession),
-      currency: currency || 'INR',
+      pricePerSession: parsePrice(pricePerSession),
+      currency: 'INR',
       bio,
       languages: Array.isArray(languages) ? languages : [],
       experience,
@@ -255,8 +302,10 @@ export const updateDoctorByAdmin = async (req, res, next) => {
       'education',
       'isAvailable',
     ]);
+    const fee = cleanFeeUpdates(updates);
+    if (fee.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, fee.error);
 
-    const doctor = await Doctor.findByIdAndUpdate(req.params.id, updates, {
+    const doctor = await Doctor.findByIdAndUpdate(req.params.id, fee.updates, {
       new: true,
       runValidators: true,
     });
@@ -448,7 +497,9 @@ export const deleteDoctorAccount = async (req, res, next) => {
       return sendError(
         res,
         HTTP_STATUS.CONFLICT,
-        "Settle this doctor's wallet first: their balance, held earnings and open payouts must all be zero",
+        'This doctor still has money in their wallet (balance, earnings on hold or an open payout). ' +
+          'Open paid sessions count as held earnings: deactivate the doctor first to cancel them, ' +
+          'pay out or adjust any remaining balance, then delete.',
       );
     }
 
@@ -569,8 +620,10 @@ export const updateMyProfile = async (req, res, next) => {
       'education',
       'isAvailable',
     ]);
+    const fee = cleanFeeUpdates(updates);
+    if (fee.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, fee.error);
 
-    Object.assign(doctor, updates);
+    Object.assign(doctor, fee.updates);
     await doctor.save();
 
     return sendResponse(res, HTTP_STATUS.OK, 'Profile updated', doctor);
@@ -711,15 +764,17 @@ export const getDashboard = async (req, res, next) => {
     if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor profile not found');
 
     const [statusCounts, paid, recent, wallet] = await Promise.all([
+      // Unpaid (abandoned) checkouts aren't bookings.
       Consultation.aggregate([
-        { $match: { doctorId: doctor._id } },
+        { $match: { doctorId: doctor._id, status: { $ne: 'pending' } } },
         { $group: { _id: '$status', count: { $sum: 1 } } },
       ]),
+      // A cancelled session's money goes back to the patient.
       Consultation.aggregate([
-        { $match: { doctorId: doctor._id, paymentStatus: 'paid' } },
+        { $match: { doctorId: doctor._id, paymentStatus: 'paid', status: { $ne: 'cancelled' } } },
         { $group: { _id: null, total: { $sum: '$amountPaid' }, count: { $sum: 1 } } },
       ]),
-      Consultation.find({ doctorId: doctor._id })
+      Consultation.find({ doctorId: doctor._id, status: { $ne: 'pending' } })
         .populate(patientPopulate('firstName lastName email profilePicture'))
         .sort({ createdAt: -1 })
         .limit(6),
@@ -748,7 +803,7 @@ export const getDashboard = async (req, res, next) => {
         cancelled: counts.cancelled || 0,
         totalEarnings: paid[0]?.total || 0,
         paidSessions: paid[0]?.count || 0,
-        currency: doctor.currency,
+        currency: 'INR',
       },
       // Net of commission, from the wallet (see utils/doctorWallet.js).
       wallet: describeWallet(wallet),
@@ -771,6 +826,10 @@ export const getConsultations = async (req, res, next) => {
 
     const filter = { doctorId: doctor._id };
     const { status } = req.query;
+    // Unpaid checkouts never reach the doctor (no patient details before payment).
+    if (status === 'pending') {
+      return sendResponse(res, HTTP_STATUS.OK, 'Consultations fetched', []);
+    }
     if (status) {
       // Patients never pay for a booking that stays 'pending', so hide those
       // from the doctor's default views unless explicitly requested.
@@ -842,6 +901,22 @@ const loadOwnedConsultation = async (userId, consultationId) => {
   });
   if (!consultation) return { error: 'Consultation not found', code: HTTP_STATUS.NOT_FOUND };
   return { doctor, consultation };
+};
+
+/** GET /api/doctor/consultations/:id — one of the doctor's bookings (e.g. to
+ * open it from an answered call or a dashboard link). Never an unpaid checkout. */
+export const getConsultation = async (req, res, next) => {
+  try {
+    const { error, code, consultation } = await loadOwnedConsultation(req.userId, req.params.id);
+    if (error) return sendError(res, code, error);
+    if (consultation.status === 'pending') {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation not found');
+    }
+    await consultation.populate(patientPopulate('firstName lastName email profilePicture'));
+    return sendResponse(res, HTTP_STATUS.OK, 'Consultation fetched', consultation);
+  } catch (error) {
+    next(error);
+  }
 };
 
 /** Statuses at which a doctor is "connected" to a patient and may view their
@@ -981,8 +1056,20 @@ export const sendConsultationMessage = async (req, res, next) => {
     if (!['paid', 'active'].includes(consultation.status)) {
       return sendError(res, HTTP_STATUS.FORBIDDEN, 'This consultation session is not active');
     }
-    if (consultation.status === 'paid') consultation.status = 'active';
-    await consultation.save();
+    if (
+      attachmentUrl !== undefined &&
+      attachmentUrl !== null &&
+      attachmentUrl !== '' &&
+      !isOwnUploadUrl(attachmentUrl)
+    ) {
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        'Attachments must be files uploaded through the portal',
+      );
+    }
+    // Conditional, so it can't undo a patient's cancel that landed in between.
+    await Consultation.updateOne({ _id: consultation._id, status: 'paid' }, { status: 'active' });
 
     const message = await ConsultationMessage.create({
       consultationId: consultation._id,
@@ -1019,11 +1106,12 @@ export const startVideoCall = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.FORBIDDEN, 'This consultation session is not active');
     }
 
-    if (!consultation.meetingLink) {
-      consultation.meetingLink = meetingLinkFor(consultation._id);
-    }
-    if (consultation.status === 'paid') consultation.status = 'active';
-    await consultation.save();
+    const meetingLink = consultation.meetingLink || meetingLinkFor(consultation._id);
+    await Consultation.updateOne(
+      { _id: consultation._id, status: { $in: ['paid', 'active'] } },
+      { status: 'active', meetingLink },
+    );
+    consultation.meetingLink = meetingLink;
 
     // Let the patient's session know a call is live and where to join.
     broadcastToRoom(`consultation_${consultation._id}`, {
@@ -1059,6 +1147,11 @@ export const setPrescription = async (req, res, next) => {
 
     consultation.prescription = prescription.trim();
     await consultation.save();
+    await consultation.populate(patientPopulate('firstName lastName email profilePicture'));
+    broadcastToRoom(`consultation_${consultation._id}`, {
+      event: 'prescription_updated',
+      consultationId: String(consultation._id),
+    });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Prescription saved', consultation);
   } catch (error) {
@@ -1072,42 +1165,62 @@ export const completeConsultation = async (req, res, next) => {
     const { error, code, consultation } = await loadOwnedConsultation(req.userId, req.params.id);
     if (error) return sendError(res, code, error);
 
-    if (!['paid', 'active'].includes(consultation.status)) {
+    const completed = await Consultation.findOneAndUpdate(
+      { _id: consultation._id, status: { $in: ['paid', 'active'] } },
+      { status: 'completed', completedAt: new Date() },
+      { new: true },
+    ).populate(patientPopulate('firstName lastName email profilePicture'));
+    if (!completed) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Only an active session can be completed');
     }
-
-    consultation.status = 'completed';
-    consultation.completedAt = new Date();
-    await consultation.save();
     // Starts the hold; after it the earning is withdrawable.
     await safeEarningHook('completed', () =>
-      releaseConsultationEarning(consultation._id, consultation.completedAt),
+      releaseConsultationEarning(completed._id, completed.completedAt),
     );
+    const live = { event: 'consultation_completed', consultationId: String(completed._id) };
+    broadcastToRoom(`consultation_${completed._id}`, live);
+    notifyUserLive(completed.userId?._id || completed.userId, live);
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Consultation completed', consultation);
+    return sendResponse(res, HTTP_STATUS.OK, 'Consultation completed', completed);
   } catch (error) {
     next(error);
   }
 };
 
-/** PATCH /api/doctor/consultations/:id/cancel */
+/** PATCH /api/doctor/consultations/:id/cancel — `{ reason? }`. The doctor
+ * cancels a paid or ongoing session; the patient is told and refunded. */
 export const cancelConsultation = async (req, res, next) => {
   try {
     const { error, code, consultation } = await loadOwnedConsultation(req.userId, req.params.id);
     if (error) return sendError(res, code, error);
 
-    if (!['pending', 'paid'].includes(consultation.status)) {
+    const cancelled = await cancelConsultationRecord(
+      { _id: consultation._id, doctorId: consultation.doctorId },
+      { by: 'doctor', reason: req.body?.reason, fromStatuses: ['paid', 'active'] },
+    );
+    if (!cancelled) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'This consultation cannot be cancelled');
     }
+    await cancelled.populate(patientPopulate('firstName lastName email profilePicture'));
+    return sendResponse(res, HTTP_STATUS.OK, 'Consultation cancelled', cancelled);
+  } catch (error) {
+    next(error);
+  }
+};
 
-    consultation.status = 'cancelled';
-    consultation.completedAt = new Date();
-    await consultation.save();
-    await safeEarningHook('cancelled', () =>
-      reverseConsultationEarnings(consultation._id, 'Cancelled by the doctor'),
-    );
-
-    return sendResponse(res, HTTP_STATUS.OK, 'Consultation cancelled', consultation);
+/** POST /api/doctor/consultations/:id/call/decline — the doctor declines a
+ * ringing call from the patient. */
+export const declineCall = async (req, res, next) => {
+  try {
+    const { error, code, consultation } = await loadOwnedConsultation(req.userId, req.params.id);
+    if (error) return sendError(res, code, error);
+    const room = `consultation_${consultation._id}`;
+    sendRawToRoom(room, { type: 'call_end', room, reason: 'declined' });
+    notifyUserLive(consultation.userId, {
+      event: 'call_declined',
+      consultationId: String(consultation._id),
+    });
+    return sendResponse(res, HTTP_STATUS.OK, 'Call declined', { declined: true });
   } catch (error) {
     next(error);
   }
@@ -1150,18 +1263,26 @@ export const getPayments = async (req, res, next) => {
     const doctor = await getDoctorForUser(req.userId);
     if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor profile not found');
 
-    const filter = { doctorId: doctor._id, paymentStatus: 'paid' };
+    // Listed: every session that was paid (refunded/cancelled ones included,
+    // marked by their status). Totalled: only the money the doctor keeps.
+    const filter = { doctorId: doctor._id, paymentStatus: { $in: ['paid', 'refunded'] } };
+    const earnedFilter = {
+      doctorId: doctor._id,
+      paymentStatus: 'paid',
+      status: { $ne: 'cancelled' },
+    };
     const query = Consultation.find(filter)
       .populate(patientPopulate('firstName lastName email'))
       .sort({ startedAt: -1, createdAt: -1, _id: -1 });
 
     if (!isPaginatedRequest(req.query)) {
       const payments = await query;
-      const total = payments.reduce((sum, p) => sum + (p.amountPaid || 0), 0);
+      const earned = payments.filter((p) => p.paymentStatus === 'paid' && p.status !== 'cancelled');
+      const total = earned.reduce((sum, p) => sum + (p.amountPaid || 0), 0);
       return sendResponse(res, HTTP_STATUS.OK, 'Payments fetched', {
         total,
-        count: payments.length,
-        currency: doctor.currency,
+        count: earned.length,
+        currency: 'INR',
         ...(await earningTotals(doctor._id)),
         payments: await withEarnings(payments),
       });
@@ -1173,7 +1294,7 @@ export const getPayments = async (req, res, next) => {
     const [payments, [totals]] = await Promise.all([
       query.skip(skip).limit(limit),
       Consultation.aggregate([
-        { $match: filter },
+        { $match: earnedFilter },
         {
           $group: {
             _id: null,
@@ -1184,13 +1305,14 @@ export const getPayments = async (req, res, next) => {
       ]),
     ]);
     const count = totals?.count ?? 0;
+    const listed = await Consultation.countDocuments(filter);
     return sendResponse(res, HTTP_STATUS.OK, 'Payments fetched', {
       total: totals?.total ?? 0,
       count,
-      currency: doctor.currency,
+      currency: 'INR',
       ...(await earningTotals(doctor._id)),
       payments: await withEarnings(payments),
-      pagination: buildPagination({ page, limit, total: count }),
+      pagination: buildPagination({ page, limit, total: listed }),
     });
   } catch (error) {
     next(error);
@@ -1218,48 +1340,39 @@ export const getAvailability = async (req, res, next) => {
   }
 };
 
-/** PUT /api/doctor/availability — replace the doctor's weekly slots. */
+/**
+ * PUT /api/doctor/availability — replace the doctor's weekly hours:
+ * `{ slots: [{ dayOfWeek, startTime, endTime, maxSlots, timezone }] }`, times
+ * "HH:MM" in `timezone` (IANA, e.g. "Asia/Kolkata"; one zone for all ranges).
+ * Everything is validated first; the new rows are written before the old
+ * ones are removed, so a failure never leaves the doctor with no schedule.
+ */
 export const setAvailability = async (req, res, next) => {
   try {
     const doctor = await getDoctorForUser(req.userId);
     if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor profile not found');
 
     const { slots } = req.body;
-    if (!Array.isArray(slots)) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'slots must be an array');
-    }
+    const ranges = Array.isArray(slots)
+      ? slots.map((s) => ({
+          dayOfWeek: Number(s?.dayOfWeek),
+          startTime: s?.startTime,
+          endTime: s?.endTime,
+          maxSlots: Number(s?.maxSlots),
+          timezone: s?.timezone || req.body.timezone || DEFAULT_TIME_ZONE,
+          isAvailable: s?.isAvailable !== false,
+        }))
+      : slots;
+    const problem = validateWeeklyRanges(ranges);
+    if (problem) return sendError(res, HTTP_STATUS.BAD_REQUEST, problem);
 
-    const timeRe = /^([01]\d|2[0-3]):[0-5]\d$/;
-    for (const slot of slots) {
-      if (
-        typeof slot.dayOfWeek !== 'number' ||
-        slot.dayOfWeek < 0 ||
-        slot.dayOfWeek > 6 ||
-        !timeRe.test(slot.startTime || '') ||
-        !timeRe.test(slot.endTime || '')
-      ) {
-        return sendError(
-          res,
-          HTTP_STATUS.BAD_REQUEST,
-          'Each slot needs dayOfWeek (0-6) and HH:MM startTime/endTime',
-        );
-      }
-    }
-
-    await DoctorAvailability.deleteMany({ doctorId: doctor._id });
-    const created = slots.length
-      ? await DoctorAvailability.insertMany(
-          slots.map((s) => ({
-            doctorId: doctor._id,
-            dayOfWeek: s.dayOfWeek,
-            startTime: s.startTime,
-            endTime: s.endTime,
-            timezone: s.timezone || 'UTC',
-            isAvailable: s.isAvailable !== false,
-            maxSlots: s.maxSlots || 4,
-          })),
-        )
+    const previous = await DoctorAvailability.find({ doctorId: doctor._id }).select('_id').lean();
+    const created = ranges.length
+      ? await DoctorAvailability.insertMany(ranges.map((r) => ({ ...r, doctorId: doctor._id })))
       : [];
+    if (previous.length) {
+      await DoctorAvailability.deleteMany({ _id: { $in: previous.map((r) => r._id) } });
+    }
 
     return sendResponse(res, HTTP_STATUS.OK, 'Availability updated', created);
   } catch (error) {

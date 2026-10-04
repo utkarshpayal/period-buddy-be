@@ -15,6 +15,7 @@ export const AUDIT_ACTIONS = {
   DOCTOR_INVITE_RESENT: 'doctor.invite_resent',
   DOCTOR_REACTIVATED: 'doctor.reactivated',
   DOCTOR_DELETED: 'doctor.deleted',
+  CONSULTATION_REFUNDED: 'consultation.refunded',
   // Commission & payouts (controllers/clinicalFinanceController.js)
   PAYOUT_SETTINGS_UPDATED: 'payout_settings.updated',
   DOCTOR_COMMISSION_UPDATED: 'doctor.commission_updated',

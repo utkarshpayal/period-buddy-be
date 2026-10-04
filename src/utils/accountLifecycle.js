@@ -232,7 +232,7 @@ export const scrubCommunityFootprint = async (userId, { dropReports = false } = 
  * refund flow yet), so finance can act on them.
  */
 export const retireDoctorProfiles = async (filter, { reason }) => {
-  const doctors = await Doctor.find(filter).select('_id name userId').lean();
+  const doctors = await Doctor.find(filter).select('_id name userId totalConsultations').lean();
   for (const doctor of doctors) {
     await Doctor.updateOne({ _id: doctor._id }, { isAvailable: false });
     await DoctorAvailability.updateMany({ doctorId: doctor._id }, { isAvailable: false });
@@ -248,8 +248,23 @@ export const retireDoctorProfiles = async (filter, { reason }) => {
 
     await Consultation.updateMany(
       { _id: { $in: open.map((c) => c._id) } },
-      { status: 'cancelled', completedAt: new Date() },
+      {
+        status: 'cancelled',
+        completedAt: new Date(),
+        cancelledBy: 'system',
+        cancelReason: 'Doctor no longer available',
+      },
     );
+    // Paid ones: refund queue for finance (Clinical finance → Refunds), and
+    // the doctor's session count corrected.
+    const paidIds = open.filter((c) => c.paymentStatus === 'paid').map((c) => c._id);
+    if (paidIds.length) {
+      await Consultation.updateMany({ _id: { $in: paidIds } }, { refundStatus: 'required' });
+      await Doctor.updateOne(
+        { _id: doctor._id },
+        { $inc: { totalConsultations: -Math.min(paidIds.length, doctor.totalConsultations || 0) } },
+      );
+    }
     await safeEarningHook('cancelled', () =>
       reverseConsultationEarnings(
         open.map((c) => c._id),
@@ -303,8 +318,23 @@ export const cancelPatientConsultations = async (userId, { reason }) => {
   if (open.length === 0) return 0;
   await Consultation.updateMany(
     { _id: { $in: open.map((c) => c._id) } },
-    { status: 'cancelled', completedAt: new Date() },
+    {
+      status: 'cancelled',
+      completedAt: new Date(),
+      cancelledBy: 'system',
+      cancelReason: 'Patient deleted their account',
+    },
   );
+  const paidIds = open.filter((c) => c.paymentStatus === 'paid').map((c) => c._id);
+  if (paidIds.length) {
+    await Consultation.updateMany({ _id: { $in: paidIds } }, { refundStatus: 'required' });
+    for (const c of open.filter((row) => row.paymentStatus === 'paid')) {
+      await Doctor.updateOne(
+        { _id: c.doctorId, totalConsultations: { $gt: 0 } },
+        { $inc: { totalConsultations: -1 } },
+      );
+    }
+  }
   await safeEarningHook('cancelled', () =>
     reverseConsultationEarnings(
       open.map((c) => c._id),

@@ -1,5 +1,6 @@
 import QuestionAnswer from '../models/QuestionAnswer.js';
 import Doctor from '../models/Doctor.js';
+import DoctorAvailability from '../models/DoctorAvailability.js';
 import HealthIssue from '../models/HealthIssue.js';
 import WellbeingResource from '../models/WellbeingResource.js';
 import Blog from '../models/Blog.js';
@@ -573,6 +574,33 @@ export const seedDatabase = async () => {
     // Accounts deleted in-app before accountLifecycle existed: set deletedAt
     // and tear down what they left behind (visible posts, partner links…).
     await backfillLegacyDeletedAccounts();
+    // INR is the only currency for now (wallet and payouts are INR): move any
+    // doctor priced in another currency over, keeping the number, and say so
+    // in the log so an admin can check those fees.
+    const nonInr = await Doctor.find({ currency: { $ne: 'INR' } })
+      .select('_id name currency pricePerSession')
+      .lean();
+    if (nonInr.length) {
+      await Doctor.collection.updateMany(
+        { currency: { $ne: 'INR' } },
+        { $set: { currency: 'INR' } },
+      );
+      logger.warn('seeder_doctor_currency_set_inr', {
+        action: 'seeder_doctor_currency_set_inr',
+        doctors: nonInr.map((d) => ({
+          id: String(d._id),
+          name: d.name,
+          was: d.currency,
+          fee: d.pricePerSession,
+        })),
+      });
+    }
+    // Weekly hours saved before the portal sent a time zone were entered in
+    // India time but stored as UTC.
+    await DoctorAvailability.collection.updateMany(
+      { $or: [{ timezone: 'UTC' }, { timezone: { $exists: false } }, { timezone: '' }] },
+      { $set: { timezone: 'Asia/Kolkata' } },
+    );
 
     logger.info('seeder_complete', { action: 'seeder_complete' });
   } catch (error) {

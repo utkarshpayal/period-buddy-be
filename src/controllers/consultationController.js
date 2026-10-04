@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import mongoose from 'mongoose';
 import Doctor from '../models/Doctor.js';
 import Consultation from '../models/Consultation.js';
@@ -7,30 +8,58 @@ import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
-import { activeUserIdSet } from '../utils/accountStatus.js';
+import { ACTIVE_ACCOUNT_FILTER } from '../utils/accountStatus.js';
+import {
+  BOOKING_WINDOW_DAYS,
+  PAYMENT_HOLD_MINUTES,
+  buildSlots,
+  findSlot,
+} from '../utils/consultationSlots.js';
+import { DEFAULT_TIME_ZONE } from '../utils/timezone.js';
+import {
+  cancelConsultationRecord,
+  finalizePaidConsultation,
+  notifyUserLive,
+  publicConsultation,
+  publicDoctor,
+} from '../utils/consultationLifecycle.js';
 import { escapeRegex, isValidObjectId } from '../utils/apiHelpers.js';
-import { broadcastToRoom } from '../config/websocket.js';
+import { broadcastToRoom, sendRawToRoom } from '../config/websocket.js';
 import {
   createOrder,
   getOrderStatus,
   isPaymentConfigured,
   cashfreeMode,
 } from '../utils/cashfreeClient.js';
-import {
-  recordConsultationEarning,
-  releaseConsultationEarning,
-  reverseConsultationEarnings,
-  safeEarningHook,
-} from '../utils/doctorWallet.js';
+import { releaseConsultationEarning, safeEarningHook } from '../utils/doctorWallet.js';
 
 /**
- * Doctors are only bookable while their login account is live — a suspended
- * or deleted clinician can't run the session. Seeded demo doctors have no
- * linked account and stay listed.
+ * Doctors are only bookable while their login account is live and set up: a
+ * suspended, deleted or still-invited clinician (no password yet) can't run
+ * the session. Seeded demo doctors have no linked account and stay listed.
  */
 const onlyBookableDoctors = async (doctors) => {
-  const liveIds = await activeUserIdSet(doctors.map((doctor) => doctor.userId));
-  return doctors.filter((doctor) => !doctor.userId || liveIds.has(String(doctor.userId)));
+  const ids = [
+    ...new Set(
+      doctors
+        .map((d) => d.userId)
+        .filter(Boolean)
+        .map(String),
+    ),
+  ];
+  const ready = ids.length
+    ? await User.find({
+        _id: { $in: ids },
+        ...ACTIVE_ACCOUNT_FILTER,
+        mustSetPassword: { $ne: true },
+      })
+        .select('_id')
+        .lean()
+    : [];
+  const readyIds = new Set(ready.map((u) => String(u._id)));
+  return doctors.filter(
+    (doctor) => !doctor.deletedAt && (!doctor.userId || readyIds.has(String(doctor.userId))),
+  );
 };
 
 const findBookableDoctor = async (filter) => {
@@ -40,14 +69,29 @@ const findBookableDoctor = async (filter) => {
   return bookable || null;
 };
 
-const doctorGreeting = (doctor) =>
-  `Hello! I am ${doctor.name}. Your confidential dashboard log has been successfully shared. How can I guide your wellness milestones today?`;
+/** Start times (ms) of this doctor's slots that are taken: paid sessions, and
+ * unpaid checkouts still inside their payment hold. */
+const takenSlotStarts = async (doctorId, { excludeId } = {}) => {
+  const holdSince = new Date(Date.now() - PAYMENT_HOLD_MINUTES * 60000);
+  const rows = await Consultation.find({
+    doctorId,
+    ...(excludeId ? { _id: { $ne: excludeId } } : {}),
+    scheduledFor: { $gte: new Date(Date.now() - 60 * 60000) },
+    $or: [
+      { status: { $in: ['paid', 'active', 'completed'] } },
+      { status: 'pending', createdAt: { $gte: holdSince } },
+    ],
+  })
+    .select('scheduledFor')
+    .lean();
+  return new Set(rows.map((r) => new Date(r.scheduledFor).getTime()));
+};
 
 /** GET /api/consultation/doctors?search= — List all available doctors */
 export const getDoctors = async (req, res, next) => {
   try {
     const { search } = req.query;
-    const filter = { isAvailable: true };
+    const filter = { isAvailable: true, deletedAt: null };
 
     if (search) {
       filter.$or = [
@@ -56,7 +100,12 @@ export const getDoctors = async (req, res, next) => {
       ];
     }
 
-    const doctors = await onlyBookableDoctors(await Doctor.find(filter).sort({ rating: -1 }));
+    // Rated doctors by their real average first, then everyone not yet rated.
+    const doctors = (await onlyBookableDoctors(await Doctor.find(filter))).sort((a, b) => {
+      const ar = a.ratingCount > 0 ? a.rating : 0;
+      const br = b.ratingCount > 0 ? b.rating : 0;
+      return br - ar || (b.totalConsultations || 0) - (a.totalConsultations || 0);
+    });
 
     logger.info('doctors_listed', {
       action: 'doctors_listed',
@@ -65,7 +114,7 @@ export const getDoctors = async (req, res, next) => {
       count: doctors.length,
     });
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Doctors fetched', doctors);
+    return sendResponse(res, HTTP_STATUS.OK, 'Doctors fetched', doctors.map(publicDoctor));
   } catch (error) {
     next(error);
   }
@@ -73,8 +122,13 @@ export const getDoctors = async (req, res, next) => {
 
 const DAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-/** GET /api/consultation/doctors/:id/availability — Public-facing weekly
- * schedule for a doctor, grouped by day, so the app can render bookable slots. */
+/**
+ * GET /api/consultation/doctors/:id/availability — the doctor's weekly hours
+ * (`days`, wall-clock in `timezone`) and the bookable `slots` for the next
+ * BOOKING_WINDOW_DAYS: `[{ start, end }]`, UTC ISO 8601, already free of past
+ * and taken times. Clients show slots in the viewer's own time zone and book
+ * one by sending its `start` as `scheduledFor`.
+ */
 export const getDoctorAvailability = async (req, res, next) => {
   try {
     if (!isValidObjectId(req.params.id)) {
@@ -84,42 +138,70 @@ export const getDoctorAvailability = async (req, res, next) => {
     const doctor = await findBookableDoctor({ _id: req.params.id });
     if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor not found');
 
-    const slots = await DoctorAvailability.find({
+    const ranges = await DoctorAvailability.find({
       doctorId: doctor._id,
       isAvailable: true,
-    }).sort({ dayOfWeek: 1, startTime: 1 });
+    })
+      .sort({ dayOfWeek: 1, startTime: 1 })
+      .lean();
 
-    // Group into { dayOfWeek, day, slots: [{startTime,endTime,maxSlots}] }
     const byDay = new Map();
-    for (const slot of slots) {
-      if (!byDay.has(slot.dayOfWeek)) {
-        byDay.set(slot.dayOfWeek, {
-          dayOfWeek: slot.dayOfWeek,
-          day: DAY_LABELS[slot.dayOfWeek],
+    for (const range of ranges) {
+      if (!byDay.has(range.dayOfWeek)) {
+        byDay.set(range.dayOfWeek, {
+          dayOfWeek: range.dayOfWeek,
+          day: DAY_LABELS[range.dayOfWeek],
           slots: [],
         });
       }
-      byDay.get(slot.dayOfWeek).slots.push({
-        startTime: slot.startTime,
-        endTime: slot.endTime,
-        maxSlots: slot.maxSlots,
-        timezone: slot.timezone,
+      byDay.get(range.dayOfWeek).slots.push({
+        startTime: range.startTime,
+        endTime: range.endTime,
+        maxSlots: range.maxSlots,
+        timezone: range.timezone || DEFAULT_TIME_ZONE,
       });
     }
+
+    const slots = doctor.isAvailable
+      ? buildSlots(ranges, { takenStarts: await takenSlotStarts(doctor._id) }).map((slot) => ({
+          start: slot.start.toISOString(),
+          end: slot.end.toISOString(),
+        }))
+      : [];
 
     return sendResponse(res, HTTP_STATUS.OK, 'Availability fetched', {
       doctorId: doctor._id,
       isAvailable: doctor.isAvailable,
+      timezone: ranges[0]?.timezone || DEFAULT_TIME_ZONE,
+      windowDays: BOOKING_WINDOW_DAYS,
       days: Array.from(byDay.values()),
+      slots,
     });
   } catch (error) {
     next(error);
   }
 };
 
+/** Re-check a pending order with Cashfree and book it if it was paid. */
+const repairPendingOrder = async (consultation) => {
+  if (!consultation?.cashfreeOrderId) return { outcome: 'none' };
+  try {
+    const cfOrder = await getOrderStatus(consultation.cashfreeOrderId);
+    if (cfOrder.order_status === 'PAID') return finalizePaidConsultation(consultation);
+    return { outcome: cfOrder.order_status === 'ACTIVE' ? 'open' : 'closed', cfOrder };
+  } catch (error) {
+    logger.warn('consultation_order_recheck_failed', {
+      action: 'consultation_order_recheck_failed',
+      consultationId: String(consultation._id),
+      error: error.message,
+    });
+    return { outcome: 'unknown' };
+  }
+};
+
 /** POST /api/consultation/order — Create a Cashfree order + a pending
- * Consultation for it. No session access is granted until /verify confirms
- * the payment actually went through. */
+ * Consultation for one bookable slot (`scheduledFor`, UTC ISO 8601). No
+ * session access is granted until /verify confirms the payment went through. */
 export const createConsultationOrder = async (req, res, next) => {
   try {
     if (!isPaymentConfigured()) {
@@ -130,15 +212,30 @@ export const createConsultationOrder = async (req, res, next) => {
       );
     }
 
-    const { doctorId } = req.body;
+    const { doctorId, scheduledFor } = req.body;
     if (!isValidObjectId(doctorId)) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Valid doctorId is required');
+    }
+    const when = scheduledFor ? new Date(scheduledFor) : null;
+    if (!when || Number.isNaN(when.getTime())) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Pick a date and time for your consultation');
     }
 
     const doctor = await findBookableDoctor({ _id: doctorId, isAvailable: true });
     if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor not found');
+    if (doctor.userId && String(doctor.userId) === String(req.userId)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, "You can't book a consultation with yourself");
+    }
+    const price = Number(doctor.pricePerSession);
+    if (!Number.isFinite(price) || price < 1) {
+      return sendError(
+        res,
+        HTTP_STATUS.SERVICE_UNAVAILABLE,
+        "This doctor hasn't set a consultation fee yet. Please try another doctor.",
+      );
+    }
 
-    // Check if already booked (not cancelled)
+    // One open session per doctor: a paid/active one is opened instead.
     const existing = await Consultation.findOne({
       userId: req.userId,
       doctorId,
@@ -146,17 +243,82 @@ export const createConsultationOrder = async (req, res, next) => {
     }).populate('doctorId');
     if (existing) {
       return sendResponse(res, HTTP_STATUS.OK, 'Consultation already booked', {
-        consultation: existing,
+        consultation: publicConsultation(existing),
       });
+    }
+
+    // An earlier checkout for this doctor: it may have been paid (the app lost
+    // the verify call), or still be open for this same slot (reuse it rather
+    // than opening a second order and charging twice).
+    const earlier = await Consultation.find({
+      userId: req.userId,
+      doctorId,
+      status: 'pending',
+      cashfreeOrderId: { $exists: true },
+    })
+      .select('+cashfreePaymentSessionId')
+      .sort({ createdAt: -1 })
+      .limit(3);
+    for (const pending of earlier) {
+      const result = await repairPendingOrder(pending);
+      if (result.outcome === 'booked' || result.outcome === 'already') {
+        const booked = await Consultation.findById(pending._id).populate('doctorId');
+        if (booked && ['paid', 'active'].includes(booked.status)) {
+          return sendResponse(res, HTTP_STATUS.OK, 'Consultation already booked', {
+            consultation: publicConsultation(booked),
+          });
+        }
+      }
+      const sameSlot = pending.scheduledFor && pending.scheduledFor.getTime() === when.getTime();
+      const fresh = Date.now() - pending.createdAt.getTime() < PAYMENT_HOLD_MINUTES * 60000;
+      if (result.outcome === 'open' && sameSlot && fresh && pending.cashfreePaymentSessionId) {
+        return sendResponse(res, HTTP_STATUS.CREATED, 'Payment order created', {
+          consultationId: pending._id,
+          orderId: pending.cashfreeOrderId,
+          amount: pending.amountPaid,
+          currency: 'INR',
+          scheduledFor: pending.scheduledFor,
+          paymentSessionId: pending.cashfreePaymentSessionId,
+          cashfreeMode: cashfreeMode(),
+        });
+      }
+      if (result.outcome === 'closed' || result.outcome === 'open') {
+        // Abandoned: release its slot hold.
+        await Consultation.updateOne(
+          { _id: pending._id, status: 'pending' },
+          {
+            status: 'cancelled',
+            cancelledBy: 'system',
+            cancelReason: 'Checkout abandoned',
+            completedAt: new Date(),
+          },
+        );
+      }
+    }
+
+    const ranges = await DoctorAvailability.find({
+      doctorId: doctor._id,
+      isAvailable: true,
+    }).lean();
+    const slot = findSlot(ranges, when, { takenStarts: await takenSlotStarts(doctor._id) });
+    if (!slot) {
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        'That time is no longer available. Please pick another slot.',
+      );
     }
 
     const consultation = await Consultation.create({
       userId: req.userId,
       doctorId,
-      amountPaid: doctor.pricePerSession,
-      currency: doctor.currency,
+      amountPaid: price,
+      currency: 'INR',
       status: 'pending',
       paymentStatus: 'unpaid',
+      scheduledFor: slot.start,
+      slotEndsAt: slot.end,
+      slotTimezone: slot.timezone,
     });
 
     const user = await User.findById(req.userId);
@@ -170,22 +332,20 @@ export const createConsultationOrder = async (req, res, next) => {
     try {
       order = await createOrder({
         orderId: cashfreeOrderId,
-        // Doctor.pricePerSession is already a whole-unit amount (e.g. rupees) —
-        // unlike Razorpay, Cashfree's order_amount wants the whole-unit value,
-        // not the currency's smallest unit.
-        amount: doctor.pricePerSession,
-        currency: doctor.currency,
+        // Whole rupees: Cashfree's order_amount is the whole-unit value.
+        amount: price,
+        currency: 'INR',
         customer: { id: req.userId, name: user?.name, email: user?.email, phone: user?.phone },
         notes: {
           userId: String(req.userId),
           doctorId: String(doctorId),
           consultationId: String(consultation._id),
+          scheduledFor: slot.start.toISOString(),
         },
       });
     } catch (error) {
       // Cashfree down/timeout after the Consultation was already persisted —
-      // clean it up rather than leaving a permanently 'pending' row with no
-      // cashfreeOrderId (same fix as subscriptionController.createSubscriptionOrder).
+      // clean it up rather than leaving a 'pending' row holding the slot.
       await Consultation.deleteOne({ _id: consultation._id });
       logger.error('consultation_order_create_failed', {
         action: 'consultation_order_create_failed',
@@ -201,6 +361,7 @@ export const createConsultationOrder = async (req, res, next) => {
     }
 
     consultation.cashfreeOrderId = order.order_id;
+    consultation.cashfreePaymentSessionId = order.payment_session_id;
     await consultation.save();
 
     logger.info('consultation_order_created', {
@@ -209,14 +370,16 @@ export const createConsultationOrder = async (req, res, next) => {
       doctorId,
       consultationId: consultation._id,
       orderId: order.order_id,
-      amount: doctor.pricePerSession,
+      amount: price,
+      scheduledFor: slot.start.toISOString(),
     });
 
     return sendResponse(res, HTTP_STATUS.CREATED, 'Payment order created', {
       consultationId: consultation._id,
       orderId: order.order_id,
-      amount: doctor.pricePerSession,
-      currency: doctor.currency,
+      amount: price,
+      currency: 'INR',
+      scheduledFor: slot.start,
       paymentSessionId: order.payment_session_id,
       cashfreeMode: cashfreeMode(),
     });
@@ -227,8 +390,8 @@ export const createConsultationOrder = async (req, res, next) => {
 };
 
 /** POST /api/consultation/verify — Verify a completed Cashfree checkout and,
- * only once Cashfree confirms the order was actually paid, activate the
- * Consultation session. */
+ * only once Cashfree confirms the order was actually paid, book the session.
+ * Safe to call again: the app retries it when the first call fails. */
 export const verifyConsultationPayment = async (req, res, next) => {
   try {
     const { consultationId, orderId } = req.body;
@@ -244,27 +407,33 @@ export const verifyConsultationPayment = async (req, res, next) => {
     });
     if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation order not found');
 
-    if (consultation.status === 'paid' || consultation.status === 'active') {
+    if (['paid', 'active', 'completed'].includes(consultation.status)) {
       await consultation.populate('doctorId');
-      return sendResponse(res, HTTP_STATUS.OK, 'Consultation already booked', consultation);
+      return sendResponse(
+        res,
+        HTTP_STATUS.OK,
+        'Consultation already booked',
+        publicConsultation(consultation),
+      );
     }
 
     const cfOrder = await getOrderStatus(orderId);
 
     // 'ACTIVE' means the order is still open — e.g. a UPI collect request
-    // the user hasn't approved in their UPI app yet, which can take up to a
-    // minute. That's "not paid yet", not a failure: a UPI-collect flow
-    // polls this endpoint every few seconds while waiting, and marking the
-    // consultation 'failed' on the first poll would kill a payment that's
-    // still legitimately in flight. Only a terminal Cashfree status
-    // ('EXPIRED'/'TERMINATED'/'TERMINATION_REQUESTED') is a real failure.
+    // the user hasn't approved yet. That's "not paid yet", not a failure.
     if (cfOrder.order_status === 'ACTIVE') {
       return sendResponse(res, HTTP_STATUS.ACCEPTED, 'Payment still pending', { pending: true });
     }
 
     if (cfOrder.order_status !== 'PAID') {
-      consultation.paymentStatus = 'failed';
-      await consultation.save();
+      if (consultation.status === 'pending') {
+        consultation.paymentStatus = 'failed';
+        consultation.status = 'cancelled';
+        consultation.cancelledBy = 'system';
+        consultation.cancelReason = 'Payment did not complete';
+        consultation.completedAt = new Date();
+        await consultation.save();
+      }
       logger.error('consultation_payment_verify_failed', {
         action: 'consultation_payment_verify_failed',
         userId: req.userId,
@@ -274,74 +443,106 @@ export const verifyConsultationPayment = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Payment verification failed');
     }
 
-    const doctor = await Doctor.findById(consultation.doctorId);
-
-    // Atomically claim the pending → paid transition. Only the first of any
-    // concurrent /verify calls matches (status not yet paid/active), so the
-    // one-time side effects below (wallet credit, doctor counter, greeting)
-    // can never run twice for the same consultation.
-    const claimed = await Consultation.findOneAndUpdate(
-      { _id: consultation._id, status: { $nin: ['paid', 'active', 'completed'] } },
-      {
-        $set: {
-          status: 'paid',
-          paymentStatus: 'paid',
-          startedAt: new Date(),
-          // Deterministic Jitsi room so patient and doctor land in the same call
-          // (mirrors meetingLinkFor() in doctorController).
-          meetingLink: `https://meet.jit.si/PeriodBuddy-Consult-${consultation._id}`,
-          messages: [{ sender: 'doctor', text: doctorGreeting(doctor) }],
-        },
-      },
-      { new: true },
-    );
-
-    if (!claimed) {
-      // A concurrent request already booked it — return the booked state
-      // without re-running side effects.
-      await consultation.populate('doctorId');
-      return sendResponse(res, HTTP_STATUS.OK, 'Consultation already booked', consultation);
+    const { consultation: result, outcome } = await finalizePaidConsultation(consultation);
+    await result.populate('doctorId');
+    if (outcome === 'refund') {
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        result.cancelReason
+          ? `${result.cancelReason}. Your payment will be refunded.`
+          : 'This booking was cancelled before your payment completed. It will be refunded.',
+      );
     }
-
-    await ConsultationMessage.create({
-      consultationId: consultation._id,
-      sender: 'doctor',
-      text: doctorGreeting(doctor),
-    });
-
-    // Award tokens for booking
-    await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: 10 } });
-    // Increment doctor consultation count
-    await Doctor.findByIdAndUpdate(consultation.doctorId, { $inc: { totalConsultations: 1 } });
-    // The doctor's earning (net of commission), on hold until the session is completed.
-    await safeEarningHook('paid', () => recordConsultationEarning(claimed));
-
-    logger.info('consultation_booked', {
-      action: 'consultation_booked',
-      userId: req.userId,
-      doctorId: consultation.doctorId,
-      doctorName: doctor.name,
-      amount: consultation.amountPaid,
-      orderId,
-    });
-
-    await claimed.populate('doctorId');
-
-    return sendResponse(res, HTTP_STATUS.CREATED, 'Consultation booked successfully', claimed);
+    return sendResponse(
+      res,
+      outcome === 'booked' ? HTTP_STATUS.CREATED : HTTP_STATUS.OK,
+      outcome === 'booked' ? 'Consultation booked successfully' : 'Consultation already booked',
+      publicConsultation(result),
+    );
   } catch (error) {
     logger.error('consultation_verify_error', { userId: req.userId, error: error.message });
     next(error);
   }
 };
 
-/** GET /api/consultation/my — Get user's consultations */
+/**
+ * POST /api/consultation/webhook/cashfree — Cashfree payment webhook (public,
+ * raw body). A consultation order paid while the app was closed or lost the
+ * verify call gets booked here. The signature is checked, and the order is
+ * still re-read from Cashfree before anything is booked.
+ */
+export const cashfreeConsultationWebhook = async (req, res) => {
+  try {
+    const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body || '');
+    const signature = req.get('x-webhook-signature');
+    const timestamp = req.get('x-webhook-timestamp');
+    const secret = process.env.CASHFREE_SECRET_KEY;
+    if (!signature || !timestamp || !secret) return res.status(400).json({ ok: false });
+    const expected = crypto
+      .createHmac('sha256', secret)
+      .update(timestamp + raw)
+      .digest('base64');
+    const valid =
+      expected.length === signature.length &&
+      crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+    if (!valid) {
+      logger.warn('consultation_webhook_bad_signature', {
+        action: 'consultation_webhook_bad_signature',
+      });
+      return res.status(401).json({ ok: false });
+    }
+
+    const payload = JSON.parse(raw);
+    const orderId = payload?.data?.order?.order_id;
+    if (typeof orderId !== 'string' || !orderId.startsWith('consult_')) {
+      return res.status(200).json({ ok: true, ignored: true });
+    }
+    const consultation = await Consultation.findOne({ cashfreeOrderId: orderId });
+    if (!consultation) return res.status(200).json({ ok: true, ignored: true });
+
+    const result = await repairPendingOrder(consultation);
+    logger.info('consultation_webhook_processed', {
+      action: 'consultation_webhook_processed',
+      consultationId: String(consultation._id),
+      outcome: result.outcome,
+    });
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    logger.error('consultation_webhook_error', {
+      action: 'consultation_webhook_error',
+      error: error.message,
+    });
+    // 500 so Cashfree retries.
+    return res.status(500).json({ ok: false });
+  }
+};
+
+/** GET /api/consultation/my — the user's consultations (newest first). Recent
+ * unpaid checkouts are re-checked with Cashfree first, so a payment whose
+ * confirmation was lost still turns into a booked session. */
 export const getMyConsultations = async (req, res, next) => {
   try {
+    const recentPending = await Consultation.find({
+      userId: req.userId,
+      status: 'pending',
+      cashfreeOrderId: { $exists: true },
+      createdAt: { $gte: new Date(Date.now() - 2 * 60 * 60000) },
+    })
+      .sort({ createdAt: -1 })
+      .limit(3);
+    for (const pending of recentPending) await repairPendingOrder(pending);
+
     const consultations = await Consultation.find({ userId: req.userId })
       .populate('doctorId')
       .sort({ createdAt: -1 });
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Consultations fetched', consultations);
+    return sendResponse(
+      res,
+      HTTP_STATUS.OK,
+      'Consultations fetched',
+      consultations.map(publicConsultation),
+    );
   } catch (error) {
     next(error);
   }
@@ -408,7 +609,12 @@ export const rateConsultation = async (req, res, next) => {
     });
 
     await rated.populate('doctorId');
-    return sendResponse(res, HTTP_STATUS.OK, 'Thanks for rating your session', rated);
+    return sendResponse(
+      res,
+      HTTP_STATUS.OK,
+      'Thanks for rating your session',
+      publicConsultation(rated),
+    );
   } catch (error) {
     next(error);
   }
@@ -421,7 +627,10 @@ export const getMessages = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid consultation id');
     }
 
-    const consultation = await Consultation.findOne({ _id: req.params.id, userId: req.userId });
+    const consultation = await Consultation.findOne({
+      _id: req.params.id,
+      userId: req.userId,
+    }).select('+messages');
     if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation not found');
 
     // Cap to the most recent 300 messages (newest-first, then restored to
@@ -432,6 +641,8 @@ export const getMessages = async (req, res, next) => {
         .limit(300)
     ).reverse();
 
+    // Sessions from before ConsultationMessage, not yet moved by
+    // scripts/migrateConsultationMessages.js.
     if (messages.length === 0 && consultation.messages && consultation.messages.length > 0) {
       return sendResponse(res, HTTP_STATUS.OK, 'Messages fetched', consultation.messages);
     }
@@ -457,17 +668,14 @@ export const sendMessage = async (req, res, next) => {
     const consultation = await Consultation.findOne({ _id: req.params.id, userId: req.userId });
     if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation not found');
     if (consultation.status !== 'paid' && consultation.status !== 'active') {
-      return sendError(res, HTTP_STATUS.FORBIDDEN, 'Consultation session is not active');
+      return sendError(res, HTTP_STATUS.FORBIDDEN, 'This consultation has ended');
     }
 
-    // Update status to active if first user message
-    if (consultation.status === 'paid') consultation.status = 'active';
+    // First message moves paid → active. Conditional, so it can't undo a
+    // cancel or completion that landed in between.
+    await Consultation.updateOne({ _id: consultation._id, status: 'paid' }, { status: 'active' });
 
     const userText = text.trim();
-    consultation.messages.push({ sender: 'user', text: userText });
-
-    await consultation.save();
-
     await ConsultationMessage.create({
       consultationId: consultation._id,
       sender: 'user',
@@ -528,27 +736,62 @@ export const completeConsultation = async (req, res, next) => {
   }
 };
 
-/** PATCH /api/consultation/:id/cancel — Cancel a consultation before completion */
+/** PATCH /api/consultation/:id/cancel — the patient cancels before the
+ * session starts. A paid booking is queued for a refund. */
 export const cancelConsultation = async (req, res, next) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid consultation id');
     }
+    const current = await Consultation.findOne({ _id: req.params.id, userId: req.userId });
+    if (!current) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation not found');
+    if (current.status === 'paid' && current.scheduledFor && current.scheduledFor <= new Date()) {
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        'This session has already started. Please talk to your doctor in the chat.',
+      );
+    }
 
-    const consultation = await Consultation.findOneAndUpdate(
-      { _id: req.params.id, userId: req.userId, status: { $in: ['pending', 'paid'] } },
-      { status: 'cancelled', completedAt: new Date() },
-      { new: true, runValidators: true },
+    const consultation = await cancelConsultationRecord(
+      { _id: current._id, userId: req.userId },
+      { by: 'patient', reason: req.body?.reason, fromStatuses: ['pending', 'paid'] },
     );
-
-    if (!consultation)
+    if (!consultation) {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Cancellable consultation not found');
-
-    await safeEarningHook('cancelled', () =>
-      reverseConsultationEarnings(consultation._id, 'Cancelled by the patient'),
+    }
+    await consultation.populate('doctorId');
+    return sendResponse(
+      res,
+      HTTP_STATUS.OK,
+      'Consultation cancelled',
+      publicConsultation(consultation),
     );
+  } catch (error) {
+    next(error);
+  }
+};
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Consultation cancelled', consultation);
+/**
+ * POST /api/consultation/:id/call/decline — the patient declines a ringing
+ * call: the doctor's call screen ends ("call_end" in the room) and is told why.
+ */
+export const declineCall = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid consultation id');
+    }
+    const consultation = await Consultation.findOne({ _id: req.params.id, userId: req.userId })
+      .select('doctorId')
+      .populate('doctorId', 'userId');
+    if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation not found');
+    const room = `consultation_${consultation._id}`;
+    sendRawToRoom(room, { type: 'call_end', room, reason: 'declined' });
+    notifyUserLive(consultation.doctorId?.userId, {
+      event: 'call_declined',
+      consultationId: String(consultation._id),
+    });
+    return sendResponse(res, HTTP_STATUS.OK, 'Call declined', { declined: true });
   } catch (error) {
     next(error);
   }

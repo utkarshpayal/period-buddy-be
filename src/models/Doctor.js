@@ -20,7 +20,8 @@ const doctorSchema = new mongoose.Schema(
     rating: { type: Number, default: 4.5, min: 1, max: 5 },
     ratingCount: { type: Number, default: 0 },
     pricePerSession: { type: Number, required: true },
-    currency: { type: String, default: 'USD' },
+    // INR only for now; controllers force it (wallet totals are INR).
+    currency: { type: String, default: 'INR' },
     /** @deprecated replaced by avatarUrl; kept for app builds that still read it. */
     avatarEmoji: { type: String, default: '👩‍⚕️' },
     /** Profile photo shown to patients (public S3 URL under doctors/<id>/avatar). */

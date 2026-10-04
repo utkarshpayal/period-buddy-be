@@ -62,6 +62,7 @@ import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
 import adminSubscriptionRoutes from './src/routes/adminSubscriptionRoutes.js';
 import clinicalFinanceRoutes from './src/routes/clinicalFinanceRoutes.js';
 import { cashfreePayoutWebhook } from './src/controllers/payoutWebhookController.js';
+import { cashfreeConsultationWebhook } from './src/controllers/consultationController.js';
 import { startPayoutRunner, stopPayoutRunner } from './src/utils/payoutRunner.js';
 import { startAccountPurgeRunner, stopAccountPurgeRunner } from './src/utils/accountPurgeRunner.js';
 import { startRetentionRunner, stopRetentionRunner } from './src/utils/retentionRunner.js';
@@ -136,6 +137,14 @@ app.post(
   '/api/payouts/webhook/cashfree',
   express.raw({ type: '*/*', limit: '1mb' }),
   cashfreePayoutWebhook,
+);
+
+// Cashfree payment webhook for consultation orders: raw body for the
+// signature, so also before express.json().
+app.post(
+  '/api/consultation/webhook/cashfree',
+  express.raw({ type: '*/*', limit: '1mb' }),
+  cashfreeConsultationWebhook,
 );
 
 app.use(express.json({ limit: '10mb' }));

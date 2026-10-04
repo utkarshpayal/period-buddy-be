@@ -3,6 +3,7 @@ import ClinicalPayoutSettings from '../models/ClinicalPayoutSettings.js';
 import Doctor from '../models/Doctor.js';
 import DoctorEarning from '../models/DoctorEarning.js';
 import DoctorPayout from '../models/DoctorPayout.js';
+import Consultation from '../models/Consultation.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import {
@@ -572,5 +573,102 @@ export const getPayoutMethodById = async (req, res, next) => {
     return sendResponse(res, HTTP_STATUS.OK, 'Payout details', details);
   } catch (error) {
     handle(res, next, error);
+  }
+};
+
+/* ---------------------------------------------------------------------------
+ * Consultation refunds
+ * ------------------------------------------------------------------------- */
+
+/**
+ * GET /api/admin/clinical-finance/refunds?status=required|processed — paid
+ * consultations that were cancelled (by the patient, the doctor or the
+ * system) and are owed, or were given, a refund. Refunds are made by hand in
+ * the Cashfree dashboard for now, then marked here.
+ */
+export const listRefunds = async (req, res, next) => {
+  try {
+    const { page, limit, skip } = getPagination(req.query, { limit: 25, maxLimit: 100 });
+    const status = req.query.status === 'processed' ? 'processed' : 'required';
+    const filter = { refundStatus: status };
+    const [rows, total] = await Promise.all([
+      Consultation.find(filter)
+        .sort({ completedAt: -1, _id: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('doctorId', 'name')
+        .populate('userId', 'firstName lastName email phone')
+        .lean(),
+      Consultation.countDocuments(filter),
+    ]);
+    return sendResponse(res, HTTP_STATUS.OK, 'Refunds fetched', {
+      refunds: rows.map((c) => ({
+        _id: c._id,
+        amount: c.amountPaid,
+        currency: c.currency || 'INR',
+        cashfreeOrderId: c.cashfreeOrderId,
+        scheduledFor: c.scheduledFor,
+        cancelledAt: c.completedAt,
+        cancelledBy: c.cancelledBy || null,
+        cancelReason: c.cancelReason || null,
+        refundStatus: c.refundStatus,
+        refundedAt: c.refundedAt || null,
+        refundReference: c.refundReference || null,
+        doctor: c.doctorId ? { _id: c.doctorId._id, name: c.doctorId.name } : null,
+        patient: c.userId
+          ? {
+              _id: c.userId._id,
+              name: [c.userId.firstName, c.userId.lastName].filter(Boolean).join(' '),
+              email: c.userId.email,
+              phone: c.userId.phone,
+            }
+          : null,
+      })),
+      pagination: buildPagination({ page, limit, total }),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/admin/clinical-finance/refunds/:id/processed — `{ reference? }`:
+ * the refund was made (e.g. Cashfree refund id). Audit-logged. */
+export const markRefundProcessed = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid consultation id');
+    }
+    const reference =
+      typeof req.body?.reference === 'string' ? req.body.reference.trim().slice(0, 120) : '';
+    const consultation = await Consultation.findOneAndUpdate(
+      { _id: req.params.id, refundStatus: 'required' },
+      {
+        $set: {
+          refundStatus: 'processed',
+          paymentStatus: 'refunded',
+          refundedAt: new Date(),
+          ...(reference ? { refundReference: reference } : {}),
+        },
+      },
+      { new: true },
+    );
+    if (!consultation) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'No pending refund for this consultation');
+    }
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.CONSULTATION_REFUNDED,
+      resourceType: 'consultation',
+      resourceId: consultation._id,
+      metadata: { amount: consultation.amountPaid, reference: reference || undefined },
+    });
+    return sendResponse(res, HTTP_STATUS.OK, 'Refund marked as processed', {
+      _id: consultation._id,
+      refundStatus: consultation.refundStatus,
+      refundedAt: consultation.refundedAt,
+      refundReference: consultation.refundReference || null,
+    });
+  } catch (error) {
+    next(error);
   }
 };

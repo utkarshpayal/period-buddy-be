@@ -7,6 +7,7 @@ import Doctor from '../models/Doctor.js';
 import BuddyMatch from '../models/BuddyMatch.js';
 import Partner from '../models/Partner.js';
 import User from '../models/User.js';
+import Notification from '../models/Notification.js';
 
 // Global map to track active rooms and client connections
 // Room Name -> Set of WebSocket clients
@@ -26,6 +27,28 @@ const clientMetadata = new Map();
  */
 const isLiveAccount = async (userId) =>
   Boolean(await User.exists({ _id: userId, isActive: true, deletedAt: null }));
+
+const LIVE_CONSULTATION_STATUSES = ['paid', 'active'];
+
+/** Patient and doctor-login ids plus status of a consultation, or null. */
+const consultationParties = async (consultationId) => {
+  if (!/^[0-9a-f]{24}$/i.test(String(consultationId))) return null;
+  const consultation = await Consultation.findById(consultationId)
+    .select('userId doctorId status')
+    .lean();
+  if (!consultation) return null;
+  const doctor = await Doctor.findById(consultation.doctorId)
+    .select('userId name avatarUrl')
+    .lean();
+  return {
+    consultationId: String(consultation._id),
+    status: consultation.status,
+    patientId: String(consultation.userId),
+    doctorUserId: doctor?.userId ? String(doctor.userId) : null,
+    doctorName: doctor?.name || 'Your doctor',
+    doctorAvatarUrl: doctor?.avatarUrl || null,
+  };
+};
 
 const isAuthorizedForRoom = async (userId, room) => {
   if (!userId) return false;
@@ -47,12 +70,11 @@ const isAuthorizedForRoom = async (userId, room) => {
   if (room === 'community') return true;
 
   if (room.startsWith('consultation_')) {
-    const consultationId = room.slice('consultation_'.length);
-    const consultation = await Consultation.findById(consultationId);
-    if (!consultation) return false;
-    if (String(consultation.userId) === String(userId)) return true;
-    const doctor = await Doctor.findById(consultation.doctorId);
-    return Boolean(doctor && String(doctor.userId) === String(userId));
+    // Live chat and calls only while the session is paid/active: not for an
+    // unpaid checkout, nor after it was completed or cancelled.
+    const parties = await consultationParties(room.slice('consultation_'.length));
+    if (!parties || !LIVE_CONSULTATION_STATUSES.includes(parties.status)) return false;
+    return parties.patientId === String(userId) || parties.doctorUserId === String(userId);
   }
 
   if (room.startsWith('buddy_')) {
@@ -75,6 +97,95 @@ const isAuthorizedForRoom = async (userId, room) => {
   }
 
   return false;
+};
+
+/** User ids with a socket currently in `room`. */
+const userIdsInRoom = (room) =>
+  new Set([...(rooms.get(room) || [])].map((client) => String(clientMetadata.get(client)?.userId)));
+
+// Last ring per consultation, so a reconnecting caller doesn't spam pushes.
+const lastRingAt = new Map();
+const RING_PUSH_GAP_MS = 30 * 1000;
+
+/**
+ * A consultation call signal from `userId`: re-check the session is still
+ * live, and ring the other side when they aren't in the room — over their
+ * personal socket (`incoming_call`, shown by the app and the clinician portal
+ * wherever they are) and, for the patient, a push notification. A caller
+ * hanging up before it's answered sends `call_cancelled` the same way.
+ * Returns false when the signal must be dropped.
+ */
+const handleConsultationCallSignal = async ({ userId, room, type }) => {
+  const parties = await consultationParties(room.slice('consultation_'.length));
+  if (!parties) return false;
+  if (type === 'call_join' && !LIVE_CONSULTATION_STATUSES.includes(parties.status)) return false;
+
+  const callerIsPatient = parties.patientId === String(userId);
+  const calleeId = callerIsPatient ? parties.doctorUserId : parties.patientId;
+  if (!calleeId) return true;
+  const calleeInRoom = userIdsInRoom(room).has(calleeId);
+
+  if (type === 'call_end') {
+    if (!calleeInRoom) {
+      broadcastToRoom(`user_${calleeId}`, {
+        event: 'call_cancelled',
+        consultationId: parties.consultationId,
+      });
+    }
+    return true;
+  }
+
+  // First call moves a paid session to active (as the REST start-call does).
+  if (parties.status === 'paid') {
+    await Consultation.updateOne(
+      { _id: parties.consultationId, status: 'paid' },
+      { status: 'active' },
+    );
+  }
+  if (calleeInRoom) return true;
+
+  let callerName = parties.doctorName;
+  let callerAvatarUrl = parties.doctorAvatarUrl;
+  if (callerIsPatient) {
+    const patient = await User.findById(userId).select('firstName lastName profilePicture').lean();
+    callerName =
+      [patient?.firstName, patient?.lastName].filter(Boolean).join(' ') || 'Your patient';
+    callerAvatarUrl = patient?.profilePicture || null;
+  }
+  broadcastToRoom(`user_${calleeId}`, {
+    event: 'incoming_call',
+    consultationId: parties.consultationId,
+    callerName,
+    callerAvatarUrl,
+    callerRole: callerIsPatient ? 'patient' : 'doctor',
+  });
+
+  // The patient may not have the app open: ring through a push too.
+  const last = lastRingAt.get(parties.consultationId) || 0;
+  if (!callerIsPatient && Date.now() - last > RING_PUSH_GAP_MS) {
+    lastRingAt.set(parties.consultationId, Date.now());
+    try {
+      await Notification.create({
+        userId: calleeId,
+        type: 'consultation_update',
+        title: `${callerName} is calling you`,
+        body: 'Tap to join your video consultation.',
+        data: { consultationId: parties.consultationId, kind: 'incoming_call' },
+        sentAt: new Date(),
+      });
+    } catch (err) {
+      logger.error('ws_ring_push_failed', {
+        consultationId: parties.consultationId,
+        error: err.message,
+      });
+    }
+  }
+  logger.info('consultation_call_ringing', {
+    action: 'consultation_call_ringing',
+    consultationId: parties.consultationId,
+    callerRole: callerIsPatient ? 'patient' : 'doctor',
+  });
+  return true;
 };
 
 /**
@@ -205,6 +316,9 @@ export const initWebSocket = (server) => {
           );
         } else if (type === 'message') {
           if (!room || !text?.trim()) return;
+          // Consultation chat goes through REST (saved, encrypted, status-checked);
+          // the server broadcasts it. Raw frames there are refused.
+          if (room.startsWith('consultation_')) return;
           // Only broadcast into a room this socket actually joined (and was
           // authorized for, at join time) — otherwise a client could skip
           // 'join' entirely and inject messages into any room by name.
@@ -235,7 +349,12 @@ export const initWebSocket = (server) => {
           // above — the room-membership check already happened at 'join'.
           if (!userId || !clientMetadata.get(ws)?.rooms.has(room)) return;
 
-          logger.info('ws_signal_relay', { userId, room, signalType: type });
+          logger.debug('ws_signal_relay', { userId, room, signalType: type });
+
+          if (room.startsWith('consultation_') && (type === 'call_join' || type === 'call_end')) {
+            const ok = await handleConsultationCallSignal({ userId, room, type });
+            if (!ok) return;
+          }
 
           if (rooms.has(room)) {
             const forwarded = JSON.stringify(parsedMessage);
@@ -317,5 +436,17 @@ export const broadcastToRoom = (room, payload) => {
       // WebSocket.OPEN
       client.send(data);
     }
+  }
+};
+
+/**
+ * Send `payload` to everyone in `room` exactly as given (no `type: 'message'`
+ * envelope), e.g. a server-made `call_end` the call screens already handle.
+ */
+export const sendRawToRoom = (room, payload) => {
+  if (!rooms.has(room)) return;
+  const data = JSON.stringify(payload);
+  for (const client of rooms.get(room)) {
+    if (client.readyState === 1) client.send(data);
   }
 };
