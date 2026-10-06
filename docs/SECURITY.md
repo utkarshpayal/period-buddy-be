@@ -47,6 +47,7 @@ Checked against the live secret (`nura/api/env`) and deploys on **2026-09-30**. 
 | `applyS3Privacy.js --apply` | ❓ Not recorded as run. |
 | Git history of all five repos | ✅ Scanned with gitleaks on 2026-09-30. All repos are private; the only real secret in history is an old Cashfree **sandbox** key in `.env.example` (removed 2026-09-25, not the live key). Revoke it in the Cashfree sandbox dashboard. |
 | Security CI | ✅ `security.yml` in all five repos (marketing site added 2026-09-30). |
+| Video calls (`JITSI_*`) | ⏳ Not deployed. Code is ready (2026-10-04); the Jitsi host, DNS and secret aren't. Jitsi is the only video path, so until they are, video calls are unavailable (join answers 503). See `infra/jitsi/README.md`. |
 
 ## Deploying this for the first time
 

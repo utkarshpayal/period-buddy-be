@@ -2,12 +2,21 @@ import express from 'express';
 import * as consultationController from '../controllers/consultationController.js';
 import { authenticate, authorize } from '../middleware/authMiddleware.js';
 import { userRoleEnum } from '../enums/enums.js';
+import * as videoCallController from '../controllers/videoCallController.js';
+import {
+  noopLimiter,
+  rateLimitEnabled,
+  videoAttendanceLimiter,
+  videoJoinLimiter,
+} from '../middleware/rateLimiters.js';
 
 const router = express.Router();
 
 // Booking and running a session is for app accounts only: a doctor or staff
 // login can't book (or rate) a session, e.g. with their own profile.
 const patient = [authenticate, authorize(userRoleEnum.USER, userRoleEnum.PARTNER)];
+const videoLimiter = rateLimitEnabled ? videoJoinLimiter : noopLimiter;
+const attendanceLimiter = rateLimitEnabled ? videoAttendanceLimiter : noopLimiter;
 
 /**
  * @route   GET /api/consultation/doctors
@@ -78,5 +87,24 @@ router.patch('/:id/cancel', ...patient, consultationController.cancelConsultatio
  * @access  Private (patient)
  */
 router.post('/:id/call/decline', ...patient, consultationController.declineCall);
+
+/**
+ * @route   POST /api/consultation/:id/video/join
+ * @desc    Short-lived token for this consultation's Jitsi room (booked patient, paid, inside the join window)
+ * @access  Private (patient)
+ */
+router.post('/:id/video/join', ...patient, videoLimiter, videoCallController.joinAsPatient);
+
+/**
+ * @route   POST /api/consultation/:id/video/attendance
+ * @desc    Informational joined/left report from the call screen ({ event }); never changes the session
+ * @access  Private (patient)
+ */
+router.post(
+  '/:id/video/attendance',
+  ...patient,
+  attendanceLimiter,
+  videoCallController.reportPatientAttendance,
+);
 
 export default router;

@@ -7,7 +7,6 @@ import Doctor from '../models/Doctor.js';
 import BuddyMatch from '../models/BuddyMatch.js';
 import Partner from '../models/Partner.js';
 import User from '../models/User.js';
-import Notification from '../models/Notification.js';
 
 // Global map to track active rooms and client connections
 // Room Name -> Set of WebSocket clients
@@ -21,7 +20,7 @@ const clientMetadata = new Map();
  * client-side (`consultation_<id>`, `buddy_<roomKey>`, `partner_<id>`), and
  * Mongo ObjectIds are guessable within a time window, so without this check
  * any authenticated client could join any room by name and read/inject into
- * a chat, WebRTC signaling session, or partner-sync feed that isn't theirs.
+ * a chat, buddy presence, or partner-sync feed that isn't theirs.
  * Any room name that doesn't match a known, ownership-checked shape is
  * denied by default.
  */
@@ -30,6 +29,9 @@ const isLiveAccount = async (userId) =>
 
 const LIVE_CONSULTATION_STATUSES = ['paid', 'active'];
 
+/** The only client-to-client frames relayed (buddy rooms). */
+const BUDDY_PRESENCE_SIGNALS = new Set(['presence_ping', 'presence_pong', 'presence_leave']);
+
 /** Patient and doctor-login ids plus status of a consultation, or null. */
 const consultationParties = async (consultationId) => {
   if (!/^[0-9a-f]{24}$/i.test(String(consultationId))) return null;
@@ -37,16 +39,11 @@ const consultationParties = async (consultationId) => {
     .select('userId doctorId status')
     .lean();
   if (!consultation) return null;
-  const doctor = await Doctor.findById(consultation.doctorId)
-    .select('userId name avatarUrl')
-    .lean();
+  const doctor = await Doctor.findById(consultation.doctorId).select('userId').lean();
   return {
-    consultationId: String(consultation._id),
     status: consultation.status,
     patientId: String(consultation.userId),
     doctorUserId: doctor?.userId ? String(doctor.userId) : null,
-    doctorName: doctor?.name || 'Your doctor',
-    doctorAvatarUrl: doctor?.avatarUrl || null,
   };
 };
 
@@ -70,8 +67,8 @@ const isAuthorizedForRoom = async (userId, room) => {
   if (room === 'community') return true;
 
   if (room.startsWith('consultation_')) {
-    // Live chat and calls only while the session is paid/active: not for an
-    // unpaid checkout, nor after it was completed or cancelled.
+    // Live chat only while the session is paid/active: not for an unpaid
+    // checkout, nor after it was completed or cancelled.
     const parties = await consultationParties(room.slice('consultation_'.length));
     if (!parties || !LIVE_CONSULTATION_STATUSES.includes(parties.status)) return false;
     return parties.patientId === String(userId) || parties.doctorUserId === String(userId);
@@ -97,95 +94,6 @@ const isAuthorizedForRoom = async (userId, room) => {
   }
 
   return false;
-};
-
-/** User ids with a socket currently in `room`. */
-const userIdsInRoom = (room) =>
-  new Set([...(rooms.get(room) || [])].map((client) => String(clientMetadata.get(client)?.userId)));
-
-// Last ring per consultation, so a reconnecting caller doesn't spam pushes.
-const lastRingAt = new Map();
-const RING_PUSH_GAP_MS = 30 * 1000;
-
-/**
- * A consultation call signal from `userId`: re-check the session is still
- * live, and ring the other side when they aren't in the room — over their
- * personal socket (`incoming_call`, shown by the app and the clinician portal
- * wherever they are) and, for the patient, a push notification. A caller
- * hanging up before it's answered sends `call_cancelled` the same way.
- * Returns false when the signal must be dropped.
- */
-const handleConsultationCallSignal = async ({ userId, room, type }) => {
-  const parties = await consultationParties(room.slice('consultation_'.length));
-  if (!parties) return false;
-  if (type === 'call_join' && !LIVE_CONSULTATION_STATUSES.includes(parties.status)) return false;
-
-  const callerIsPatient = parties.patientId === String(userId);
-  const calleeId = callerIsPatient ? parties.doctorUserId : parties.patientId;
-  if (!calleeId) return true;
-  const calleeInRoom = userIdsInRoom(room).has(calleeId);
-
-  if (type === 'call_end') {
-    if (!calleeInRoom) {
-      broadcastToRoom(`user_${calleeId}`, {
-        event: 'call_cancelled',
-        consultationId: parties.consultationId,
-      });
-    }
-    return true;
-  }
-
-  // First call moves a paid session to active (as the REST start-call does).
-  if (parties.status === 'paid') {
-    await Consultation.updateOne(
-      { _id: parties.consultationId, status: 'paid' },
-      { status: 'active' },
-    );
-  }
-  if (calleeInRoom) return true;
-
-  let callerName = parties.doctorName;
-  let callerAvatarUrl = parties.doctorAvatarUrl;
-  if (callerIsPatient) {
-    const patient = await User.findById(userId).select('firstName lastName profilePicture').lean();
-    callerName =
-      [patient?.firstName, patient?.lastName].filter(Boolean).join(' ') || 'Your patient';
-    callerAvatarUrl = patient?.profilePicture || null;
-  }
-  broadcastToRoom(`user_${calleeId}`, {
-    event: 'incoming_call',
-    consultationId: parties.consultationId,
-    callerName,
-    callerAvatarUrl,
-    callerRole: callerIsPatient ? 'patient' : 'doctor',
-  });
-
-  // The patient may not have the app open: ring through a push too.
-  const last = lastRingAt.get(parties.consultationId) || 0;
-  if (!callerIsPatient && Date.now() - last > RING_PUSH_GAP_MS) {
-    lastRingAt.set(parties.consultationId, Date.now());
-    try {
-      await Notification.create({
-        userId: calleeId,
-        type: 'consultation_update',
-        title: `${callerName} is calling you`,
-        body: 'Tap to join your video consultation.',
-        data: { consultationId: parties.consultationId, kind: 'incoming_call' },
-        sentAt: new Date(),
-      });
-    } catch (err) {
-      logger.error('ws_ring_push_failed', {
-        consultationId: parties.consultationId,
-        error: err.message,
-      });
-    }
-  }
-  logger.info('consultation_call_ringing', {
-    action: 'consultation_call_ringing',
-    consultationId: parties.consultationId,
-    callerRole: callerIsPatient ? 'patient' : 'doctor',
-  });
-  return true;
 };
 
 /**
@@ -333,28 +241,16 @@ export const initWebSocket = (server) => {
             sentAt: new Date().toISOString(),
             userId,
           });
-        } else if (
-          room &&
-          (room.startsWith('buddy_') || room.startsWith('consultation_')) &&
-          type
-        ) {
-          // Video-call / presence signaling (presence_ping/pong/leave,
-          // call_request/accept/decline/end, webrtc_offer/answer/ice_candidate).
-          // Used both by anonymous buddy pairings (buddy_<roomKey>) and by
-          // doctor<->patient consultations (consultation_<id>) — the clinician
-          // portal and the patient app join the same consultation room and speak
-          // this same WebRTC signaling protocol. It's a plain shared-room
-          // broadcast; we skip the sender itself to avoid it reacting to its own signal.
+        } else if (room && room.startsWith('buddy_') && BUDDY_PRESENCE_SIGNALS.has(type)) {
+          // Buddy online/offline presence between the two members of a pairing.
+          // A plain shared-room broadcast; we skip the sender itself. Nothing
+          // else is relayed: every video call (buddy and consultation) runs on
+          // the self-hosted Jitsi server (controllers/videoCallController.js).
           // Same "must have actually joined" guard as the 'message' branch
           // above — the room-membership check already happened at 'join'.
           if (!userId || !clientMetadata.get(ws)?.rooms.has(room)) return;
 
           logger.debug('ws_signal_relay', { userId, room, signalType: type });
-
-          if (room.startsWith('consultation_') && (type === 'call_join' || type === 'call_end')) {
-            const ok = await handleConsultationCallSignal({ userId, room, type });
-            if (!ok) return;
-          }
 
           if (rooms.has(room)) {
             const forwarded = JSON.stringify(parsedMessage);
@@ -415,6 +311,17 @@ export const disconnectUser = (userId) => {
 };
 
 /**
+ * Whether `userId` has a socket in `room` right now, e.g. a Period Buddy
+ * with the pairing's chat open (`buddy_<roomKey>`). In-process state, like
+ * the rooms themselves (one API instance).
+ */
+export const isUserInRoom = (room, userId) =>
+  [...(rooms.get(room) || [])].some(
+    (client) =>
+      client.readyState === 1 && String(clientMetadata.get(client)?.userId) === String(userId),
+  );
+
+/**
  * Broadcasts a message to all clients in a specific room
  * @param {string} room - Room name
  * @param {object} payload - Data to send
@@ -436,17 +343,5 @@ export const broadcastToRoom = (room, payload) => {
       // WebSocket.OPEN
       client.send(data);
     }
-  }
-};
-
-/**
- * Send `payload` to everyone in `room` exactly as given (no `type: 'message'`
- * envelope), e.g. a server-made `call_end` the call screens already handle.
- */
-export const sendRawToRoom = (room, payload) => {
-  if (!rooms.has(room)) return;
-  const data = JSON.stringify(payload);
-  for (const client of rooms.get(room)) {
-    if (client.readyState === 1) client.send(data);
   }
 };

@@ -7,9 +7,18 @@ import { authenticate, authorize } from '../middleware/authMiddleware.js';
 import { requirePermission } from '../middleware/rbac.js';
 import { PERMISSIONS } from '../config/permissions.js';
 import { imageUpload, mediaUpload } from '../middleware/mediaUpload.js';
-import { authLimiter, noopLimiter, rateLimitEnabled } from '../middleware/rateLimiters.js';
+import * as videoCallController from '../controllers/videoCallController.js';
+import {
+  authLimiter,
+  noopLimiter,
+  rateLimitEnabled,
+  videoAttendanceLimiter,
+  videoJoinLimiter,
+} from '../middleware/rateLimiters.js';
 
 const router = express.Router();
+const videoLimiter = rateLimitEnabled ? videoJoinLimiter : noopLimiter;
+const attendanceLimiter = rateLimitEnabled ? videoAttendanceLimiter : noopLimiter;
 
 /* ---------------------------------------------------------------------------
  * Public — accept an invite
@@ -161,12 +170,6 @@ router.post(
   authorize('doctor'),
   doctorController.sendConsultationMessage,
 );
-router.post(
-  '/consultations/:id/call',
-  authenticate,
-  authorize('doctor'),
-  doctorController.startVideoCall,
-);
 /**
  * @route   POST /api/doctor/consultations/:id/call/decline
  * @desc    Decline a ringing video call from the patient
@@ -177,6 +180,30 @@ router.post(
   authenticate,
   authorize('doctor'),
   doctorController.declineCall,
+);
+/**
+ * @route   POST /api/doctor/consultations/:id/video/join
+ * @desc    Short-lived moderator token for this consultation's Jitsi room (assigned doctor, inside the join window)
+ * @access  Private (doctor)
+ */
+router.post(
+  '/consultations/:id/video/join',
+  authenticate,
+  authorize('doctor'),
+  videoLimiter,
+  videoCallController.joinAsDoctor,
+);
+/**
+ * @route   POST /api/doctor/consultations/:id/video/attendance
+ * @desc    Informational joined/left report from the call screen ({ event }); never changes the session
+ * @access  Private (doctor)
+ */
+router.post(
+  '/consultations/:id/video/attendance',
+  authenticate,
+  authorize('doctor'),
+  attendanceLimiter,
+  videoCallController.reportDoctorAttendance,
 );
 router.patch(
   '/consultations/:id/prescription',

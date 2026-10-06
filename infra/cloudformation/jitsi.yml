@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Nura video consultations - a dedicated self-hosted Jitsi Meet host
+  (meet.thenura.care). Separate from the API stack on purpose: never install
+  Jitsi on the production API server. Ubuntu 24.04 + Docker; Jitsi itself is
+  installed by infra/jitsi/install.sh (see infra/jitsi/README.md).
+
+Parameters:
+  InstanceType:
+    Type: String
+    # 4 GiB pilot size. Capacity must be load-tested before relying on it.
+    Default: t3.medium
+    AllowedValues: [t3.medium, t3a.medium, c6i.large, c6a.large, c7i.large, t3.large, t3a.large, c6i.xlarge]
+    Description: t3.medium / t3a.medium = 2 vCPU, 4 GiB (pilot). c6i/c7i.large for sustained load.
+  VolumeSizeGiB:
+    Type: Number
+    Default: 30
+    MinValue: 20
+  AdminCidr:
+    Type: String
+    Default: ''
+    Description: >-
+      Optional. A single trusted /32 (e.g. office IP) allowed to SSH on 22.
+      Leave empty to allow no SSH at all and use SSM Session Manager instead (recommended).
+  LatestUbuntuAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+    Description: Ubuntu 24.04 LTS (x86_64), from Canonical's public SSM parameter. Leave as is.
+
+Conditions:
+  AllowSsh: !Not [!Equals [!Ref AdminCidr, '']]
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: nura-jitsi }]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: { VpcId: !Ref Vpc, InternetGatewayId: !Ref InternetGateway }
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags: [{ Key: Name, Value: nura-jitsi-public }]
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref Vpc }
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  SubnetRoute:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PublicSubnet, RouteTableId: !Ref RouteTable }
+
+  # Only what Jitsi needs from the internet. No SSH unless AdminCidr is set;
+  # SSM Session Manager needs no inbound port at all.
+  JitsiSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Nura Jitsi - HTTPS, ACME HTTP and JVB media
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: 'HTTPS: web app, XMPP websocket, bridge channel' }
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: "HTTP: Let's Encrypt HTTP-01 + redirect to HTTPS" }
+        - { IpProtocol: udp, FromPort: 10000, ToPort: 10000, CidrIp: 0.0.0.0/0, Description: 'JVB media (RTP/SRTP over UDP)' }
+      SecurityGroupEgress:
+        - { IpProtocol: -1, CidrIp: 0.0.0.0/0, Description: 'Updates, image pulls, ACME, STUN' }
+      Tags: [{ Key: Name, Value: nura-jitsi }]
+
+  SshIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: AllowSsh
+    Properties:
+      GroupId: !Ref JitsiSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref AdminCidr
+      Description: Restricted admin SSH
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: { Roles: [!Ref InstanceRole] }
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestUbuntuAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds: [!Ref JitsiSecurityGroup]
+      MetadataOptions: { HttpTokens: required, HttpEndpoint: enabled }
+      CreditSpecification: { CPUCredits: unlimited }
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: { VolumeType: gp3, VolumeSize: !Ref VolumeSizeGiB, Encrypted: true, DeleteOnTermination: false }
+      Tags: [{ Key: Name, Value: nura-jitsi }]
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get -y upgrade
+          apt-get install -y ca-certificates curl gnupg unattended-upgrades
+          # Docker Engine + compose plugin from Docker's official apt repo.
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          chmod a+r /etc/apt/keyrings/docker.asc
+          . /etc/os-release
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" > /etc/apt/sources.list.d/docker.list
+          apt-get update
+          apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+          # Log rotation for every container (the Jitsi services log a lot).
+          cat > /etc/docker/daemon.json <<'JSON'
+          {
+            "log-driver": "json-file",
+            "log-opts": { "max-size": "20m", "max-file": "5" }
+          }
+          JSON
+          systemctl enable --now docker
+          systemctl restart docker
+          dpkg-reconfigure -f noninteractive unattended-upgrades
+          mkdir -p /opt/jitsi
+
+  ElasticIp:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachment
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref Instance
+      Tags: [{ Key: Name, Value: nura-jitsi }]
+
+Outputs:
+  PublicIp:
+    Description: Point meet.thenura.care (A record) here, and use it as JVB_ADVERTISE_IPS.
+    Value: !Ref ElasticIp
+  InstanceId:
+    Value: !Ref Instance
+  SessionManagerCommand:
+    Description: Shell on the host without SSH.
+    Value: !Sub 'aws ssm start-session --region ${AWS::Region} --target ${Instance}'

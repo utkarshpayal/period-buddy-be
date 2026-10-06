@@ -159,7 +159,7 @@ const TAGS_METADATA = [
   {
     name: 'Doctor Portal',
     description:
-      'Clinical management portal: doctor onboarding, patient records, consultation messages, WebRTC video calling, prescriptions, earnings, availability slots, and clinical video reels',
+      'Clinical management portal: doctor onboarding, patient records, consultation messages, video call join tokens (self-hosted Jitsi), prescriptions, earnings, availability slots, and clinical video reels',
   },
   {
     name: 'Partner Sync',
@@ -169,7 +169,7 @@ const TAGS_METADATA = [
   {
     name: 'Anonymous Period Buddy',
     description:
-      'Peer-to-peer anonymous cycle buddy matching based on phase compatibility and anonymous in-app chat',
+      'Peer-to-peer anonymous cycle buddy matching based on phase compatibility, in-app chat and video calls (self-hosted Jitsi)',
   },
   {
     name: 'Email Nominations',

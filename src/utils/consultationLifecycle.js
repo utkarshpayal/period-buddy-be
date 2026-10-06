@@ -5,6 +5,7 @@ import Notification from '../models/Notification.js';
 import User from '../models/User.js';
 import logger from './logger.js';
 import { broadcastToRoom } from '../config/websocket.js';
+import { describeVideoCall } from './videoCall.js';
 import {
   recordConsultationEarning,
   releaseConsultationEarning,
@@ -28,13 +29,16 @@ export const publicDoctor = (doctor) => {
   return plain;
 };
 
-/** A consultation as the patient sees it: public doctor, no legacy chat array or payment session. */
+/** A consultation as the patient sees it: public doctor, no legacy chat array or payment session,
+ * plus `videoCall` (who can join the video room when, see utils/videoCall.js). */
 export const publicConsultation = (consultation) => {
   if (!consultation) return consultation;
   const plain =
     typeof consultation.toJSON === 'function' ? consultation.toJSON() : { ...consultation };
   delete plain.messages;
   delete plain.cashfreePaymentSessionId;
+  delete plain.videoRoom;
+  plain.videoCall = describeVideoCall(plain);
   if (plain.doctorId && typeof plain.doctorId === 'object' && plain.doctorId.name) {
     plain.doctorId = publicDoctor(plain.doctorId);
   }

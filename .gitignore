@@ -22,3 +22,6 @@ src/utils/GoogleService-Info.plist
 
 # Personal Claude Code settings (the shared .claude/settings.json is tracked)
 .claude/settings.local.json
+
+# SSH / TLS private keys (e.g. the Lightsail key for the Jitsi host)
+*.pem

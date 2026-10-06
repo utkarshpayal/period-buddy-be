@@ -491,7 +491,7 @@ export const purgeAccount = async (userId) => {
       { _id: { $in: paidIds } },
       {
         $set: { messages: [] },
-        $unset: { prescription: 1, feedback: 1, meetingLink: 1 },
+        $unset: { prescription: 1, feedback: 1, meetingLink: 1, videoRoom: 1, videoAttendance: 1 },
       },
     ),
     CommunityPost.deleteMany({ userId }),

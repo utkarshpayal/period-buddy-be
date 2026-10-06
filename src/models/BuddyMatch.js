@@ -69,6 +69,10 @@ const buddyMatchSchema = new mongoose.Schema(
       default: [],
     },
 
+    // Jitsi room for this pairing's video calls (utils/videoCall.js): random,
+    // set on the first call, gone with the pairing.
+    videoRoom: { type: String, select: false },
+
     nominatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     nominatedAt: { type: Date, default: Date.now },
   },
