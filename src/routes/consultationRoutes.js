@@ -59,13 +59,6 @@ router.get('/:id/messages', ...patient, consultationController.getMessages);
 router.post('/:id/message', ...patient, consultationController.sendMessage);
 
 /**
- * @route   PATCH /api/consultation/:id/complete
- * @desc    Mark a consultation as completed
- * @access  Private
- */
-router.patch('/:id/complete', ...patient, consultationController.completeConsultation);
-
-/**
  * @route   POST /api/consultation/:id/rating
  * @desc    Rate a completed session once (rating 1-5, optional comment up to 500 chars)
  * @access  Private (the patient)

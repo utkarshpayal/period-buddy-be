@@ -7,6 +7,7 @@ import { sendResponse, sendError } from './sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from './logger.js';
 import { activeUserIdSet } from './accountStatus.js';
+import { completeOverdueConsultations } from './consultationLifecycle.js';
 
 // A few rotating variants so the daily nudge doesn't read as the exact same
 // canned line every day.
@@ -193,6 +194,13 @@ export const handleDailyNotificationTick = async (req, res) => {
   try {
     const result = await runDailyNotificationTick();
     logger.info('daily_notification_tick', { action: 'daily_notification_tick', ...result });
+    // An external scheduler only hits this endpoint, so it also closes
+    // consultations nobody marked completed (see consultationLifecycle.js).
+    try {
+      result.consultations = await completeOverdueConsultations();
+    } catch (error) {
+      logger.error('consultation_auto_complete_tick_failed', { error: error.message });
+    }
     return sendResponse(res, HTTP_STATUS.OK, 'Daily notification tick complete', result);
   } catch (error) {
     logger.error('daily_notification_tick_failed', { error: error.message });

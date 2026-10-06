@@ -65,7 +65,7 @@ scheduled one — don't take that as evidence the scheduler itself is fine).
 | Job | Endpoint | Header | Env var | Cadence | Code |
 |---|---|---|---|---|---|
 | Recurring check-in calls | `POST /api/voice-agent/checkin-call/scheduler-tick` | `X-Scheduler-Secret` | `CHECKIN_CALL_SCHEDULER_SECRET` | **Every 1 minute** (needs minute-of-day precision — see `checkinCallTime`) | `src/utils/checkinCallScheduler.js` |
-| Period/ovulation reminders + daily nudge | `POST /api/notifications/daily-tick` | `X-Scheduler-Secret` | `NOTIFICATION_SCHEDULER_SECRET` | **Once a day** (day-level precision only) | `src/utils/dailyNotificationScheduler.js` |
+| Period/ovulation reminders + daily nudge, and completing consultations 3 h past their slot that nobody closed | `POST /api/notifications/daily-tick` | `X-Scheduler-Secret` | `NOTIFICATION_SCHEDULER_SECRET` | **Once a day** (day-level precision only) | `src/utils/dailyNotificationScheduler.js`, `completeOverdueConsultations` in `src/utils/consultationLifecycle.js` (hourly in-process) |
 
 Both are safe to invoke more often than needed — each guards itself against
 double-firing the same reminder/call (`checkinCallLastFiredDateKey`,

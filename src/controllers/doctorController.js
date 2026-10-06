@@ -39,7 +39,11 @@ import { describeEarning } from './doctorWalletController.js';
 import { deleteFromS3, uploadBufferToS3 } from '../utils/s3.js';
 import { validateWeeklyRanges } from '../utils/consultationSlots.js';
 import { DEFAULT_TIME_ZONE } from '../utils/timezone.js';
-import { cancelConsultationRecord, notifyUserLive } from '../utils/consultationLifecycle.js';
+import {
+  cancelConsultationRecord,
+  hasSessionStarted,
+  notifyUserLive,
+} from '../utils/consultationLifecycle.js';
 import { assertAllowedUpload } from '../utils/fileValidation.js';
 import {
   computeWallet,
@@ -1164,6 +1168,15 @@ export const completeConsultation = async (req, res, next) => {
   try {
     const { error, code, consultation } = await loadOwnedConsultation(req.userId, req.params.id);
     if (error) return sendError(res, code, error);
+    // Completing starts the payout and ends the patient's chance to cancel,
+    // so not before the booked slot has begun.
+    if (!hasSessionStarted(consultation)) {
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        "This session hasn't started yet. You can complete it once its time slot begins.",
+      );
+    }
 
     const completed = await Consultation.findOneAndUpdate(
       { _id: consultation._id, status: { $in: ['paid', 'active'] } },

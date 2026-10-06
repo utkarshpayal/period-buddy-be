@@ -527,6 +527,10 @@ Allowed `energy`: `low`, `medium`, `steady`, `high`.
 
 Optional fields: `isIntimate` (boolean), `sleepHours`, `waterIntake` (ml), `weight` (kg), `temperature` (°C BBT), `stressLevel` (1-10), `medication` (string[]), `digestion` (`normal`/`constipated`/`diarrhea`/`bloated`), `skin` (`clear`/`oily`/`dry`/`acne`), `discharge` (`none`/`sticky`/`creamy`/`watery`/`egg-white`), `exercise` (string[]).
 
+By default fields left out keep their saved value (merge). Send `"replace": true` when the payload is the whole day's log (the app's "Save Log"): any field left out is then removed, so a value the user deselected doesn't come back.
+
+A `dateKey` after the user's local today (from `timezoneOffsetMinutes`, else UTC + 1 day) is rejected with 400.
+
 Response:
 
 ```json
@@ -546,6 +550,12 @@ Response: array of day logs.
 ### GET `/api/cycle/log/:dateKey`
 
 Response: day log or `null`.
+
+### DELETE `/api/cycle/log/:dateKey?timezoneOffsetMinutes=-330`
+
+Removes that day's log entirely (for a day logged by mistake). Recomputes the tracking streak and takes back the +5 "new log" wallet credit (never below 0). `timezoneOffsetMinutes` is optional and anchors the streak to the user's local today, same as `POST /api/cycle/log`.
+
+Response: `{ "deleted": true }`, or `{ "deleted": false }` if there was no log for that day.
 
 ### GET `/api/cycle/stats`
 
@@ -830,13 +840,9 @@ Payload:
 
 Response: latest user message and doctor reply.
 
-### PATCH `/api/consultation/:id/complete`
-
-Marks active consultation completed.
-
 ### PATCH `/api/consultation/:id/cancel`
 
-Cancels pending or paid consultation.
+Cancels a pending checkout, or a paid/active booking until its slot starts (a chat message or call before then doesn't block it). A paid booking is queued for a refund. Patients can't complete a session: the doctor does (`PATCH /api/doctor/consultations/:id/complete`, only once the slot has started), and the scheduler completes any paid/active session 3 hours after its slot ends (`completeOverdueConsultations` in `utils/consultationLifecycle.js`, on the hourly in-process tick and `POST /api/notifications/daily-tick`).
 
 ## Doctor Wallet & Payouts
 

@@ -1,5 +1,6 @@
 import { runCheckinCallSchedulerTick } from './checkinCallScheduler.js';
 import { runDailyNotificationTick } from './dailyNotificationScheduler.js';
+import { completeOverdueConsultations } from './consultationLifecycle.js';
 import logger from './logger.js';
 
 const CHECKIN_TICK_MS = 60 * 1000; // 1 minute — matches checkinCallTime's minute-of-day precision
@@ -54,6 +55,10 @@ export const startInProcessScheduler = () => {
   // the first tick), then on the regular cadence.
   setTimeout(() => runTickSafely('checkin_call_scheduler_tick', runCheckinCallSchedulerTick), 5000);
   setTimeout(() => runTickSafely('daily_notification_tick', runDailyNotificationTick), 10000);
+  setTimeout(
+    () => runTickSafely('consultation_auto_complete_tick', completeOverdueConsultations),
+    15000,
+  );
 
   checkinIntervalHandle = setInterval(
     () => runTickSafely('checkin_call_scheduler_tick', runCheckinCallSchedulerTick),
@@ -61,10 +66,12 @@ export const startInProcessScheduler = () => {
   );
   checkinIntervalHandle.unref();
 
-  dailyIntervalHandle = setInterval(
-    () => runTickSafely('daily_notification_tick', runDailyNotificationTick),
-    DAILY_TICK_MS,
-  );
+  // Sessions nobody marked completed (utils/consultationLifecycle.js) ride the
+  // same hourly cadence; each row is claimed atomically, so overlap is safe.
+  dailyIntervalHandle = setInterval(() => {
+    runTickSafely('daily_notification_tick', runDailyNotificationTick);
+    runTickSafely('consultation_auto_complete_tick', completeOverdueConsultations);
+  }, DAILY_TICK_MS);
   dailyIntervalHandle.unref();
 
   logger.info('in_process_scheduler_started', {
