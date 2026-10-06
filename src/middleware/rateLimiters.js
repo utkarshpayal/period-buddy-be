@@ -81,6 +81,37 @@ export const otpEmailLimiter = rateLimit({
 });
 
 /**
+ * Video consultation join tokens and attendance reports
+ * (videoCallController.js), keyed by the signed-in user, so one
+ * account can't mint tokens in a loop. A normal call needs a handful (join,
+ * a reconnect or two, joined/left reports). Mount after `authenticate`.
+ */
+export const videoJoinLimiter = rateLimit({
+  windowMs: toInt(process.env.VIDEO_JOIN_RATE_LIMIT_WINDOW_MS, 10 * 60 * 1000),
+  max: toInt(process.env.VIDEO_JOIN_RATE_LIMIT_MAX, 30),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.userId ? `user:${req.userId}` : ipKeyGenerator(req.ip)),
+  message: {
+    success: false,
+    message: 'Too many attempts to join the call. Please wait a minute and try again.',
+  },
+});
+
+/**
+ * Joined/left reports from the call screens: their own budget, so a flaky
+ * connection (several rejoins) can never use up the join limit above.
+ */
+export const videoAttendanceLimiter = rateLimit({
+  windowMs: toInt(process.env.VIDEO_JOIN_RATE_LIMIT_WINDOW_MS, 10 * 60 * 1000),
+  max: toInt(process.env.VIDEO_ATTENDANCE_RATE_LIMIT_MAX, 120),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.userId ? `user:${req.userId}` : ipKeyGenerator(req.ip)),
+  message: { success: false, message: 'Too many requests, please try again later.' },
+});
+
+/**
  * No-op passthrough used when rate limiting is disabled (e.g. local dev), so
  * call sites can mount a limiter unconditionally without branching.
  */

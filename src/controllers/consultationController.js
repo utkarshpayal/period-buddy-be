@@ -25,7 +25,7 @@ import {
   publicDoctor,
 } from '../utils/consultationLifecycle.js';
 import { escapeRegex, isValidObjectId } from '../utils/apiHelpers.js';
-import { broadcastToRoom, sendRawToRoom } from '../config/websocket.js';
+import { broadcastToRoom } from '../config/websocket.js';
 import {
   createOrder,
   getOrderStatus,
@@ -754,8 +754,8 @@ export const cancelConsultation = async (req, res, next) => {
 };
 
 /**
- * POST /api/consultation/:id/call/decline — the patient declines a ringing
- * call: the doctor's call screen ends ("call_end" in the room) and is told why.
+ * POST /api/consultation/:id/call/decline — the patient declines the "your
+ * doctor is in the video room" ring; the doctor's portal is told.
  */
 export const declineCall = async (req, res, next) => {
   try {
@@ -766,8 +766,6 @@ export const declineCall = async (req, res, next) => {
       .select('doctorId')
       .populate('doctorId', 'userId');
     if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation not found');
-    const room = `consultation_${consultation._id}`;
-    sendRawToRoom(room, { type: 'call_end', room, reason: 'declined' });
     notifyUserLive(consultation.doctorId?.userId, {
       event: 'call_declined',
       consultationId: String(consultation._id),

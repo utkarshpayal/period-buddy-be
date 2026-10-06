@@ -50,7 +50,7 @@
     },
     {
       "name": "Doctor Portal",
-      "description": "Clinical management portal: doctor onboarding, patient records, consultation messages, WebRTC video calling, prescriptions, earnings, availability slots, and clinical video reels"
+      "description": "Clinical management portal: doctor onboarding, patient records, consultation messages, video call join tokens (self-hosted Jitsi), prescriptions, earnings, availability slots, and clinical video reels"
     },
     {
       "name": "Partner Sync",
@@ -58,7 +58,7 @@
     },
     {
       "name": "Anonymous Period Buddy",
-      "description": "Peer-to-peer anonymous cycle buddy matching based on phase compatibility and anonymous in-app chat"
+      "description": "Peer-to-peer anonymous cycle buddy matching based on phase compatibility, in-app chat and video calls (self-hosted Jitsi)"
     },
     {
       "name": "Email Nominations",
@@ -4129,6 +4129,82 @@
             "bearerAuth": []
           }
         ]
+      },
+      "delete": {
+        "tags": [
+          "Cycle Tracking"
+        ],
+        "summary": "Delete a single day's log",
+        "description": "Delete a single day's log (e.g. one logged on the wrong date)\n\n**Access:** Private",
+        "operationId": "delete__api_cycle_log__dateKey",
+        "parameters": [
+          {
+            "name": "dateKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: dateKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/api/cycle/stats": {
@@ -5151,104 +5227,6 @@
         }
       }
     },
-    "/api/consultation/{id}/complete": {
-      "patch": {
-        "tags": [
-          "Consultations"
-        ],
-        "summary": "Mark a consultation as completed",
-        "description": "Mark a consultation as completed\n\n**Access:** Private",
-        "operationId": "patch__api_consultation__id_complete",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Identifier or key: id"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful operation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StandardSuccessResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Malformed request payload or invalid values",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StandardErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized - Missing or invalid JWT Bearer token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StandardErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden - Insufficient permissions / role restriction",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StandardErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Resource not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StandardErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too many requests - rate limit exceeded",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StandardErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/consultation/{id}/rating": {
       "post": {
         "tags": [
@@ -5463,6 +5441,222 @@
         "summary": "Decline a ringing video call from the doctor",
         "description": "Decline a ringing video call from the doctor\n\n**Access:** Private (patient)",
         "operationId": "post__api_consultation__id_call_decline",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consultation/{id}/video/join": {
+      "post": {
+        "tags": [
+          "Consultations"
+        ],
+        "summary": "Short-lived token for this consultation's Jitsi room",
+        "description": "Short-lived token for this consultation's Jitsi room (booked patient, paid, inside the join window)\n\n**Access:** Private (patient)",
+        "operationId": "post__api_consultation__id_video_join",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consultation/{id}/video/attendance": {
+      "post": {
+        "tags": [
+          "Consultations"
+        ],
+        "summary": "Informational joined/left report from the call screen",
+        "description": "Informational joined/left report from the call screen ({ event }); never changes the session\n\n**Access:** Private (patient)",
+        "operationId": "post__api_consultation__id_video_attendance",
         "parameters": [
           {
             "name": "id",
@@ -11953,6 +12147,93 @@
         }
       }
     },
+    "/api/buddies/video/join": {
+      "post": {
+        "tags": [
+          "Anonymous Period Buddy"
+        ],
+        "summary": "Short-lived token for the Jitsi room of the caller's active Period Buddy pairing",
+        "description": "Short-lived token for the Jitsi room of the caller's active Period Buddy pairing\n\n**Access:** Private",
+        "operationId": "post__api_buddies_video_join",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/newsletter/subscribe": {
       "post": {
         "tags": [
@@ -16146,12 +16427,14 @@
         }
       }
     },
-    "/api/doctor/consultations/{id}/call": {
+    "/api/doctor/consultations/{id}/call/decline": {
       "post": {
         "tags": [
           "Doctor Portal"
         ],
-        "operationId": "post__api_doctor_consultations__id_call",
+        "summary": "Decline a ringing video call from the patient",
+        "description": "Decline a ringing video call from the patient\n\n**Access:** Private (doctor)",
+        "operationId": "post__api_doctor_consultations__id_call_decline",
         "parameters": [
           {
             "name": "id",
@@ -16252,14 +16535,122 @@
         }
       }
     },
-    "/api/doctor/consultations/{id}/call/decline": {
+    "/api/doctor/consultations/{id}/video/join": {
       "post": {
         "tags": [
           "Doctor Portal"
         ],
-        "summary": "Decline a ringing video call from the patient",
-        "description": "Decline a ringing video call from the patient\n\n**Access:** Private (doctor)",
-        "operationId": "post__api_doctor_consultations__id_call_decline",
+        "summary": "Short-lived moderator token for this consultation's Jitsi room",
+        "description": "Short-lived moderator token for this consultation's Jitsi room (assigned doctor, inside the join window)\n\n**Access:** Private (doctor)",
+        "operationId": "post__api_doctor_consultations__id_video_join",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Resource created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request payload or invalid values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/doctor/consultations/{id}/video/attendance": {
+      "post": {
+        "tags": [
+          "Doctor Portal"
+        ],
+        "summary": "Informational joined/left report from the call screen",
+        "description": "Informational joined/left report from the call screen ({ event }); never changes the session\n\n**Access:** Private (doctor)",
+        "operationId": "post__api_doctor_consultations__id_video_attendance",
         "parameters": [
           {
             "name": "id",

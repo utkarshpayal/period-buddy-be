@@ -37,6 +37,21 @@ const consultationSchema = new mongoose.Schema(
       default: 'unpaid',
     },
     meetingLink: { type: String, trim: true },
+    // Self-hosted Jitsi room (utils/videoCall.js): random, set once on
+    // the first join, never sent in listings. Joining also needs a signed token.
+    videoRoom: { type: String, select: false },
+    // Informational only. `*TokenAt` is when the server last issued that side
+    // a join token; `*JoinedAt`/`*LeftAt` are the last join/leave the call
+    // screen reported (untrusted client events: used only to decide whether to
+    // ring, never to complete, cancel or pay).
+    videoAttendance: {
+      patientTokenAt: Date,
+      doctorTokenAt: Date,
+      patientJoinedAt: Date,
+      patientLeftAt: Date,
+      doctorJoinedAt: Date,
+      doctorLeftAt: Date,
+    },
     prescription: { type: String, trim: true },
     // The patient's rating of a completed session (POST /api/consultation/:id/rating),
     // once only; `feedback` is its optional comment (encrypted, see below).

@@ -844,6 +844,47 @@ Response: latest user message and doctor reply.
 
 Cancels a pending checkout, or a paid/active booking until its slot starts (a chat message or call before then doesn't block it). A paid booking is queued for a refund. Patients can't complete a session: the doctor does (`PATCH /api/doctor/consultations/:id/complete`, only once the slot has started), and the scheduler completes any paid/active session 3 hours after its slot ends (`completeOverdueConsultations` in `utils/consultationLifecycle.js`, on the hourly in-process tick and `POST /api/notifications/daily-tick`).
 
+### Video calls (self-hosted Jitsi)
+
+Every video call (doctor consultations and Period Buddy calls) runs on the dedicated Jitsi server (`meet.thenura.care`, `infra/jitsi/`); there is no other video path. The API is the only thing that can let someone in: it checks the booking or pairing and signs a short-lived token for one room and one person (`utils/videoCall.js`). Every join answers `503` until `JITSI_DOMAIN`/`JITSI_APP_ID`/`JITSI_APP_SECRET` are set.
+
+Consultations returned by `GET /api/consultation/my` and the doctor's `GET /api/doctor/consultations[/:id]` carry `videoCall`: `{ available, joinOpensAt, joinClosesAt, canJoinNow }` while paid/active, else `null` (`available: false` while Jitsi isn't configured).
+
+| Method | Path | Who |
+|---|---|---|
+| POST | `/api/consultation/:id/video/join` | The booked patient |
+| POST | `/api/doctor/consultations/:id/video/join` | The assigned doctor |
+| POST | `/api/consultation/:id/video/attendance` | The booked patient, `{ "event": "joined" \| "left" }` |
+| POST | `/api/doctor/consultations/:id/video/attendance` | The assigned doctor, same body |
+| POST | `/api/consultation/:id/call/decline` | The booked patient declines the doctor's ring (the doctor is told, `call_declined`) |
+| POST | `/api/doctor/consultations/:id/call/decline` | The doctor declines the patient's ring |
+| POST | `/api/buddies/video/join` | Either member of the caller's active Period Buddy pairing |
+
+Join checks, in order: the caller is this booking's patient (or its doctor's login, else `404`); status is `paid`/`active` (`409 CONSULTATION_NOT_LIVE`); payment confirmed and no refund queued (`402 PAYMENT_REQUIRED`); now is inside the window, from `CONSULTATION_JOIN_EARLY_MINUTES` before the slot to `CONSULTATION_JOIN_GRACE_MINUTES` after it ends (`403 JOIN_WINDOW_NOT_OPEN` with `opensAt`, or `403 JOIN_WINDOW_CLOSED`). `503` while Jitsi isn't configured. Refusals carry `code` next to `message`. Rate limits per user per 10 min: `VIDEO_JOIN_RATE_LIMIT_MAX` (30) for joins, and a separate `VIDEO_ATTENDANCE_RATE_LIMIT_MAX` (120) for attendance, so a flaky connection can't use up the join budget.
+
+Join response (`data`):
+
+```json
+{
+  "provider": "jitsi",
+  "domain": "meet.thenura.care",
+  "roomName": "nura-3f9c…(32 hex)",
+  "meetingUrl": "https://meet.thenura.care/nura-3f9c…",
+  "token": "<JWT>",
+  "role": "participant",
+  "expiresAt": "2026-10-04T10:10:00.000Z",
+  "joinWindow": { "opensAt": "2026-10-04T09:50:00.000Z", "closesAt": "2026-10-04T11:00:00.000Z" },
+  "displayName": "Asha",
+  "peerName": "Dr Rao"
+}
+```
+
+The token is HS256 with `aud: jitsi`, `iss: <JITSI_APP_ID>`, `sub: <domain>`, `room`, `exp` ≤ `JITSI_TOKEN_TTL_SECONDS` (600) and never after the window closes, and `context.user.affiliation` `owner` (doctor → moderator) or `member` (patient). Clients fetch a new one to rejoin; never cache or log it. The room name is random per consultation and never derived from its id. A join moves `paid` to `active` (as starting a call always did) and rings the other side (`incoming_call` with `kind: "consultation"` on their `user_<id>` socket, plus a push to the patient, at most every 2 min), unless they're already in the call by their own reports. Attendance reports are informational: they record the last join / last leave per side, decide whether to ring (a `left` before the other side joined sends them `call_cancelled`, so a "… is waiting" ring stops), and never complete, cancel or pay anything.
+
+**Period Buddy calls** (`POST /api/buddies/video/join`): only while **both** buddies have the pairing's chat open (a socket in `buddy_<roomKey>`, `isUserInRoom`), else `409` with `code: "BUDDY_OFFLINE"` (the other one) or `"BUDDY_CHAT_NOT_OPEN"` (the caller). No time window. `404` without an active pairing, `409` when the other member's account is suspended or deleted, `503` when Jitsi isn't configured. Same response shape (`joinWindow` nulls, `role: "participant"` for both: nobody can mute or remove the other). The token's `context.user.id` is a per-pairing pseudonym, not the account id. A join prompts the other member in their open chat (`incoming_call` with `kind: "buddy"` on their `user_<id>` socket, at most every 15 s; no push, since they're in the chat). Ending the pairing deletes its room with it.
+
+The old peer-to-peer WebRTC calls are gone: `POST /api/doctor/consultations/:id/call` was removed, and the WebSocket relays no call signaling (buddy rooms relay only `presence_ping`/`presence_pong`/`presence_leave`).
+
 ## Doctor Wallet & Payouts
 
 Commission on paid consultations, each doctor's wallet and withdrawals. Amounts in responses are rupees (stored as paise). Design: the Admin Workspace repo's `docs/doctor-payouts.md`.

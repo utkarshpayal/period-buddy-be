@@ -311,6 +311,7 @@ Keep it a single valid JSON object.
 | AI chat / speech (Sarvam) | `SARVAM_API_KEY`, `SARVAM_CHAT_MODEL`, `SARVAM_TTS_MODEL`, `SARVAM_STT_MODEL` |
 | Check-in phone calls (Sarvam Outbound) | `SARVAM_OUTBOUND_API_KEY`, `SARVAM_ORG_ID`, `SARVAM_WORKSPACE_ID`, `SARVAM_APP_ID`, `SARVAM_APP_VERSION`, `SARVAM_CONNECTION_ID`, `SARVAM_AGENT_PHONE_NUMBER`, `SAMVAAD_CALL_TOKEN_TTL` |
 | Schedulers | `ENABLE_IN_PROCESS_SCHEDULER` (`true`, must stay on for this single-server setup), `CHECKIN_CALL_SCHEDULER_SECRET`, `NOTIFICATION_SCHEDULER_SECRET` |
+| Video calls (Jitsi) | `JITSI_DOMAIN`, `JITSI_APP_ID`, `JITSI_APP_SECRET` (same as `JWT_APP_SECRET` on the Jitsi host), `JITSI_AUDIENCE`, `JITSI_TOKEN_TTL_SECONDS`, `CONSULTATION_JOIN_EARLY_MINUTES`, `CONSULTATION_JOIN_GRACE_MINUTES`, `CONSULTATION_DEFAULT_DURATION_MINUTES`, `VIDEO_JOIN_RATE_LIMIT_MAX`, `VIDEO_ATTENDANCE_RATE_LIMIT_MAX`, `VIDEO_JOIN_RATE_LIMIT_WINDOW_MS`. Not in the secret yet. |
 | Misc | `SWAGGER_ENABLED` (`false`: `/api-docs` is closed in production) |
 
 \* Required. The deploy fails on purpose if they're empty. \*\* Required in production; the API refuses to start without it. The full list with descriptions is in [`.env.example`](../.env.example).
@@ -336,6 +337,7 @@ secret (for production), then deploy. Adding it only to `.env.example` does noth
 | **Sarvam Instant Outbound** (`apps.sarvam.ai`) | "Buddy" check-in phone calls | `SARVAM_OUTBOUND_*`, etc. | Calls back to `API_BASE_URL/.../checkin-call/webhook`, so the URL must be publicly reachable. |
 | **Google Cloud (OAuth)** | "Sign in with Google" | `GOOGLE_*_CLIENT_ID` | |
 | **AWS S3** bucket `thenura` | File uploads | `AWS_S3_*` | us-east-1. |
+| **Jitsi Meet** (self-hosted, `meet.thenura.care`) | Every video call (consultations, Period Buddy) | `JITSI_*` | Its **own** host (Lightsail/EC2), never this server: [`infra/jitsi/README.md`](../infra/jitsi/README.md). Needs an A record `meet` → that host's static IP at Spaceship. Not deployed yet. |
 
 ---
 
@@ -358,6 +360,9 @@ secret (for production), then deploy. Adding it only to `.env.example` does noth
 | `infra/iam/*.json` | The inline IAM policies from §5. |
 | `infra/cloudformation/backend.yml` | Alternative: creates the whole stack as code (§15). **Not what production runs today.** |
 | `infra/README.md` | Setup guide for the CloudFormation route + console-pipeline notes. |
+| `infra/jitsi/*` | The separate Jitsi video server: `install.sh`, `nura.env` (settings, no secrets), web config overrides and its runbook `README.md`. Runs on its own host, never this one. |
+| `infra/cloudformation/jitsi.yml` | Optional EC2 host for Jitsi (own VPC, security group, Elastic IP, SSM). |
+| `src/scripts/jitsiTokenCheck.js` | Prints test links proving the Jitsi server refuses bad tokens. |
 
 ---
 

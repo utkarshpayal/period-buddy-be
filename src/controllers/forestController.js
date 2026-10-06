@@ -39,9 +39,23 @@ const resolveToday = (clientToday) => {
   return serverToday;
 };
 
+/**
+ * Accounts listed in FOREST_FULL_HISTORY_EMAILS (comma-separated, testing
+ * only) have their forest counted from all their history instead of the last
+ * year, so a big forest can be seeded (src/scripts/seedForestDemo.js).
+ * Unset: everyone gets the one-year window.
+ */
+export const forestHistoryStart = (email, today, env = process.env) => {
+  const listed = String(env.FOREST_FULL_HISTORY_EMAILS || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  if (email && listed.includes(String(email).trim().toLowerCase())) return '0000-01-01';
+  return shiftDateKey(today, -365);
+};
+
 // A year of task dates is plenty: a tree takes about three weeks.
-const loadForestGrowth = async (userId, habits, today) => {
-  const since = shiftDateKey(today, -365);
+const loadForestGrowth = async (userId, habits, today, since = shiftDateKey(today, -365)) => {
   const [cycleLogs, completions, waterings] = await Promise.all([
     CycleLog.find({ userId, dateKey: { $gte: since } }).lean(),
     HabitCompletion.find({ userId, dateKey: { $gte: since } }, { dateKey: 1 }).lean(),
@@ -125,7 +139,7 @@ const calculateForest = async (userId, today = todayDateKey()) => {
     activeHabits: habits.length,
     trees,
     todayCareLogged: forestLogs.some((log) => log.dateKey === today),
-    growth: await loadForestGrowth(userId, habits, today),
+    growth: await loadForestGrowth(userId, habits, today, forestHistoryStart(user?.email, today)),
   };
 };
 

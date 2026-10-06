@@ -21,13 +21,14 @@ import {
   pickDefined,
   sendPaginatedList,
 } from '../utils/apiHelpers.js';
-import { broadcastToRoom, sendRawToRoom } from '../config/websocket.js';
+import { broadcastToRoom } from '../config/websocket.js';
 import { sendMail } from '../utils/mailer.js';
 import { getDoctorInviteTemplate } from '../templates/emailTemplates.js';
 import { userRoleEnum } from '../enums/enums.js';
 import { INVITE_EXPIRY_HOURS, buildInviteUrl } from '../utils/invite.js';
 import { describeAccess, isStaffRole } from '../config/permissions.js';
 import { isDeletedAccount } from '../utils/accountStatus.js';
+import { describeVideoCall } from '../utils/videoCall.js';
 import {
   retireDoctorProfiles,
   softDeleteAccount,
@@ -74,11 +75,6 @@ const patientPopulate = (select) => ({
         },
 });
 
-/** Jitsi room per consultation — free, no keys, deterministic so both sides
- * of a booking land in the same room. */
-const meetingLinkFor = (consultationId) =>
-  `https://meet.jit.si/PeriodBuddy-Consult-${consultationId}`;
-
 /** An https URL of a file this API uploaded (our bucket / public base), so a
  * doctor can't send patients arbitrary or `javascript:` links as attachments. */
 const isOwnUploadUrl = (value) => {
@@ -101,6 +97,15 @@ const isOwnUploadUrl = (value) => {
 /** Resolve the Doctor profile backing the currently logged-in doctor User.
  * Returns null when the account has no linked profile. */
 const getDoctorForUser = async (userId) => Doctor.findOne({ userId });
+
+/** A booking for the portal, with `videoCall` (when the doctor can open the video room). */
+const withVideoCall = (consultation) => {
+  const plain =
+    typeof consultation?.toJSON === 'function' ? consultation.toJSON() : { ...consultation };
+  delete plain.videoRoom;
+  plain.videoCall = describeVideoCall(plain);
+  return plain;
+};
 
 /** Session fee: whole rupees, 1 to 1,00,000. Returns the number or null. */
 const MAX_SESSION_FEE = 100000;
@@ -874,7 +879,12 @@ export const getConsultations = async (req, res, next) => {
     // Opt-in paging (?page=&limit=, default 20, max 100); `pagination` rides
     // on the envelope so `data` stays an array either way.
     if (!isPaginatedRequest(req.query)) {
-      return sendResponse(res, HTTP_STATUS.OK, 'Consultations fetched', await query);
+      return sendResponse(
+        res,
+        HTTP_STATUS.OK,
+        'Consultations fetched',
+        (await query).map(withVideoCall),
+      );
     }
     const { page, limit, skip } = getPagination(req.query, { limit: 20, maxLimit: 100 });
     const [consultations, total] = await Promise.all([
@@ -884,7 +894,7 @@ export const getConsultations = async (req, res, next) => {
     return sendPaginatedList(
       res,
       'Consultations fetched',
-      consultations,
+      consultations.map(withVideoCall),
       buildPagination({ page, limit, total }),
     );
   } catch (error) {
@@ -917,7 +927,7 @@ export const getConsultation = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation not found');
     }
     await consultation.populate(patientPopulate('firstName lastName email profilePicture'));
-    return sendResponse(res, HTTP_STATUS.OK, 'Consultation fetched', consultation);
+    return sendResponse(res, HTTP_STATUS.OK, 'Consultation fetched', withVideoCall(consultation));
   } catch (error) {
     next(error);
   }
@@ -1100,37 +1110,6 @@ export const sendConsultationMessage = async (req, res, next) => {
   }
 };
 
-/** POST /api/doctor/consultations/:id/call — start (or resume) a video call. */
-export const startVideoCall = async (req, res, next) => {
-  try {
-    const { error, code, consultation } = await loadOwnedConsultation(req.userId, req.params.id);
-    if (error) return sendError(res, code, error);
-
-    if (!['paid', 'active'].includes(consultation.status)) {
-      return sendError(res, HTTP_STATUS.FORBIDDEN, 'This consultation session is not active');
-    }
-
-    const meetingLink = consultation.meetingLink || meetingLinkFor(consultation._id);
-    await Consultation.updateOne(
-      { _id: consultation._id, status: { $in: ['paid', 'active'] } },
-      { status: 'active', meetingLink },
-    );
-    consultation.meetingLink = meetingLink;
-
-    // Let the patient's session know a call is live and where to join.
-    broadcastToRoom(`consultation_${consultation._id}`, {
-      event: 'call_started',
-      meetingLink: consultation.meetingLink,
-    });
-
-    return sendResponse(res, HTTP_STATUS.OK, 'Video call ready', {
-      meetingLink: consultation.meetingLink,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 /** PATCH /api/doctor/consultations/:id/prescription */
 export const setPrescription = async (req, res, next) => {
   try {
@@ -1227,8 +1206,6 @@ export const declineCall = async (req, res, next) => {
   try {
     const { error, code, consultation } = await loadOwnedConsultation(req.userId, req.params.id);
     if (error) return sendError(res, code, error);
-    const room = `consultation_${consultation._id}`;
-    sendRawToRoom(room, { type: 'call_end', room, reason: 'declined' });
     notifyUserLive(consultation.userId, {
       event: 'call_declined',
       consultationId: String(consultation._id),
