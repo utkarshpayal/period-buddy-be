@@ -212,6 +212,20 @@ router.put('/privacy/ai-consent', authenticate, authController.setAiConsent);
 router.put('/privacy/settings', authenticate, authController.setPrivacySettings);
 
 /**
+ * @route   GET /api/auth/home-layout
+ * @desc    This person's Home layout: { order, hidden, shortcuts (null = app default), shortcutStyles, blocks, updatedAt }
+ * @access  Private
+ */
+router.get('/home-layout', authenticate, authController.getHomeLayout);
+
+/**
+ * @route   PUT /api/auth/home-layout
+ * @desc    Replace the Home layout. Body: { order: string[], hidden: string[], shortcuts: string[] | null, shortcutStyles?: { [key]: { look: 'icon'|'tile'|'card', color, label, icon } }, blocks?: { [blockKey]: { title, items } } }
+ * @access  Private
+ */
+router.put('/home-layout', authenticate, authController.saveHomeLayout);
+
+/**
  * @route   GET /api/auth/2fa
  * @desc    Staff/doctor two-step sign-in status: { required, method, totpEnabledAt, recoveryCodesLeft }
  * @access  Private (staff and doctors)

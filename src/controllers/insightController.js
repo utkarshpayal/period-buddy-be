@@ -1,4 +1,5 @@
 import CycleLog from '../models/CycleLog.js';
+import { clientToday } from '../utils/apiHelpers.js';
 import CycleSettings from '../models/CycleSettings.js';
 import { sendResponse } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
@@ -191,7 +192,7 @@ export const getDailyInsights = async (req, res, next) => {
       // which does pass logs) whenever a real logged period postdates the
       // originally configured date.
       const logs = await CycleLog.find({ userId: req.userId }).sort({ dateKey: 1 });
-      phase = computeCyclePredictions(settings, logs).currentPhase;
+      phase = computeCyclePredictions(settings, logs, { today: clientToday(req) }).currentPhase;
       template = { ...(PHASE_TEMPLATES[phase] || PHASE_TEMPLATES.follicular) };
       template.moodInsight = latestLog?.mood
         ? MOOD_INSIGHTS[latestLog.mood] || MOOD_INSIGHTS.neutral

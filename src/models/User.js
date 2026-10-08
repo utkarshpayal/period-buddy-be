@@ -107,6 +107,19 @@ const userSchema = new mongoose.Schema(
       // Email when the account signs in on a new device (utils/loginSecurity.js).
       newSignInAlerts: { type: Boolean, default: true },
     },
+    // This person's own Home layout (app: Profile → Customize Home;
+    // utils/homeLayout.js). Unset = the app's default Home.
+    homeLayout: {
+      order: { type: [String], default: undefined },
+      hidden: { type: [String], default: undefined },
+      // Unset = the app's default shortcuts; [] = none.
+      shortcuts: { type: [String], default: undefined },
+      // How each shortcut looks: { [tileKey]: { look, color } } (checked in utils/homeLayout.js).
+      shortcutStyles: { type: mongoose.Schema.Types.Mixed, default: undefined },
+      // Per-block heading and item picks: { [blockKey]: { title, items } }.
+      blocks: { type: mongoose.Schema.Types.Mixed, default: undefined },
+      updatedAt: { type: Date },
+    },
 
     // Profile
     profilePicture: { type: String },

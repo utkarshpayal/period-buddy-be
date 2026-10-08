@@ -8,7 +8,7 @@ import { comparePassword, hashPassword } from '../utils/password.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants/errorMessages.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
-import { isValidObjectId, pickDefined, todayDateKey } from '../utils/apiHelpers.js';
+import { isValidObjectId, pickDefined, clientToday, clientTodayKey } from '../utils/apiHelpers.js';
 import { computeCyclePredictions, calculateTrackingStreak } from '../utils/cycle.js';
 import { userRoleEnum } from '../enums/enums.js';
 import {
@@ -50,6 +50,7 @@ import {
   describePrivacySettings,
 } from '../utils/privacy.js';
 import { buildDataExport } from '../utils/dataExport.js';
+import { describeHomeLayout, parseHomeLayout } from '../utils/homeLayout.js';
 import {
   clearFailedLogins,
   isNewDevice,
@@ -717,6 +718,41 @@ export const setPrivacySettings = async (req, res, next) => {
   }
 };
 
+/** GET /api/auth/home-layout — this person's Home layout (utils/homeLayout.js). */
+export const getHomeLayout = async (req, res, next) => {
+  try {
+    return sendResponse(res, HTTP_STATUS.OK, 'Home layout fetched', describeHomeLayout(req.user));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /api/auth/home-layout — body { order, hidden, shortcuts }. Replaces the
+ * whole layout; `shortcuts: null` goes back to the app's default shortcuts.
+ */
+export const saveHomeLayout = async (req, res, next) => {
+  try {
+    const { layout, error } = parseHomeLayout(req.body);
+    if (error) return sendError(res, HTTP_STATUS.BAD_REQUEST, error);
+    const update = {
+      $set: {
+        'homeLayout.order': layout.order,
+        'homeLayout.hidden': layout.hidden,
+        'homeLayout.shortcutStyles': layout.shortcutStyles,
+        'homeLayout.blocks': layout.blocks,
+        'homeLayout.updatedAt': new Date(),
+      },
+    };
+    if (layout.shortcuts) update.$set['homeLayout.shortcuts'] = layout.shortcuts;
+    else update.$unset = { 'homeLayout.shortcuts': 1 };
+    const user = await User.findByIdAndUpdate(req.userId, update, { new: true });
+    return sendResponse(res, HTTP_STATUS.OK, 'Home layout saved', describeHomeLayout(user));
+  } catch (error) {
+    next(error);
+  }
+};
+
 /** PUT /api/auth/privacy/ai-consent — body { granted: boolean }. */
 export const setAiConsent = async (req, res, next) => {
   try {
@@ -889,7 +925,7 @@ export const getDashboardSummary = async (req, res, next) => {
       }
     }
 
-    const today = todayDateKey();
+    const today = clientTodayKey(req);
     const completedHabitsToday = habits.filter((habit) =>
       habit.completedDates?.includes(today),
     ).length;
@@ -897,7 +933,18 @@ export const getDashboardSummary = async (req, res, next) => {
       100,
       Math.max(45, 55 + trackedDays * 4 + completedHabitsToday * 2),
     );
-    const predictions = settings ? computeCyclePredictions(settings) : null;
+    // Same history-aware prediction as GET /api/cycle/predictions, so Home's
+    // fallback numbers never disagree with the tracker.
+    const predictions = settings
+      ? computeCyclePredictions(
+          settings,
+          await CycleLog.find({ userId: req.userId })
+            .select('dateKey flow')
+            .sort({ dateKey: 1 })
+            .lean(),
+          { today: clientToday(req) },
+        )
+      : null;
 
     return sendResponse(res, HTTP_STATUS.OK, 'Dashboard summary fetched', {
       user: user.toJSON(),

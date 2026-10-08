@@ -12,6 +12,7 @@ import {
   pickDefined,
   validateDateKey,
   validateMonthKey,
+  clientToday,
 } from '../utils/apiHelpers.js';
 import {
   buildCycleAnalytics,
@@ -555,7 +556,7 @@ export const getPredictions = async (req, res, next) => {
     // Pass the full log history so the prediction is anchored on the user's
     // actual logged periods (and their real cycle-length variability), not a
     // fixed configured cycle length.
-    const predictions = computeCyclePredictions(settings, logs);
+    const predictions = computeCyclePredictions(settings, logs, { today: clientToday(req) });
     const analyticsData = buildCycleAnalytics(logs, settings).map((item) => ({
       month: new Date(`${item.month}-01T00:00:00.000Z`).toLocaleDateString('en-US', {
         month: 'short',
@@ -635,7 +636,9 @@ export const getSymptomPredictions = async (req, res, next) => {
     // flow logs from episode detection, corrupting the very anchor this fix
     // exists to use.
     const allLogs = await CycleLog.find({ userId: req.userId }).sort({ dateKey: 1 });
-    const nextCycleStart = computeCyclePredictions(settings, allLogs).nextPeriodDateKey;
+    const nextCycleStart = computeCyclePredictions(settings, allLogs, {
+      today: clientToday(req),
+    }).nextPeriodDateKey;
 
     const logs = allLogs.filter((log) => log.symptoms && log.symptoms.length > 0);
 
