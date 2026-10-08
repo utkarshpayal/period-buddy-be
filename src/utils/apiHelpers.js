@@ -108,6 +108,35 @@ export const dateToDateKey = (date) => new Date(date).toISOString().slice(0, 10)
 
 export const todayDateKey = () => dateToDateKey(new Date());
 
+/**
+ * The person's local "today" (YYYY-MM-DD). Day logs are keyed by the phone's
+ * local date, so cycle day, phase and "days until" must count from it too,
+ * not from server UTC (in India that's yesterday until 05:30). The app sends
+ * `X-Timezone-Offset` (Date#getTimezoneOffset, e.g. -330 for IST) on every
+ * request; `timezoneOffsetMinutes` in the query or body also works. Falls
+ * back to UTC today.
+ */
+export const clientTodayKey = (req, now = new Date()) => {
+  const raw =
+    req?.get?.('X-Timezone-Offset') ??
+    req?.query?.timezoneOffsetMinutes ??
+    req?.body?.timezoneOffsetMinutes;
+  const offset = Number(raw);
+  if (
+    raw === undefined ||
+    raw === null ||
+    raw === '' ||
+    !Number.isInteger(offset) ||
+    Math.abs(offset) > 840
+  ) {
+    return dateToDateKey(now);
+  }
+  return new Date(now.getTime() - offset * 60000).toISOString().slice(0, 10);
+};
+
+/** `clientTodayKey` as the UTC-midnight Date that computeCyclePredictions' `today` expects. */
+export const clientToday = (req, now = new Date()) => dateFromDateKey(clientTodayKey(req, now));
+
 export const createHttpError = (message, statusCode = 500) => {
   const error = new Error(message);
   error.statusCode = statusCode;

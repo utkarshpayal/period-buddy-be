@@ -16,6 +16,7 @@ import {
   getPagination,
   isPaginatedRequest,
   sendPaginatedList,
+  clientToday,
 } from '../utils/apiHelpers.js';
 import { generateCareSuggestions } from '../utils/careSuggestionsAi.js';
 import { ACTIVE_ACCOUNT_FILTER } from '../utils/accountStatus.js';
@@ -277,7 +278,7 @@ export const getPartnerSharedData = async (req, res, next) => {
         // configured lastPeriodStartDate, so the phase shown to the partner
         // matches what the owner's own tracker screen shows.
         const logs = await CycleLog.find({ userId: myProfile.partnerId }).sort({ dateKey: 1 });
-        predictions = computeCyclePredictions(settings, logs);
+        predictions = computeCyclePredictions(settings, logs, { today: clientToday(req) });
       }
     }
 

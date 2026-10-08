@@ -6,7 +6,7 @@ import Notification from '../models/Notification.js';
 import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
-import { isValidObjectId } from '../utils/apiHelpers.js';
+import { isValidObjectId, clientToday } from '../utils/apiHelpers.js';
 import { computeCyclePredictions } from '../utils/cycle.js';
 import {
   CIRCLE_LIMITS,
@@ -335,11 +335,11 @@ export const removeMember = async (req, res, next) => {
 };
 
 /** The poster's current phase, or null if they have no cycle set up. */
-const currentPhaseOf = async (userId) => {
+const currentPhaseOf = async (userId, today) => {
   const settings = await CycleSettings.findOne({ userId }).lean();
   if (!settings) return null;
   const logs = await CycleLog.find({ userId }).select('dateKey flow').sort({ dateKey: 1 }).lean();
-  return computeCyclePredictions(settings, logs).currentPhase ?? null;
+  return computeCyclePredictions(settings, logs, { today }).currentPhase ?? null;
 };
 
 /** POST /api/circles/:id/vibes — body { emoji, text?, sharePhase?, askForSupport? } */
@@ -350,7 +350,7 @@ export const postVibe = async (req, res, next) => {
     const parsed = parseVibeInput(req.body);
     if (parsed.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, parsed.error);
     const { sharePhase, ...fields } = parsed.vibe;
-    const phase = sharePhase ? await currentPhaseOf(req.userId) : null;
+    const phase = sharePhase ? await currentPhaseOf(req.userId, clientToday(req)) : null;
     const vibe = await CircleVibe.create({
       ...fields,
       phase,

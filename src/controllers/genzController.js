@@ -8,7 +8,7 @@ import BestieCircle from '../models/BestieCircle.js';
 import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
-import { isValidObjectId } from '../utils/apiHelpers.js';
+import { isValidObjectId, clientToday } from '../utils/apiHelpers.js';
 import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
 import { computeCyclePredictions, CYCLE_PHASES } from '../utils/cycle.js';
 import {
@@ -95,7 +95,7 @@ export const getEra = async (req, res, next) => {
       loadTips(),
       loadEras(),
     ]);
-    const predictions = computeCyclePredictions(settings, logs);
+    const predictions = computeCyclePredictions(settings, logs, { today: clientToday(req) });
     return sendResponse(res, HTTP_STATUS.OK, 'Era ready', {
       era: buildEra(predictions, tips, eras),
       eras,

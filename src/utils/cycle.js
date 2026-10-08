@@ -269,6 +269,33 @@ export const analyzeCycleHistory = (cycleLengths = [], configuredCycleLength = 2
 };
 
 /**
+ * The start of the most recent period, which every prediction counts from.
+ *
+ * Normally the last logged period's first day. The configured
+ * `lastPeriodStartDate` (onboarding, Cycle Settings) wins only when it is
+ * *newer* than that period (past its last day plus the gap that would still
+ * join it), i.e. the person told us about a period they didn't log day by
+ * day. A configured date inside the logged period, older than it or in the
+ * future never moves the anchor.
+ */
+export const choosePeriodAnchor = (lastEpisode, configuredStart, today = new Date()) => {
+  const todayKey = dateToDateKey(today);
+  const configuredKey =
+    configuredStart && !Number.isNaN(new Date(configuredStart).getTime())
+      ? dateToDateKey(configuredStart)
+      : null;
+  const usableConfigured = configuredKey && configuredKey <= todayKey ? configuredKey : null;
+  if (!lastEpisode) return dateFromDateKey(usableConfigured ?? configuredKey ?? todayKey);
+  if (
+    usableConfigured &&
+    diffDays(dateFromDateKey(usableConfigured), dateFromDateKey(lastEpisode.endKey)) > 2
+  ) {
+    return dateFromDateKey(usableConfigured);
+  }
+  return dateFromDateKey(lastEpisode.startKey);
+};
+
+/**
  * Compute next-period / phase / fertility predictions.
  *
  * @param settings CycleSettings (lastPeriodStartDate, cycleLength, periodLength)
@@ -285,6 +312,7 @@ export const computeCyclePredictions = (settings, logs = [], options = {}) => {
   }
 
   const periodLength = settings.periodLength || 5;
+  // Callers answering a request pass the person's local today (clientToday).
   const today = options.today ? new Date(options.today) : new Date();
 
   const episodes = derivePeriodEpisodes(logs);
@@ -298,9 +326,7 @@ export const computeCyclePredictions = (settings, logs = [], options = {}) => {
   // (even one that differs from a previously predicted date) immediately
   // becomes the basis for the next prediction.
   const lastEpisode = episodes[episodes.length - 1];
-  const anchor = lastEpisode
-    ? dateFromDateKey(lastEpisode.startKey)
-    : new Date(settings.lastPeriodStartDate);
+  const anchor = choosePeriodAnchor(lastEpisode, settings.lastPeriodStartDate, today);
   const actualPeriodStartISO = lastEpisode
     ? dateFromDateKey(lastEpisode.startKey).toISOString()
     : null;
