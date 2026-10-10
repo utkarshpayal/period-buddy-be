@@ -255,8 +255,9 @@ export const retireDoctorProfiles = async (filter, { reason }) => {
         cancelReason: 'Doctor no longer available',
       },
     );
-    // Paid ones: refund queue for finance (Clinical finance → Refunds), and
-    // the doctor's session count corrected.
+    // Paid ones: refunded automatically through Cashfree by the payout runner
+    // (utils/consultationRefunds.js; Clinical finance → Refunds shows them),
+    // and the doctor's session count corrected.
     const paidIds = open.filter((c) => c.paymentStatus === 'paid').map((c) => c._id);
     if (paidIds.length) {
       await Consultation.updateMany({ _id: { $in: paidIds } }, { refundStatus: 'required' });

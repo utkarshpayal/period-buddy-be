@@ -54,6 +54,13 @@ router.post('/verify', ...patient, consultationController.verifyConsultationPaym
 router.get('/my', ...patient, consultationController.getMyConsultations);
 
 /**
+ * @route   GET /api/consultation/:id/prescription
+ * @desc    Printable prescription for one of the user's sessions ({ html, fileName, number })
+ * @access  Private
+ */
+router.get('/:id/prescription', ...patient, consultationController.getPrescription);
+
+/**
  * @route   GET /api/consultation/:id/messages
  * @desc    Get chat messages for a consultation
  * @access  Private

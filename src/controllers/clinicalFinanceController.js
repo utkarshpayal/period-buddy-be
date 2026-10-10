@@ -37,6 +37,7 @@ import {
 } from '../utils/payoutMath.js';
 import { describeEarning, describePayout } from './doctorWalletController.js';
 import { isPayoutConfigured } from '../utils/cashfreePayoutClient.js';
+import { autoRefundsEnabled, retryConsultationRefund } from '../utils/consultationRefunds.js';
 
 /**
  * Clinical Admin: commission rules, the earnings ledger and the payout queue
@@ -583,8 +584,9 @@ export const getPayoutMethodById = async (req, res, next) => {
 /**
  * GET /api/admin/clinical-finance/refunds?status=required|processed — paid
  * consultations that were cancelled (by the patient, the doctor or the
- * system) and are owed, or were given, a refund. Refunds are made by hand in
- * the Cashfree dashboard for now, then marked here.
+ * system) and are owed, or were given, a refund. Refunds go out automatically
+ * through Cashfree (`auto`); one that can't, or keeps failing, is retried or
+ * made by hand and marked here.
  */
 export const listRefunds = async (req, res, next) => {
   try {
@@ -614,6 +616,17 @@ export const listRefunds = async (req, res, next) => {
         refundStatus: c.refundStatus,
         refundedAt: c.refundedAt || null,
         refundReference: c.refundReference || null,
+        // The automatic Cashfree refund (utils/consultationRefunds.js).
+        auto: c.refundAuto
+          ? {
+              status: c.refundAuto.status || null,
+              attempts: c.refundAuto.attempts || 0,
+              lastError: c.refundAuto.lastError || null,
+              nextAttemptAt: c.refundAuto.nextAttemptAt || null,
+              providerStatus: c.refundAuto.providerStatus || null,
+              refundId: c.refundAuto.refundId || null,
+            }
+          : null,
         doctor: c.doctorId ? { _id: c.doctorId._id, name: c.doctorId.name } : null,
         patient: c.userId
           ? {
@@ -625,6 +638,45 @@ export const listRefunds = async (req, res, next) => {
           : null,
       })),
       pagination: buildPagination({ page, limit, total }),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/admin/clinical-finance/refunds/:id/retry — a fresh round of
+ * automatic Cashfree refund attempts for a failed or skipped one. Audit-logged. */
+export const retryRefund = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid consultation id');
+    }
+    if (!autoRefundsEnabled()) {
+      return sendError(res, HTTP_STATUS.SERVICE_UNAVAILABLE, 'Automatic refunds are turned off');
+    }
+    const outcome = await retryConsultationRefund(req.params.id);
+    if (outcome === null) {
+      return sendError(
+        res,
+        HTTP_STATUS.NOT_FOUND,
+        'No failed automatic refund for this consultation',
+      );
+    }
+    await recordAudit({
+      req,
+      action: AUDIT_ACTIONS.CONSULTATION_REFUND_RETRIED,
+      resourceType: 'consultation',
+      resourceId: req.params.id,
+      metadata: { outcome },
+    });
+    const consultation = await Consultation.findById(req.params.id)
+      .select('refundStatus refundAuto')
+      .lean();
+    return sendResponse(res, HTTP_STATUS.OK, 'Refund retried', {
+      _id: req.params.id,
+      outcome,
+      refundStatus: consultation?.refundStatus,
+      auto: consultation?.refundAuto || null,
     });
   } catch (error) {
     next(error);

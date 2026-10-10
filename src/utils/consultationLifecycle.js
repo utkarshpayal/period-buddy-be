@@ -5,6 +5,7 @@ import Notification from '../models/Notification.js';
 import User from '../models/User.js';
 import logger from './logger.js';
 import { broadcastToRoom } from '../config/websocket.js';
+import { requestConsultationRefund } from './consultationRefunds.js';
 import { describeVideoCall } from './videoCall.js';
 import {
   recordConsultationEarning,
@@ -138,6 +139,9 @@ export const cancelConsultationRecord = async (
       cancelledBy: by,
       reason,
     });
+    // Straight to Cashfree; not awaited, so cancelling stays quick. The
+    // payout runner retries it if this attempt fails.
+    void requestConsultationRefund(cancelled._id);
   }
 
   const doctorName = doctor?.name || 'Your doctor';
@@ -208,6 +212,7 @@ export const finalizePaidConsultation = async (consultation) => {
         title: 'Booking was cancelled',
         body: 'Your payment came through after this booking was cancelled. It will be refunded.',
       });
+      void requestConsultationRefund(current._id);
       return { consultation: current, outcome: 'refund' };
     }
     return { consultation: current, outcome: 'already' };

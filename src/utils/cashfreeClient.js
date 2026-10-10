@@ -116,3 +116,63 @@ export const getOrderStatus = async (orderId) => {
     throw new Error('Failed to fetch payment order status', { cause: error });
   }
 };
+
+/** Error from a Cashfree call, with the HTTP status and Cashfree's own code
+ * (e.g. `refund_id_already_exists`) so callers can tell retryable from final. */
+export class CashfreeApiError extends Error {
+  constructor(message, { status, code } = {}) {
+    super(message);
+    this.name = 'CashfreeApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+const cashfreeJson = async (path, init, what) => {
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { ...init, headers: authHeaders() });
+  } catch (error) {
+    // Network failure: no status, always worth retrying.
+    throw new CashfreeApiError(`Could not reach Cashfree (${what}): ${error.message}`);
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new CashfreeApiError(data?.message || `Cashfree ${what} failed (${response.status})`, {
+      status: response.status,
+      code: data?.code,
+    });
+  }
+  return data;
+};
+
+/**
+ * Refunds (part of) a paid order back to the customer's original payment
+ * method: POST /pg/orders/{order_id}/refunds. `refundId` is ours and must be
+ * unique per refund; sending the same one twice is refused by Cashfree, which
+ * is what makes a retry safe. Amount in whole rupees, like the order.
+ * Returns Cashfree's refund entity (`refund_status`: PENDING, SUCCESS,
+ * CANCELLED or ONHOLD; `cf_refund_id`; `refund_arn` once the bank has it).
+ */
+export const createRefund = ({ orderId, refundId, amount, note }) =>
+  cashfreeJson(
+    `/orders/${encodeURIComponent(orderId)}/refunds`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        refund_amount: amount,
+        refund_id: refundId,
+        refund_note: note ? String(note).slice(0, 100) : undefined,
+        refund_speed: 'STANDARD',
+      }),
+    },
+    'refund',
+  );
+
+/** One refund's current state: GET /pg/orders/{order_id}/refunds/{refund_id}. */
+export const getRefund = ({ orderId, refundId }) =>
+  cashfreeJson(
+    `/orders/${encodeURIComponent(orderId)}/refunds/${encodeURIComponent(refundId)}`,
+    { method: 'GET' },
+    'refund lookup',
+  );
