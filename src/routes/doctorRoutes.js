@@ -2,6 +2,7 @@ import express from 'express';
 import * as doctorController from '../controllers/doctorController.js';
 import * as twoFactorController from '../controllers/twoFactorController.js';
 import * as walletController from '../controllers/doctorWalletController.js';
+import * as referralController from '../controllers/referralController.js';
 import { uploadContentMedia } from '../controllers/uploadController.js';
 import { authenticate, authorize } from '../middleware/authMiddleware.js';
 import { requirePermission } from '../middleware/rbac.js';
@@ -12,6 +13,7 @@ import {
   authLimiter,
   noopLimiter,
   rateLimitEnabled,
+  referralLimiter as referralRateLimiter,
   videoAttendanceLimiter,
   videoJoinLimiter,
 } from '../middleware/rateLimiters.js';
@@ -205,6 +207,17 @@ router.post(
   attendanceLimiter,
   videoCallController.reportDoctorAttendance,
 );
+/**
+ * @route   GET /api/doctor/consultations/:id/prescription
+ * @desc    The printable prescription the patient downloads ({ html, fileName, number })
+ * @access  Private (doctor)
+ */
+router.get(
+  '/consultations/:id/prescription',
+  authenticate,
+  authorize('doctor'),
+  doctorController.getPrescriptionDocument,
+);
 router.patch(
   '/consultations/:id/prescription',
   authenticate,
@@ -283,8 +296,59 @@ router.delete('/wallet/methods/:id', ...doctorOnly, walletController.removeMetho
  */
 router.post('/wallet/methods/:id/default', ...doctorOnly, walletController.makeDefaultMethod);
 
+/* ---------------------------------------------------------------------------
+ * Doctor — refer a colleague (controllers/referralController.js)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * @route   GET /api/doctor/referrals
+ * @desc    My referrals, commission-free sessions left and the program rules
+ * @access  Private (doctor)
+ */
+router.get('/referrals', ...doctorOnly, referralController.getMyReferrals);
+
+/**
+ * @route   POST /api/doctor/referrals
+ * @desc    Refer a colleague { name, email, phone?, note? }
+ * @access  Private (doctor)
+ */
+// Each referral emails an invite: a per-account daily cap on top of the open-referral cap.
+const referralLimiter = rateLimitEnabled ? referralRateLimiter : noopLimiter;
+router.post('/referrals', ...doctorOnly, referralLimiter, referralController.createMyReferral);
+
+/**
+ * @route   DELETE /api/doctor/referrals/:id
+ * @desc    Withdraw a referral that is still in review
+ * @access  Private (doctor)
+ */
+router.delete('/referrals/:id', ...doctorOnly, referralController.withdrawMyReferral);
+
 router.get('/availability', authenticate, authorize('doctor'), doctorController.getAvailability);
 router.put('/availability', authenticate, authorize('doctor'), doctorController.setAvailability);
+
+/**
+ * @route   GET /api/doctor/availability/schedule
+ * @desc    Weekly hours, date overrides (special hours / days off) and booking rules
+ * @access  Private (doctor)
+ */
+router.get(
+  '/availability/schedule',
+  authenticate,
+  authorize('doctor'),
+  doctorController.getSchedule,
+);
+
+/**
+ * @route   PUT /api/doctor/availability/schedule
+ * @desc    Replace weekly hours, date overrides and booking rules; lists booked sessions now outside hours
+ * @access  Private (doctor)
+ */
+router.put(
+  '/availability/schedule',
+  authenticate,
+  authorize('doctor'),
+  doctorController.saveSchedule,
+);
 
 // Reel video / thumbnail uploads for the clinician portal — same S3 handler
 // as the admin content upload, but scoped to the doctor role.

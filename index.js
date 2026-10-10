@@ -61,6 +61,7 @@ import circleRoutes from './src/routes/circleRoutes.js';
 import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
 import adminSubscriptionRoutes from './src/routes/adminSubscriptionRoutes.js';
 import clinicalFinanceRoutes from './src/routes/clinicalFinanceRoutes.js';
+import referralRoutes from './src/routes/referralRoutes.js';
 import { cashfreePayoutWebhook } from './src/controllers/payoutWebhookController.js';
 import { cashfreeConsultationWebhook } from './src/controllers/consultationController.js';
 import { startPayoutRunner, stopPayoutRunner } from './src/utils/payoutRunner.js';
@@ -253,6 +254,7 @@ app.use('/api/subscriptions', subscriptionRoutes);
 // subscriptions/* would otherwise fall through its middleware first too).
 app.use('/api/admin/subscriptions', adminSubscriptionRoutes);
 app.use('/api/admin/clinical-finance', clinicalFinanceRoutes);
+app.use('/api/admin/referrals', referralRoutes);
 app.use('/api/admin/hr', hrRoutes);
 app.use('/api/sign', signRoutes);
 app.use('/api/admin', adminRoutes);

@@ -112,6 +112,22 @@ export const videoAttendanceLimiter = rateLimit({
 });
 
 /**
+ * Gynac referrals: each one emails an invite to an address the gynac picks,
+ * so cap how many a single account can send. Mount after `authenticate`.
+ */
+export const referralLimiter = rateLimit({
+  windowMs: toInt(process.env.REFERRAL_RATE_LIMIT_WINDOW_MS, 24 * 60 * 60 * 1000),
+  max: toInt(process.env.REFERRAL_RATE_LIMIT_MAX, 20),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.userId ? `user:${req.userId}` : ipKeyGenerator(req.ip)),
+  message: {
+    success: false,
+    message: "You've sent a lot of referrals today. Please try again tomorrow.",
+  },
+});
+
+/**
  * No-op passthrough used when rate limiting is disabled (e.g. local dev), so
  * call sites can mount a limiter unconditionally without branching.
  */

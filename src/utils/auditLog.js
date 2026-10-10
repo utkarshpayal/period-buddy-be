@@ -16,6 +16,7 @@ export const AUDIT_ACTIONS = {
   DOCTOR_REACTIVATED: 'doctor.reactivated',
   DOCTOR_DELETED: 'doctor.deleted',
   CONSULTATION_REFUNDED: 'consultation.refunded',
+  CONSULTATION_REFUND_RETRIED: 'consultation.refund_retried',
   // Commission & payouts (controllers/clinicalFinanceController.js)
   PAYOUT_SETTINGS_UPDATED: 'payout_settings.updated',
   DOCTOR_COMMISSION_UPDATED: 'doctor.commission_updated',
@@ -26,6 +27,18 @@ export const AUDIT_ACTIONS = {
   DOCTOR_PAYOUT_MARKED_PAID: 'doctor_payout.marked_paid',
   // A staff member opened a doctor's full bank / UPI details to pay by hand.
   DOCTOR_PAYOUT_METHOD_VIEWED: 'doctor_payout_method.viewed',
+  // Gynac referral program (controllers/referralController.js, utils/referrals.js)
+  REFERRAL_SUBMITTED: 'referral.submitted',
+  REFERRAL_WITHDRAWN: 'referral.withdrawn',
+  REFERRAL_CREATED: 'referral.created',
+  REFERRAL_APPROVED: 'referral.approved',
+  REFERRAL_REJECTED: 'referral.rejected',
+  REFERRAL_CANCELLED: 'referral.cancelled',
+  REFERRAL_REASSIGNED: 'referral.reassigned',
+  REFERRAL_REWARD_GRANTED: 'referral.reward_granted',
+  REFERRAL_CREDIT_GRANTED: 'referral_credit.granted',
+  REFERRAL_CREDIT_REVOKED: 'referral_credit.revoked',
+  REFERRAL_SETTINGS_UPDATED: 'referral_settings.updated',
   CONTENT_CREATED: 'content.created',
   CONTENT_UPDATED: 'content.updated',
   CONTENT_VISIBILITY_CHANGED: 'content.visibility_changed',

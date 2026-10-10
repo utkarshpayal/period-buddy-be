@@ -10,6 +10,7 @@ import User from '../models/User.js';
 import logger from './logger.js';
 import { sendMail } from './mailer.js';
 import { getDoctorPayoutTemplate } from '../templates/emailTemplates.js';
+import { releaseFreeSession, reserveFreeSession } from './referrals.js';
 import {
   DEBITING_PAYOUT_STATUSES,
   OPEN_PAYOUT_STATUSES,
@@ -126,12 +127,42 @@ export const recordConsultationEarning = async (consultationOrId, { settings } =
   if (!doctor) return null;
 
   const { bps, source } = effectiveCommissionBps(doctor, cfg);
-  const split = splitCommission(toMinor(consultation.amountPaid), bps);
+  const grossMinor = toMinor(consultation.amountPaid);
+  let split = splitCommission(grossMinor, bps);
+  let commissionSource = source;
   const completed = consultation.status === 'completed';
   const completedAt = completed ? consultation.completedAt || new Date() : undefined;
+  const paidAt = consultation.startedAt || consultation.updatedAt || new Date();
 
+  // A referral credit waives the commission (utils/referrals.js). Reserve
+  // it before the insert; if the insert turns out to be a no-op (the
+  // earning already existed), give the session straight back.
+  let freeCredit = null;
+  if (split.commissionMinor > 0) {
+    const exists = await DoctorEarning.exists({
+      type: 'consultation',
+      consultationId: consultation._id,
+    });
+    if (!exists) {
+      freeCredit = await reserveFreeSession({
+        doctorId,
+        consultationId: consultation._id,
+        // startedAt is set at payment. Old rows without it fall back to
+        // creation (never updatedAt, which any later edit moves forward),
+        // so a backfill can't spend a credit on a session paid before it.
+        paidAt: consultation.startedAt || consultation.createdAt || paidAt,
+        commissionMinor: split.commissionMinor,
+      });
+    }
+  }
+  if (freeCredit) {
+    split = splitCommission(grossMinor, 0);
+    commissionSource = 'referral';
+  }
+
+  let inserted = false;
   try {
-    await DoctorEarning.updateOne(
+    const result = await DoctorEarning.updateOne(
       { type: 'consultation', consultationId: consultation._id },
       {
         $setOnInsert: {
@@ -140,17 +171,36 @@ export const recordConsultationEarning = async (consultationOrId, { settings } =
           consultationId: consultation._id,
           currency: (consultation.currency || WALLET_CURRENCY).toUpperCase(),
           ...split,
-          commissionSource: source,
+          commissionSource,
+          ...(freeCredit ? { referralCreditId: freeCredit._id } : {}),
           status: 'active',
-          paidAt: consultation.startedAt || consultation.updatedAt || new Date(),
+          paidAt,
           completedAt,
           availableAt: completed ? releaseDateFor(completedAt, cfg.holdDays) : null,
         },
       },
       { upsert: true },
     );
+    inserted = Boolean(result.upsertedCount);
   } catch (error) {
-    if (!isDuplicateKey(error)) throw error; // a concurrent insert won; fine
+    if (!isDuplicateKey(error)) {
+      if (freeCredit) await releaseFreeSession(consultation._id, { creditId: freeCredit._id });
+      throw error;
+    }
+    // a concurrent insert won; fine
+  }
+  if (freeCredit && !inserted) {
+    // Someone else created this earning: keep the session only if theirs
+    // used this very credit; otherwise give back the one we took.
+    const row = await DoctorEarning.findOne({
+      type: 'consultation',
+      consultationId: consultation._id,
+    })
+      .select('referralCreditId')
+      .lean();
+    if (String(row?.referralCreditId) !== String(freeCredit._id)) {
+      await releaseFreeSession(consultation._id, { creditId: freeCredit._id });
+    }
   }
   return DoctorEarning.findOne({ type: 'consultation', consultationId: consultation._id }).lean();
 };
@@ -190,10 +240,24 @@ export const reverseConsultationEarnings = async (consultationIds, reason) => {
     Boolean,
   );
   if (ids.length === 0) return 0;
-  const result = await DoctorEarning.updateMany(
-    { type: 'consultation', consultationId: { $in: ids }, status: 'active', completedAt: null },
-    { $set: { status: 'reversed', reversedAt: new Date(), reversalReason: reason } },
-  );
+  const filter = {
+    type: 'consultation',
+    consultationId: { $in: ids },
+    status: 'active',
+    completedAt: null,
+  };
+  const free = await DoctorEarning.find({ ...filter, commissionSource: 'referral' })
+    .select('_id consultationId')
+    .lean();
+  const result = await DoctorEarning.updateMany(filter, {
+    $set: { status: 'reversed', reversedAt: new Date(), reversalReason: reason },
+  });
+  // The session never happened: its commission-free session goes back.
+  for (const e of free) {
+    if (await DoctorEarning.exists({ _id: e._id, status: 'reversed' })) {
+      await safeEarningHook('release_free_session', () => releaseFreeSession(e.consultationId));
+    }
+  }
   return result.modifiedCount || 0;
 };
 
@@ -1023,6 +1087,15 @@ export const reverseEarning = async (earningId, adminId, reason) =>
     earning.reversedBy = adminId;
     await earning.save({ session });
     return earning;
+  }).then(async (earning) => {
+    // A free session reversed before it was completed gets its session back;
+    // one already delivered stays used (docs/gynac-referrals-plan.md).
+    if (earning.commissionSource === 'referral' && !earning.completedAt) {
+      await safeEarningHook('release_free_session', () =>
+        releaseFreeSession(earning.consultationId),
+      );
+    }
+    return earning;
   });
 
 /**
@@ -1079,7 +1152,9 @@ export const reconcileEarnings = async () => {
     status: { $in: ['paid', 'active', 'completed'] },
     $or: [{ startedAt: { $gte: since } }, { startedAt: null, updatedAt: { $gte: since } }],
   })
-    .select('_id doctorId status paymentStatus amountPaid currency startedAt completedAt updatedAt')
+    .select(
+      '_id doctorId status paymentStatus amountPaid currency startedAt completedAt createdAt updatedAt',
+    )
     .lean()
     .cursor({ batchSize: 500 });
 

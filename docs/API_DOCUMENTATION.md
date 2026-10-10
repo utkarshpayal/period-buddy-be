@@ -842,9 +842,49 @@ Payload:
 
 Response: latest user message and doctor reply.
 
+### Prescriptions (printable)
+
+| Method | Path | Who |
+|---|---|---|
+| GET | `/api/consultation/:id/prescription` | The patient, for one of their sessions |
+| GET | `/api/doctor/consultations/:id/prescription` | The assigned doctor (preview and print) |
+
+Both answer `{ html, fileName, number }` once the doctor has written a prescription, else 404.
+
+The doctor writes it with `PATCH /api/doctor/consultations/:id/prescription`, body `{ rx }`:
+
+```json
+{
+  "rx": {
+    "complaints": "Irregular periods for 3 months",
+    "diagnosis": "Iron-deficiency anaemia",
+    "medicines": [
+      { "name": "Tab. Folic acid 5 mg", "dose": "1 tablet", "frequency": "1-0-0", "timing": "After food", "duration": "30 days", "notes": "" }
+    ],
+    "investigations": "CBC, Serum ferritin",
+    "advice": "Iron-rich diet",
+    "followUp": "After 4 weeks"
+  }
+}
+```
+
+`utils/prescriptionRx.js` checks it (up to 20 medicines, each needs a name; at least one medicine, investigation or advice), stores it as `Consultation.rx`, and writes the same as text into `prescription`, which the app's prescription card and older app builds show. The older `{ prescription: "text" }` body still works and clears `rx`. Either way `prescribedAt` is stamped.
+
+`html` is a complete A4 page from `templates/prescriptionTemplate.js`: the doctor's letterhead (`education`, registration from `licenses`, which the doctor sets on `PUT /api/doctor/me`), the patient line (name, age/sex, patient ID `NU-…`), chief complaints and diagnosis, ℞ with a medicine table (1-0-1 style frequencies printed as morning/noon/night), investigations, advice, follow-up, a signature with a "digitally signed" seal, and the Telemedicine Practice Guidelines note. A prescription without `rx` prints its text instead. `number` is `NURA-RX-` plus the last 8 characters of the consultation id. The app turns `html` into a PDF (`lib/prescriptionPdf.ts`), and the doctor portal prints it.
+
 ### PATCH `/api/consultation/:id/cancel`
 
-Cancels a pending checkout, or a paid/active booking until its slot starts (a chat message or call before then doesn't block it). A paid booking is queued for a refund. Patients can't complete a session: the doctor does (`PATCH /api/doctor/consultations/:id/complete`, only once the slot has started), and the scheduler completes any paid/active session 3 hours after its slot ends (`completeOverdueConsultations` in `utils/consultationLifecycle.js`, on the hourly in-process tick and `POST /api/notifications/daily-tick`).
+Cancels a pending checkout, or a paid/active booking until its slot starts (a chat message or call before then doesn't block it). A paid booking is refunded automatically through Cashfree (see "Automatic consultation refunds" under Clinical Admin). Patients can't complete a session: the doctor does (`PATCH /api/doctor/consultations/:id/complete`, only once the slot has started), and the scheduler completes any paid/active session 3 hours after its slot ends (`completeOverdueConsultations` in `utils/consultationLifecycle.js`, on the hourly in-process tick and `POST /api/notifications/daily-tick`).
+
+### Doctor availability (clinician portal)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/doctor/availability/schedule` | `{ timezone, consultationMinutes, bookingWindowDays, minNoticeMinutes, weekly, overrides, limits }`. Overrides for past dates are left out. `consultationMinutes` falls back to the most common slot length in the weekly hours |
+| PUT | `/api/doctor/availability/schedule` | Replaces everything: `{ timezone, consultationMinutes (10–240), weekly: [{ dayOfWeek, startTime, endTime }], overrides: [{ date: "YYYY-MM-DD", ranges: [{ startTime, endTime }], note? }], bookingWindowDays (1–90), minNoticeMinutes (0–10080) }`. Each range is cut into back-to-back consultations of `consultationMinutes` (stored as `slotMinutes`); without it, ranges need `maxSlots` (equal split, the older rule). Answers the saved schedule plus `outsideHours: [{ id, scheduledFor }]`: upcoming paid/active sessions the new hours no longer cover (they are not cancelled) |
+| GET/PUT | `/api/doctor/availability` | Older weekly-only form (`{ slots }`); date overrides and booking rules are left as they are |
+
+A date override (`DoctorDateOverride`) replaces that date's weekly hours; an empty `ranges` is a day off. `GET /api/consultation/doctors/:id/availability` applies overrides, the doctor's `minNoticeMinutes`, and their `bookingWindowDays` (also sent as `windowDays`), and booking (`POST /api/consultation/order`) checks the same rules.
 
 ### Video calls (self-hosted Jitsi)
 
@@ -924,10 +964,49 @@ All under `/api/admin/clinical-finance`, every write audited.
 | GET | `/payouts/:id/method` | Full bank / UPI details to pay by hand (audited) |
 | POST | `/payouts/:id/reject` | `{ note }`, emailed to the doctor; the amount returns to the wallet |
 | POST | `/payouts/:id/sync` | Re-check a Cashfree payout now |
+| GET | `/refunds?status=required\|processed&page=` | Cancelled paid consultations owed / given a refund, each with `auto` (the automatic Cashfree refund: `status` pending/failed/skipped/success, `attempts`, `lastError`, `nextAttemptAt`, `refundId`) |
+| POST | `/refunds/:id/retry` | A fresh round of automatic refund attempts for a failed or skipped one |
+| POST | `/refunds/:id/processed` | `{ reference? }`: refunded by hand (stops the automatic one) |
+
+#### Automatic consultation refunds
+
+A paid booking that's cancelled (by the patient, the doctor or the system, including doctor retirement and account deletion) is refunded in full through the Cashfree Refunds API on its own order, back to the original payment method (`utils/consultationRefunds.js`). The cancel sends it straight away; the payout runner (every 2 min) sends any that are due, retries failures (2 min, 15 min, 1 h, 6 h; 5 attempts) and re-checks pending ones; Cashfree refund webhooks to `/api/consultation/webhook/cashfree` speed that up (the refund is re-read from Cashfree, never taken from the body). `refundStatus` stays `required` until Cashfree reports SUCCESS, then becomes `processed` with `refundReference` (the bank ARN or Cashfree refund id) and the patient is notified. The refund id is fixed per consultation (`refund_<consultationId>`, `_<n>` only after Cashfree cancelled one), so a retry never refunds twice. A booking with no Cashfree order is `skipped` (refund by hand). Off with `CASHFREE_AUTO_REFUNDS=false`.
 
 ### POST `/api/payouts/webhook/cashfree` (public)
 
 Cashfree Payouts V2 webhook. Verified with `x-webhook-signature` (base64 HMAC-SHA256 of `x-webhook-timestamp` + raw body, keyed with `CASHFREE_PAYOUT_CLIENT_SECRET`); the payout's status is then fetched from Cashfree rather than read from the body. 401 on a bad signature, otherwise 200.
+
+## Gynac Referral Program
+
+A gynac refers a colleague and the colleague is invited straight away (no admin review: their profile starts at the referrer's fee with bookings paused, and Clinical/Super Admins get an FYI email); when the colleague sets their password (onboarding), the referrer gets a credit of commission-free sessions (default 5). Offline leads an admin records still start at `submitted` and are approved or rejected. On each paid consultation after the grant, one session is used: the earning is created at 0% commission with `commissionSource: "referral"` (`freeSession: true` on described earnings). A session cancelled or reversed **before completion** gives the session back; one already completed stays used. Credits are used soonest-expiring first. Logic: `utils/referrals.js` (database) and `utils/referralMath.js` (pure, tested). Design: the Admin Workspace repo's `docs/gynac-referrals-plan.md`.
+
+Referral statuses: portal referrals start at `invited`; admin-recorded leads at `submitted` → `invited`; then → `onboarded` (reward `granted`, or `skipped` when the referrer was removed), or `rejected` / `withdrawn` / `cancelled`. One email can only have one live (`submitted`/`invited`/`onboarded`) referral. A referred gynac deactivated or deleted before joining cancels the referral. `POST /api/doctor/invite` accepts an optional `referrerDoctorId`, and an invite to an email already referred from a portal completes that referral. `GET /api/doctor/admin/list` rows carry `referredBy` and `freeSessionsRemaining`.
+
+### Doctor (role `doctor`)
+
+| Method | Path | What it does |
+|---|---|---|
+| GET | `/api/doctor/referrals` | `{ program, summary, referrals, credits }`: program on/off and reward size, free sessions remaining / used, commission saved, my referrals and credits |
+| POST | `/api/doctor/referrals` | `{ name, email, specialty?, phone?, note? }`: creates the referral and emails the colleague their invite (returns the referral, status `invited`, plus `inviteEmailDelivered`). 400 self-referral / bad input, 403 program paused, 409 `CANNOT_REFER` (one generic message for "already on Nura" and "already referred", so the portal never reveals who has an account), 429 too many open referrals or the daily limit (`REFERRAL_RATE_LIMIT_MAX`, default 20/day) |
+| DELETE | `/api/doctor/referrals/:id` | Withdraw, only while `submitted` |
+
+### Clinical Admin (`referrals.read`; writes need `referrals.manage`)
+
+All under `/api/admin/referrals`, every write audited.
+
+| Method | Path | What it does |
+|---|---|---|
+| GET | `/?status=&referrerId=&search=&page=` | Referrals |
+| GET | `/summary` | Counts by status, sessions granted / used / remaining, commission forgone, settings |
+| POST | `/` | `{ referrerDoctorId, doctorId }` credit an invited, not-yet-joined gynac to a referrer, or `{ referrerDoctorId, name, email, phone?, note? }` log a lead |
+| POST | `/:id/approve` | `{ specialty, pricePerSession, name?, ...invite fields }`: sends the invite (email fixed to the referral's). Returns `{ referral, inviteUrl, inviteEmailDelivered }` |
+| POST | `/:id/reject` | `{ reason }`, emailed to the referrer |
+| POST | `/:id/cancel` | `{ reason }`: close a `submitted`/`invited` referral without a reward |
+| PATCH | `/:id/referrer` | `{ referrerDoctorId, reason? }`, before onboarding only |
+| GET | `/credits?doctorId=&status=active\|revoked\|expired&page=` | Credits, with each use |
+| POST | `/credits` | `{ doctorId, sessions (1–50), reason, expiryDays? }` bonus sessions |
+| POST | `/credits/:id/revoke` | `{ reason }`: unused sessions only |
+| GET / PUT | `/settings` | `enabled` (off stops new referrals only), `rewardTrigger` (`onboarded` = when they set up their account, `first_session` = after their first completed paid consultation, checked by the payout runner every 30 min), `rewardSessions` (snapshotted onto each referral when made), `creditExpiryDays` (null = never), `maxOpenPerDoctor` |
 
 ## Q&A Companion
 

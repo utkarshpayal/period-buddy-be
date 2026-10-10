@@ -70,3 +70,11 @@ test('doctor commission & payouts: only Super Admin and Clinical Admin', () => {
   assert.deepEqual(holders.sort(), ['admin', 'clinical_admin']);
   for (const role of holders) assert.ok(hasPermission(role, P.PAYOUTS_MANAGE));
 });
+
+test('gynac referrals: only Super Admin and Clinical Admin', () => {
+  const holders = Object.keys(STAFF_ROLES).filter(
+    (role) => hasPermission(role, P.REFERRALS_READ) || hasPermission(role, P.REFERRALS_MANAGE),
+  );
+  assert.deepEqual(holders.sort(), ['admin', 'clinical_admin']);
+  for (const role of holders) assert.ok(hasPermission(role, P.REFERRALS_MANAGE));
+});

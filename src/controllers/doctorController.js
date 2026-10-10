@@ -3,6 +3,7 @@ import Doctor from '../models/Doctor.js';
 import Consultation from '../models/Consultation.js';
 import ConsultationMessage from '../models/ConsultationMessage.js';
 import DoctorAvailability from '../models/DoctorAvailability.js';
+import DoctorDateOverride from '../models/DoctorDateOverride.js';
 import Reel from '../models/Reel.js';
 import User from '../models/User.js';
 import CycleSettings from '../models/CycleSettings.js';
@@ -38,13 +39,27 @@ import { startSession } from '../utils/sessions.js';
 import DoctorEarning from '../models/DoctorEarning.js';
 import { describeEarning } from './doctorWalletController.js';
 import { deleteFromS3, uploadBufferToS3 } from '../utils/s3.js';
-import { validateWeeklyRanges } from '../utils/consultationSlots.js';
-import { DEFAULT_TIME_ZONE } from '../utils/timezone.js';
+import {
+  BOOKING_LEAD_MINUTES,
+  BOOKING_WINDOW_DAYS,
+  MAX_BOOKING_LEAD_MINUTES,
+  MAX_BOOKING_WINDOW_DAYS,
+  MAX_SLOT_MINUTES,
+  MIN_SLOT_MINUTES,
+  dateKeyOf,
+  rangePlan,
+  isScheduledSlot,
+  validateDateOverrides,
+  validateWeeklyRanges,
+} from '../utils/consultationSlots.js';
+import { DEFAULT_TIME_ZONE, isValidTimeZone, zonedParts } from '../utils/timezone.js';
 import {
   cancelConsultationRecord,
   hasSessionStarted,
   notifyUserLive,
 } from '../utils/consultationLifecycle.js';
+import { buildPrescriptionDocument } from '../utils/prescriptionDocument.js';
+import { cleanRx, rxToText } from '../utils/prescriptionRx.js';
 import { assertAllowedUpload } from '../utils/fileValidation.js';
 import {
   computeWallet,
@@ -52,6 +67,15 @@ import {
   releaseConsultationEarning,
   safeEarningHook,
 } from '../utils/doctorWallet.js';
+import DoctorReferral from '../models/DoctorReferral.js';
+import {
+  cancelReferralsForDoctor,
+  completeReferralOnboarding,
+  freeSessionsRemainingFor,
+  notifyReferrer,
+  referrersFor,
+} from '../utils/referrals.js';
+import { statusFields } from '../utils/referralMath.js';
 
 /**
  * Populate the patient on a consultation, but never expose a deleted
@@ -141,61 +165,70 @@ const reelCreatorId = (doctorId) => `doctor_${doctorId}`;
  * Admin — invite & manage gynecologists
  * ------------------------------------------------------------------------- */
 
-/** POST /api/doctor/invite (admin) — create a doctor profile + login account
- * and email a one-time set-password link. */
-export const inviteDoctor = async (req, res, next) => {
+export class DoctorInviteError extends Error {
+  constructor(message, status = HTTP_STATUS.BAD_REQUEST) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/**
+ * Create a doctor profile + login account and email the one-time
+ * set-password link. Shared by the invite form and by approving a referral
+ * (controllers/referralController.js). Throws DoctorInviteError.
+ */
+export const createDoctorInvite = async (fields, { referredBy, paused = false } = {}) => {
+  const {
+    name,
+    email,
+    specialty,
+    pricePerSession,
+    bio,
+    languages,
+    experience,
+    hospital,
+    avatarEmoji,
+    education,
+  } = fields;
+
+  if (!name?.trim() || !email?.trim() || !specialty?.trim()) {
+    throw new DoctorInviteError('name, email, and specialty are required');
+  }
+  if (parsePrice(pricePerSession) === null) throw new DoctorInviteError(PRICE_ERROR);
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const existing = await User.findOne({ email: normalizedEmail });
+  if (existing) {
+    throw new DoctorInviteError('An account with this email already exists', HTTP_STATUS.CONFLICT);
+  }
+
+  // Split the display name into first/last for the User record.
+  const [firstName, ...rest] = name.trim().split(/\s+/);
+  const lastName = rest.join(' ') || 'Doctor';
+
+  // Placeholder password so schema validation passes; it is unusable until
+  // the invitee sets their own via the invite link (mustSetPassword gate).
+  const placeholderPassword = crypto.randomBytes(24).toString('hex');
+
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const inviteTokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+  const user = await User.create({
+    firstName,
+    lastName: lastName.length >= 2 ? lastName : 'Doctor',
+    email: normalizedEmail,
+    password: placeholderPassword,
+    role: userRoleEnum.DOCTOR,
+    isEmailVerified: false,
+    isActive: true,
+    mustSetPassword: true,
+    inviteTokenHash,
+    inviteTokenExpiresAt: new Date(Date.now() + INVITE_EXPIRY_HOURS * 60 * 60 * 1000),
+  });
+
+  let doctor;
   try {
-    const {
-      name,
-      email,
-      specialty,
-      pricePerSession,
-      bio,
-      languages,
-      experience,
-      hospital,
-      avatarEmoji,
-      education,
-    } = req.body;
-
-    if (!name?.trim() || !email?.trim() || !specialty?.trim()) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'name, email, and specialty are required');
-    }
-    if (parsePrice(pricePerSession) === null) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, PRICE_ERROR);
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
-    const existing = await User.findOne({ email: normalizedEmail });
-    if (existing) {
-      return sendError(res, HTTP_STATUS.CONFLICT, 'An account with this email already exists');
-    }
-
-    // Split the display name into first/last for the User record.
-    const [firstName, ...rest] = name.trim().split(/\s+/);
-    const lastName = rest.join(' ') || 'Doctor';
-
-    // Placeholder password so schema validation passes; it is unusable until
-    // the invitee sets their own via the invite link (mustSetPassword gate).
-    const placeholderPassword = crypto.randomBytes(24).toString('hex');
-
-    const rawToken = crypto.randomBytes(32).toString('hex');
-    const inviteTokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-
-    const user = await User.create({
-      firstName,
-      lastName: lastName.length >= 2 ? lastName : 'Doctor',
-      email: normalizedEmail,
-      password: placeholderPassword,
-      role: userRoleEnum.DOCTOR,
-      isEmailVerified: false,
-      isActive: true,
-      mustSetPassword: true,
-      inviteTokenHash,
-      inviteTokenExpiresAt: new Date(Date.now() + INVITE_EXPIRY_HOURS * 60 * 60 * 1000),
-    });
-
-    const doctor = await Doctor.create({
+    doctor = await Doctor.create({
       userId: user._id,
       email: normalizedEmail,
       name: name.trim(),
@@ -208,28 +241,124 @@ export const inviteDoctor = async (req, res, next) => {
       hospital,
       avatarEmoji: avatarEmoji || '👩‍⚕️',
       education: Array.isArray(education) ? education : [],
-      isAvailable: true,
+      // A gynac invited by a colleague (no admin review) starts with bookings
+      // paused; they resume them once they've joined and checked their profile.
+      isAvailable: !paused,
     });
+  } catch (error) {
+    // Don't leave a login with no profile: it would block this email for good.
+    await User.deleteOne({ _id: user._id });
+    throw error;
+  }
 
-    const inviteUrl = buildInviteUrl(normalizedEmail, rawToken);
+  const inviteUrl = buildInviteUrl(normalizedEmail, rawToken);
 
-    const mailResult = await sendMail({
-      to: normalizedEmail,
-      subject: 'Your Nura clinician invitation',
-      html: getDoctorInviteTemplate({
-        name: name.trim(),
-        inviteUrl,
-        expiryHours: INVITE_EXPIRY_HOURS,
-        specialty: specialty.trim(),
-      }),
-    });
+  const mailResult = await sendMail({
+    to: normalizedEmail,
+    subject: 'Your Nura clinician invitation',
+    html: getDoctorInviteTemplate({
+      name: name.trim(),
+      inviteUrl,
+      expiryHours: INVITE_EXPIRY_HOURS,
+      specialty: specialty.trim(),
+      referredBy,
+    }),
+  });
+
+  return { doctor, inviteUrl, inviteEmailDelivered: mailResult?.delivered !== false };
+};
+
+/** POST /api/doctor/invite (admin) — create a doctor profile + login account
+ * and email a one-time set-password link. An optional `referrerDoctorId`
+ * records the gynac who referred them (their reward comes on onboarding). */
+export const inviteDoctor = async (req, res, next) => {
+  try {
+    const normalizedEmail = String(req.body.email || '')
+      .trim()
+      .toLowerCase();
+    const { referrerDoctorId } = req.body;
+    let referrer = null;
+    if (referrerDoctorId) {
+      if (!isValidObjectId(referrerDoctorId)) {
+        return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid referring gynac');
+      }
+      referrer = await Doctor.findOne({ _id: referrerDoctorId, deletedAt: null })
+        .select('_id name email')
+        .lean();
+      if (!referrer) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Referring gynac not found');
+      if (referrer.email === normalizedEmail) {
+        return sendError(res, HTTP_STATUS.BAD_REQUEST, 'A gynac cannot refer themselves');
+      }
+    }
+    // A colleague already referred from a portal: the invite completes that
+    // referral. A different referrer has to be settled in Referrals first.
+    const pending = normalizedEmail
+      ? await DoctorReferral.findOne({ referredEmail: normalizedEmail, isLive: true })
+      : null;
+    if (pending && pending.status !== 'submitted') {
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        'This email already has a referral in progress — see Gynac Referrals',
+      );
+    }
+    if (pending && referrer && String(pending.referrerDoctorId) !== String(referrer._id)) {
+      return sendError(
+        res,
+        HTTP_STATUS.CONFLICT,
+        'Another gynac already referred this email — reassign it in Gynac Referrals first',
+      );
+    }
+    if (!referrer && pending) {
+      referrer = await Doctor.findById(pending.referrerDoctorId).select('_id name').lean();
+    }
+
+    let invite;
+    try {
+      invite = await createDoctorInvite(req.body, { referredBy: referrer?.name });
+    } catch (error) {
+      if (error instanceof DoctorInviteError) return sendError(res, error.status, error.message);
+      throw error;
+    }
+    const { doctor, inviteUrl, inviteEmailDelivered } = invite;
+
+    let referral = null;
+    if (referrer) {
+      referral = await safeEarningHook('referral_link_invite', async () => {
+        const fields = {
+          ...statusFields('invited'),
+          referredDoctorId: doctor._id,
+          invitedAt: new Date(),
+          reviewedBy: req.userId,
+          reviewedAt: new Date(),
+        };
+        if (pending) {
+          return DoctorReferral.findOneAndUpdate(
+            { _id: pending._id, status: 'submitted' },
+            { $set: fields },
+            { new: true },
+          );
+        }
+        return DoctorReferral.create({
+          referrerDoctorId: referrer._id,
+          referredName: doctor.name,
+          referredEmail: doctor.email,
+          source: 'admin',
+          createdBy: req.userId,
+          ...fields,
+        });
+      });
+    }
+
+    if (referral) notifyReferrer(referral, 'invited');
 
     logger.info('doctor_invited', {
       action: 'doctor_invited',
       adminId: req.userId,
       doctorId: doctor._id,
-      email: normalizedEmail,
-      mailDelivered: mailResult?.delivered !== false,
+      email: doctor.email,
+      mailDelivered: inviteEmailDelivered,
+      referralId: referral?._id,
     });
 
     await recordAudit({
@@ -237,18 +366,38 @@ export const inviteDoctor = async (req, res, next) => {
       action: AUDIT_ACTIONS.DOCTOR_INVITED,
       resourceType: 'doctor',
       resourceId: doctor._id,
-      metadata: { email: normalizedEmail },
+      metadata: {
+        email: doctor.email,
+        ...(referral
+          ? { referralId: String(referral._id), referrerDoctorId: String(referrer._id) }
+          : {}),
+      },
     });
     return sendResponse(res, HTTP_STATUS.CREATED, 'Gynecologist invited', {
       doctor,
-      inviteEmailDelivered: mailResult?.delivered !== false,
+      inviteEmailDelivered,
       // Always surfaced so the trusted admin can copy/share the link directly,
       // regardless of whether email delivery succeeded in this environment.
       inviteUrl,
+      referralId: referral?._id ?? null,
     });
   } catch (error) {
     next(error);
   }
+};
+
+/** Admin list rows + who referred them and their commission-free sessions left. */
+const withReferralInfo = async (doctors) => {
+  const ids = doctors.map((d) => d._id);
+  const [referrers, freeSessions] = await Promise.all([
+    referrersFor(ids),
+    freeSessionsRemainingFor(ids),
+  ]);
+  return doctors.map((d) => ({
+    ...(typeof d.toJSON === 'function' ? d.toJSON() : d),
+    referredBy: referrers.get(String(d._id)) || null,
+    freeSessionsRemaining: freeSessions.get(String(d._id)) || 0,
+  }));
 };
 
 /** GET /api/doctor/admin/list (admin) — all doctors with account status. */
@@ -273,7 +422,12 @@ export const listDoctorsForAdmin = async (req, res, next) => {
     // ?page=&limit= (default 20, max 100) — `pagination` rides on the
     // envelope; without them the full list, as older admin bundles expect.
     if (!isPaginatedRequest(req.query)) {
-      return sendResponse(res, HTTP_STATUS.OK, 'Doctors fetched', await query);
+      return sendResponse(
+        res,
+        HTTP_STATUS.OK,
+        'Doctors fetched',
+        await withReferralInfo(await query),
+      );
     }
     const { page, limit, skip } = getPagination(req.query, { limit: 20, maxLimit: 100 });
     const [doctors, total] = await Promise.all([
@@ -283,7 +437,7 @@ export const listDoctorsForAdmin = async (req, res, next) => {
     return sendPaginatedList(
       res,
       'Doctors fetched',
-      doctors,
+      await withReferralInfo(doctors),
       buildPagination({ page, limit, total }),
     );
   } catch (error) {
@@ -364,6 +518,7 @@ export const resendInvite = async (req, res, next) => {
     await user.save();
 
     const inviteUrl = buildInviteUrl(doctor.email, rawToken);
+    const referredBy = (await referrersFor([doctor._id])).get(String(doctor._id));
 
     const mailResult = await sendMail({
       to: doctor.email,
@@ -373,6 +528,7 @@ export const resendInvite = async (req, res, next) => {
         inviteUrl,
         expiryHours: INVITE_EXPIRY_HOURS,
         specialty: doctor.specialty,
+        referredBy: referredBy?.name,
       }),
     });
 
@@ -408,6 +564,10 @@ export const deactivateDoctor = async (req, res, next) => {
       if (user) await suspendAccount(user);
     }
     const doctor = await Doctor.findById(existing._id);
+
+    await safeEarningHook('referral_cancel', () =>
+      cancelReferralsForDoctor(existing._id, 'The invited gynac was deactivated before joining'),
+    );
 
     await recordAudit({
       req,
@@ -513,6 +673,9 @@ export const deleteDoctorAccount = async (req, res, next) => {
     }
 
     await retireDoctorProfiles({ _id: doctor._id }, { reason: 'doctor_deleted' });
+    await safeEarningHook('referral_cancel', () =>
+      cancelReferralsForDoctor(doctor._id, 'The invited gynac was removed before joining'),
+    );
     if (doctor.userId) {
       const user = await User.findById(doctor.userId);
       if (user && !isDeletedAccount(user)) await softDeleteAccount(user);
@@ -582,6 +745,11 @@ export const setPasswordFromInvite = async (req, res, next) => {
     user.lastLogin = new Date();
     await user.save();
 
+    // Onboarding done: a referral that brought this gynac in pays out now.
+    if (user.role === userRoleEnum.DOCTOR) {
+      await safeEarningHook('referral_onboarding', () => completeReferralOnboarding(user._id));
+    }
+
     const authToken = await startSession(user, req);
 
     // This link also onboards Admin Workspace staff (staffController), so
@@ -627,8 +795,29 @@ export const updateMyProfile = async (req, res, next) => {
       'hospital',
       'avatarEmoji',
       'education',
+      'licenses',
       'isAvailable',
     ]);
+    // Qualifications and registration numbers are printed on prescriptions:
+    // short, trimmed, non-empty strings only.
+    for (const key of ['education', 'licenses']) {
+      if (updates[key] === undefined) continue;
+      if (!Array.isArray(updates[key])) {
+        return sendError(res, HTTP_STATUS.BAD_REQUEST, `${key} must be a list`);
+      }
+      updates[key] = updates[key]
+        .map((v) => String(v ?? '').trim())
+        .filter(Boolean)
+        .slice(0, 10);
+      if (updates[key].some((v) => v.length > 80)) {
+        const what = key === 'licenses' ? 'registration number' : 'qualification';
+        return sendError(
+          res,
+          HTTP_STATUS.BAD_REQUEST,
+          `Each ${what} must be 80 characters or fewer`,
+        );
+      }
+    }
     const fee = cleanFeeUpdates(updates);
     if (fee.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, fee.error);
 
@@ -1110,12 +1299,38 @@ export const sendConsultationMessage = async (req, res, next) => {
   }
 };
 
-/** PATCH /api/doctor/consultations/:id/prescription */
+/** GET /api/doctor/consultations/:id/prescription — the same printable
+ * prescription the patient downloads, for the doctor to preview and print. */
+export const getPrescriptionDocument = async (req, res, next) => {
+  try {
+    const { error, code, consultation } = await loadOwnedConsultation(req.userId, req.params.id);
+    if (error) return sendError(res, code, error);
+    const document = await buildPrescriptionDocument(consultation);
+    if (!document) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'No prescription for this consultation yet');
+    }
+    return sendResponse(res, HTTP_STATUS.OK, 'Prescription fetched', document);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** PATCH /api/doctor/consultations/:id/prescription — `{ rx }` (structured,
+ * see utils/prescriptionRx.js) or the older `{ prescription }` text. */
 export const setPrescription = async (req, res, next) => {
   try {
-    const { prescription } = req.body;
-    if (!prescription?.trim()) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Prescription text is required');
+    let rx;
+    let prescription;
+    if (req.body?.rx !== undefined) {
+      const cleaned = cleanRx(req.body.rx);
+      if (cleaned.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, cleaned.error);
+      rx = cleaned.rx;
+      prescription = rxToText(rx);
+    } else {
+      prescription = typeof req.body?.prescription === 'string' ? req.body.prescription : '';
+      if (!prescription.trim()) {
+        return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Prescription text is required');
+      }
     }
 
     const { error, code, consultation } = await loadOwnedConsultation(req.userId, req.params.id);
@@ -1129,6 +1344,9 @@ export const setPrescription = async (req, res, next) => {
     }
 
     consultation.prescription = prescription.trim();
+    // Free text replaces a structured one, so the two never disagree.
+    consultation.rx = rx;
+    consultation.prescribedAt = new Date();
     await consultation.save();
     await consultation.populate(patientPopulate('firstName lastName email profilePicture'));
     broadcastToRoom(`consultation_${consultation._id}`, {
@@ -1365,6 +1583,196 @@ export const setAvailability = async (req, res, next) => {
     }
 
     return sendResponse(res, HTTP_STATUS.OK, 'Availability updated', created);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** The schedule as the portal's Availability page reads it. Overrides for
+ * dates already past (in the doctor's zone) are left out. */
+/** Consultation length for a doctor who never set one: the most common
+ * slot length in their weekly hours, else 30 minutes. */
+const derivedConsultationMinutes = (weekly) => {
+  const counts = new Map();
+  for (const r of weekly) {
+    const length = rangePlan(r)?.length;
+    if (length) counts.set(length, (counts.get(length) || 0) + 1);
+  }
+  const [best] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0] || [];
+  return best || 30;
+};
+
+const describeSchedule = async (doctor) => {
+  const weekly = await DoctorAvailability.find({ doctorId: doctor._id })
+    .sort({ dayOfWeek: 1, startTime: 1 })
+    .lean();
+  const overrides = await DoctorDateOverride.find({ doctorId: doctor._id })
+    .sort({ date: 1 })
+    .lean();
+  const timezone = weekly[0]?.timezone || overrides[0]?.timezone || DEFAULT_TIME_ZONE;
+  const today = dateKeyOf(zonedParts(new Date(), timezone));
+  return {
+    timezone,
+    bookingWindowDays: doctor.bookingWindowDays || BOOKING_WINDOW_DAYS,
+    minNoticeMinutes: doctor.minNoticeMinutes ?? BOOKING_LEAD_MINUTES,
+    consultationMinutes: doctor.consultationMinutes || derivedConsultationMinutes(weekly),
+    weekly: weekly.map((r) => ({
+      dayOfWeek: r.dayOfWeek,
+      startTime: r.startTime,
+      endTime: r.endTime,
+      maxSlots: r.maxSlots,
+      ...(r.slotMinutes ? { slotMinutes: r.slotMinutes } : {}),
+    })),
+    overrides: overrides
+      .filter((o) => o.date >= today)
+      .map((o) => ({ date: o.date, ranges: o.ranges, note: o.note || '' })),
+    limits: {
+      maxBookingWindowDays: MAX_BOOKING_WINDOW_DAYS,
+      maxMinNoticeMinutes: MAX_BOOKING_LEAD_MINUTES,
+    },
+  };
+};
+
+/** GET /api/doctor/availability/schedule — weekly hours, date overrides and booking rules. */
+export const getSchedule = async (req, res, next) => {
+  try {
+    const doctor = await getDoctorForUser(req.userId);
+    if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor profile not found');
+    return sendResponse(res, HTTP_STATUS.OK, 'Schedule fetched', await describeSchedule(doctor));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /api/doctor/availability/schedule — replace the whole schedule:
+ * `{ timezone, consultationMinutes, weekly: [{ dayOfWeek, startTime, endTime }],
+ * overrides: [{ date: 'YYYY-MM-DD', ranges: [{ startTime, endTime }], note? }],
+ * bookingWindowDays, minNoticeMinutes }`. With `consultationMinutes` every
+ * range is cut into back-to-back consultations of that length; without it
+ * (older clients) each range needs `maxSlots`. An override replaces that
+ * date's weekly hours; no ranges means the day is off. Booked sessions are
+ * never cancelled here: `outsideHours` lists upcoming ones the new schedule no
+ * longer covers, so the doctor can reschedule or cancel them.
+ */
+export const saveSchedule = async (req, res, next) => {
+  try {
+    const doctor = await getDoctorForUser(req.userId);
+    if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor profile not found');
+
+    const timezone = req.body.timezone || DEFAULT_TIME_ZONE;
+    if (!isValidTimeZone(timezone))
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Unknown time zone');
+
+    const { weekly, overrides } = req.body;
+    if (!Array.isArray(weekly) || !Array.isArray(overrides)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'weekly and overrides must be arrays');
+    }
+    const length =
+      req.body.consultationMinutes === undefined ? null : Number(req.body.consultationMinutes);
+    if (
+      length !== null &&
+      (!Number.isInteger(length) || length < MIN_SLOT_MINUTES || length > MAX_SLOT_MINUTES)
+    ) {
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        `Consultation length must be ${MIN_SLOT_MINUTES} to ${MAX_SLOT_MINUTES} minutes`,
+      );
+    }
+    // A fixed length sets each range's slot count; keep maxSlots for readers
+    // that still use it.
+    const slotsFor = (r) => {
+      if (length === null) return { maxSlots: Number(r?.maxSlots) };
+      const plan = rangePlan({ startTime: r?.startTime, endTime: r?.endTime, slotMinutes: length });
+      return { maxSlots: plan?.count || 1, slotMinutes: length };
+    };
+    const ranges = weekly.map((s) => ({
+      dayOfWeek: Number(s?.dayOfWeek),
+      startTime: s?.startTime,
+      endTime: s?.endTime,
+      ...slotsFor(s),
+      timezone,
+      isAvailable: true,
+    }));
+    const dates = overrides.map((o) => ({
+      date: o?.date,
+      ranges: Array.isArray(o?.ranges)
+        ? o.ranges.map((r) => ({ startTime: r?.startTime, endTime: r?.endTime, ...slotsFor(r) }))
+        : o?.ranges,
+      note: typeof o?.note === 'string' ? o.note.trim() : undefined,
+      timezone,
+    }));
+    const problem = validateWeeklyRanges(ranges) || validateDateOverrides(dates);
+    if (problem) return sendError(res, HTTP_STATUS.BAD_REQUEST, problem);
+
+    const windowDays = Number(
+      req.body.bookingWindowDays ?? doctor.bookingWindowDays ?? BOOKING_WINDOW_DAYS,
+    );
+    const notice = Number(
+      req.body.minNoticeMinutes ?? doctor.minNoticeMinutes ?? BOOKING_LEAD_MINUTES,
+    );
+    if (!Number.isInteger(windowDays) || windowDays < 1 || windowDays > MAX_BOOKING_WINDOW_DAYS) {
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        `Booking window must be 1 to ${MAX_BOOKING_WINDOW_DAYS} days`,
+      );
+    }
+    if (!Number.isInteger(notice) || notice < 0 || notice > MAX_BOOKING_LEAD_MINUTES) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Minimum notice must be 0 minutes to 7 days');
+    }
+
+    // Weekly: new rows first, then the old ones, so a failure never leaves
+    // the doctor with no hours.
+    const previous = await DoctorAvailability.find({ doctorId: doctor._id }).select('_id').lean();
+    if (ranges.length) {
+      await DoctorAvailability.insertMany(ranges.map((r) => ({ ...r, doctorId: doctor._id })));
+    }
+    if (previous.length) {
+      await DoctorAvailability.deleteMany({ _id: { $in: previous.map((r) => r._id) } });
+    }
+
+    // Overrides: upsert by date, then drop dates no longer listed (past
+    // dates included, so the collection doesn't grow forever).
+    if (dates.length) {
+      await DoctorDateOverride.bulkWrite(
+        dates.map((o) => ({
+          replaceOne: {
+            filter: { doctorId: doctor._id, date: o.date },
+            replacement: { doctorId: doctor._id, ...o },
+            upsert: true,
+          },
+        })),
+      );
+    }
+    await DoctorDateOverride.deleteMany({
+      doctorId: doctor._id,
+      date: { $nin: dates.map((o) => o.date) },
+    });
+
+    doctor.bookingWindowDays = windowDays;
+    doctor.minNoticeMinutes = notice;
+    if (length !== null) doctor.consultationMinutes = length;
+    await doctor.save();
+
+    const upcoming = await Consultation.find({
+      doctorId: doctor._id,
+      status: { $in: ['paid', 'active'] },
+      scheduledFor: { $gte: new Date() },
+    })
+      .select('scheduledFor')
+      .sort({ scheduledFor: 1 })
+      .limit(200)
+      .lean();
+    const outsideHours = upcoming
+      .filter((c) => !isScheduledSlot(ranges, dates, new Date(c.scheduledFor)))
+      .map((c) => ({ id: c._id, scheduledFor: c.scheduledFor }));
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Schedule saved', {
+      ...(await describeSchedule(doctor)),
+      outsideHours,
+    });
   } catch (error) {
     next(error);
   }

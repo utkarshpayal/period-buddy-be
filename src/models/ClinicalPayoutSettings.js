@@ -37,6 +37,25 @@ const clinicalPayoutSettingsSchema = new mongoose.Schema(
      * past paid session is brought in too, split at the doctor's current rate. */
     earningsStartAt: { type: Date, default: () => new Date(0) },
 
+    /** Gynac referral program (utils/referrals.js). Off stops new referrals
+     * only: referrals already invited still earn their reward, and credits
+     * already granted keep working. */
+    referralProgramEnabled: { type: Boolean, default: true },
+    /** When a referral is rewarded: 'onboarded' (the colleague sets their
+     * password) or 'first_session' (their first completed paid consultation,
+     * which stops self-referrals with a second email). */
+    referralRewardTrigger: {
+      type: String,
+      enum: ['onboarded', 'first_session'],
+      default: 'onboarded',
+    },
+    /** Commission-free sessions per successful referral (copied into each grant). */
+    referralRewardSessions: { type: Number, default: 5, min: 1, max: 50 },
+    /** Days a granted credit stays usable (null = never expires). */
+    referralCreditExpiryDays: { type: Number, default: null, min: 1, max: 3650 },
+    /** Referrals a gynac may have open (submitted / invited) at once. */
+    referralMaxOpenPerDoctor: { type: Number, default: 10, min: 1, max: 100 },
+
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true },

@@ -389,10 +389,17 @@ export const getContactNotificationTemplate = ({ name, email, topic, message }) 
  * platform — carries a one-time link to set their password and access the
  * clinician dashboard.
  */
-export const getDoctorInviteTemplate = ({ name, inviteUrl, expiryHours, specialty }) => {
+export const getDoctorInviteTemplate = ({
+  name,
+  inviteUrl,
+  expiryHours,
+  specialty,
+  referredBy,
+}) => {
   const content = `
     <span class="badge">You're invited to Nura</span>
-    <h2 style="margin-top: 0; color: ${BRAND.foreground}; font-size: 24px; font-weight: 600;">Hi Dr. ${name || 'there'},</h2>
+    <h2 style="margin-top: 0; color: ${BRAND.foreground}; font-size: 24px; font-weight: 600;">Hi Dr. ${escapeHtml(name) || 'there'},</h2>
+    ${referredBy ? `<p>Your colleague <strong>Dr. ${escapeHtml(referredBy)}</strong> recommended you to Nura.</p>` : ''}
     <p>The Nura team has invited you to join as a ${specialty || 'gynecologist'} on our clinician platform. From your dashboard you can manage bookings, chat and video-consult with patients, share prescriptions, publish educational reels, and track your earnings.</p>
 
     <div style="text-align: center; margin: 32px 0;">
