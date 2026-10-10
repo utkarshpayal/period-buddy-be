@@ -53,6 +53,37 @@ const consultationSchema = new mongoose.Schema(
       doctorLeftAt: Date,
     },
     prescription: { type: String, trim: true },
+    // Last time the doctor saved the prescription: the date printed on it.
+    prescribedAt: { type: Date },
+    // The structured prescription from the portal (utils/prescriptionRx.js);
+    // `prescription` above holds the same as text. Absent on older ones,
+    // which print from the text.
+    rx: {
+      type: new mongoose.Schema(
+        {
+          complaints: { type: String, trim: true },
+          diagnosis: { type: String, trim: true },
+          medicines: [
+            new mongoose.Schema(
+              {
+                name: { type: String, trim: true, required: true },
+                dose: { type: String, trim: true },
+                frequency: { type: String, trim: true },
+                timing: { type: String, trim: true },
+                duration: { type: String, trim: true },
+                notes: { type: String, trim: true },
+              },
+              { _id: false },
+            ),
+          ],
+          investigations: { type: String, trim: true },
+          advice: { type: String, trim: true },
+          followUp: { type: String, trim: true },
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
     // The patient's rating of a completed session (POST /api/consultation/:id/rating),
     // once only; `feedback` is its optional comment (encrypted, see below).
     rating: { type: Number, min: 1, max: 5 },
@@ -72,6 +103,31 @@ const consultationSchema = new mongoose.Schema(
     refundStatus: { type: String, enum: ['required', 'processed'] },
     refundedAt: { type: Date },
     refundReference: { type: String, trim: true, maxlength: 120 },
+    // The automatic Cashfree refund for that cancellation
+    // (utils/consultationRefunds.js). `refundStatus` above stays 'required'
+    // until Cashfree reports SUCCESS, so finance still sees anything stuck.
+    refundAuto: {
+      type: new mongoose.Schema(
+        {
+          // pending: sent, waiting for Cashfree; success; failed: will retry
+          // until `attempts` runs out; skipped: can't be automatic (no
+          // Cashfree order), so it's refunded by hand.
+          status: { type: String, enum: ['pending', 'success', 'failed', 'skipped'] },
+          refundId: { type: String, trim: true },
+          cfRefundId: { type: String, trim: true },
+          providerStatus: { type: String, trim: true },
+          attempts: { type: Number, default: 0 },
+          lastError: { type: String, trim: true, maxlength: 300 },
+          requestedAt: { type: Date },
+          checkedAt: { type: Date },
+          nextAttemptAt: { type: Date },
+          // Claimed by a worker until then, so two can't send at once.
+          lockedUntil: { type: Date },
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
 
     // Cashfree checkout session of a pending order, so a retry reuses it
     // instead of opening a second order (and a second charge).
@@ -92,6 +148,8 @@ consultationSchema.index({ doctorId: 1, createdAt: -1 });
 // Slot capacity checks (is this doctor's slot already booked?).
 consultationSchema.index({ doctorId: 1, scheduledFor: 1 });
 consultationSchema.index({ refundStatus: 1 });
+// The refund runner's sweep: refunds still owed, by their automatic state.
+consultationSchema.index({ refundStatus: 1, 'refundAuto.status': 1 });
 
 consultationSchema.plugin(encryptFields, { fields: ['feedback'] });
 

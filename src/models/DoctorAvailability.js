@@ -21,6 +21,9 @@ const doctorAvailabilitySchema = new mongoose.Schema(
     timezone: { type: String, trim: true, default: 'Asia/Kolkata' },
     isAvailable: { type: Boolean, default: true },
     maxSlots: { type: Number, default: 4, min: 1 },
+    // Consultation length; when set, the range is cut into back-to-back
+    // consultations of this length instead of `maxSlots` equal parts.
+    slotMinutes: { type: Number, min: 10, max: 240 },
   },
   { timestamps: true },
 );

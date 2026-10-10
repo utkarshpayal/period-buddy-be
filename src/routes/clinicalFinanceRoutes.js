@@ -127,4 +127,11 @@ router.get('/refunds', read, finance.listRefunds);
  */
 router.post('/refunds/:id/processed', manage, finance.markRefundProcessed);
 
+/**
+ * @route   POST /api/admin/clinical-finance/refunds/:id/retry
+ * @desc    Retry a failed or skipped automatic Cashfree refund
+ * @access  Private (payouts.manage)
+ */
+router.post('/refunds/:id/retry', manage, finance.retryRefund);
+
 export default router;

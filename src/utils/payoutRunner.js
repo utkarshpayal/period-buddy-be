@@ -1,12 +1,17 @@
 import logger from './logger.js';
 import { reconcileEarnings, syncDuePayouts } from './doctorWallet.js';
+import { syncConsultationRefunds } from './consultationRefunds.js';
+import { expireReferralCredits, grantDueReferralRewards } from './referrals.js';
 
 /**
  * Background safety net for doctor payouts (utils/doctorWallet.js):
  * - every 2 min: dispatch approved payouts whose send was deferred, and
  *   re-check processing ones with Cashfree (the webhook's backup);
+ * - every 2 min: send consultation refunds that are due and re-check pending
+ *   ones with Cashfree (utils/consultationRefunds.js);
  * - every 30 min: reconcileEarnings(), which repairs any consultation hook
- *   that failed.
+ *   that failed; lapsed referral credits are marked expired, and referral
+ *   rewards that are due (or whose grant failed) are given.
  * Everything it calls is idempotent and compare-and-set, so a second
  * instance or an overlapping webhook does no harm.
  */
@@ -23,7 +28,12 @@ const tick = async () => {
   ticking = true;
   try {
     await syncDuePayouts();
-    if (tickCount % RECONCILE_EVERY_TICKS === 0) await reconcileEarnings();
+    await syncConsultationRefunds();
+    if (tickCount % RECONCILE_EVERY_TICKS === 0) {
+      await reconcileEarnings();
+      await expireReferralCredits();
+      await grantDueReferralRewards();
+    }
   } catch (error) {
     logger.error('payout_runner_tick_failed', {
       action: 'payout_runner_tick_failed',

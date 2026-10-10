@@ -39,6 +39,14 @@ const doctorSchema = new mongoose.Schema(
 
     isAvailable: { type: Boolean, default: true },
 
+    /** Booking rules the doctor sets on the portal's Availability page:
+     * how many days ahead patients can book, and the minimum notice. */
+    bookingWindowDays: { type: Number, default: 14, min: 1, max: 90 },
+    minNoticeMinutes: { type: Number, default: 15, min: 0, max: 7 * 24 * 60 },
+    /** Length of one consultation; every range is cut into slots this long.
+     * Unset for doctors who haven't saved since it existed. */
+    consultationMinutes: { type: Number, min: 10, max: 240 },
+
     /** Platform commission override in basis points (1% = 100). null = the
      * Clinical Admin's default (ClinicalPayoutSettings.defaultCommissionBps).
      * select: false, since the patient app lists Doctor docs as-is; read it

@@ -4,12 +4,14 @@ import Doctor from '../models/Doctor.js';
 import Consultation from '../models/Consultation.js';
 import ConsultationMessage from '../models/ConsultationMessage.js';
 import DoctorAvailability from '../models/DoctorAvailability.js';
+import DoctorDateOverride from '../models/DoctorDateOverride.js';
 import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
 import { ACTIVE_ACCOUNT_FILTER } from '../utils/accountStatus.js';
 import {
+  BOOKING_LEAD_MINUTES,
   BOOKING_WINDOW_DAYS,
   PAYMENT_HOLD_MINUTES,
   buildSlots,
@@ -26,6 +28,8 @@ import {
 } from '../utils/consultationLifecycle.js';
 import { escapeRegex, isValidObjectId } from '../utils/apiHelpers.js';
 import { broadcastToRoom } from '../config/websocket.js';
+import { buildPrescriptionDocument } from '../utils/prescriptionDocument.js';
+import { handleRefundWebhook } from '../utils/consultationRefunds.js';
 import {
   createOrder,
   getOrderStatus,
@@ -67,6 +71,25 @@ const findBookableDoctor = async (filter) => {
   if (!doctor) return null;
   const [bookable] = await onlyBookableDoctors([doctor]);
   return bookable || null;
+};
+
+/** A doctor's weekly ranges and date overrides, plus their booking rules as
+ * buildSlots options. */
+const loadSchedule = async (doctor) => {
+  const [ranges, overrides] = await Promise.all([
+    DoctorAvailability.find({ doctorId: doctor._id, isAvailable: true })
+      .sort({ dayOfWeek: 1, startTime: 1 })
+      .lean(),
+    DoctorDateOverride.find({ doctorId: doctor._id }).lean(),
+  ]);
+  return {
+    ranges,
+    options: {
+      overrides,
+      days: doctor.bookingWindowDays || BOOKING_WINDOW_DAYS,
+      leadMinutes: doctor.minNoticeMinutes ?? BOOKING_LEAD_MINUTES,
+    },
+  };
 };
 
 /** Start times (ms) of this doctor's slots that are taken: paid sessions, and
@@ -125,8 +148,8 @@ const DAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Fri
 /**
  * GET /api/consultation/doctors/:id/availability — the doctor's weekly hours
  * (`days`, wall-clock in `timezone`) and the bookable `slots` for the next
- * BOOKING_WINDOW_DAYS: `[{ start, end }]`, UTC ISO 8601, already free of past
- * and taken times. Clients show slots in the viewer's own time zone and book
+ * `windowDays` (the doctor's own setting): `[{ start, end }]`, UTC ISO 8601,
+ * already free of past and taken times, with date overrides applied. Clients show slots in the viewer's own time zone and book
  * one by sending its `start` as `scheduledFor`.
  */
 export const getDoctorAvailability = async (req, res, next) => {
@@ -138,12 +161,7 @@ export const getDoctorAvailability = async (req, res, next) => {
     const doctor = await findBookableDoctor({ _id: req.params.id });
     if (!doctor) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Doctor not found');
 
-    const ranges = await DoctorAvailability.find({
-      doctorId: doctor._id,
-      isAvailable: true,
-    })
-      .sort({ dayOfWeek: 1, startTime: 1 })
-      .lean();
+    const { ranges, options } = await loadSchedule(doctor);
 
     const byDay = new Map();
     for (const range of ranges) {
@@ -163,17 +181,19 @@ export const getDoctorAvailability = async (req, res, next) => {
     }
 
     const slots = doctor.isAvailable
-      ? buildSlots(ranges, { takenStarts: await takenSlotStarts(doctor._id) }).map((slot) => ({
-          start: slot.start.toISOString(),
-          end: slot.end.toISOString(),
-        }))
+      ? buildSlots(ranges, { ...options, takenStarts: await takenSlotStarts(doctor._id) }).map(
+          (slot) => ({
+            start: slot.start.toISOString(),
+            end: slot.end.toISOString(),
+          }),
+        )
       : [];
 
     return sendResponse(res, HTTP_STATUS.OK, 'Availability fetched', {
       doctorId: doctor._id,
       isAvailable: doctor.isAvailable,
-      timezone: ranges[0]?.timezone || DEFAULT_TIME_ZONE,
-      windowDays: BOOKING_WINDOW_DAYS,
+      timezone: ranges[0]?.timezone || options.overrides[0]?.timezone || DEFAULT_TIME_ZONE,
+      windowDays: options.days,
       days: Array.from(byDay.values()),
       slots,
     });
@@ -296,11 +316,11 @@ export const createConsultationOrder = async (req, res, next) => {
       }
     }
 
-    const ranges = await DoctorAvailability.find({
-      doctorId: doctor._id,
-      isAvailable: true,
-    }).lean();
-    const slot = findSlot(ranges, when, { takenStarts: await takenSlotStarts(doctor._id) });
+    const { ranges, options } = await loadSchedule(doctor);
+    const slot = findSlot(ranges, when, {
+      ...options,
+      takenStarts: await takenSlotStarts(doctor._id),
+    });
     if (!slot) {
       return sendError(
         res,
@@ -494,6 +514,16 @@ export const cashfreeConsultationWebhook = async (req, res) => {
     }
 
     const payload = JSON.parse(raw);
+    // Refund updates (REFUND_STATUS_WEBHOOK) come to the same URL.
+    if (payload?.data?.refund) {
+      const outcome = await handleRefundWebhook(payload);
+      logger.info('consultation_refund_webhook_processed', {
+        action: 'consultation_refund_webhook_processed',
+        orderId: payload.data.refund.order_id,
+        outcome,
+      });
+      return res.status(200).json({ ok: true });
+    }
     const orderId = payload?.data?.order?.order_id;
     if (typeof orderId !== 'string' || !orderId.startsWith('consult_')) {
       return res.status(200).json({ ok: true, ignored: true });
@@ -621,6 +651,31 @@ export const rateConsultation = async (req, res, next) => {
 };
 
 /** GET /api/consultation/:id/messages — Get chat messages of a consultation */
+/** GET /api/consultation/:id/prescription — the patient's printable
+ * prescription for one of their sessions: `{ html, fileName, number }`. The
+ * app turns the HTML into a PDF to download or print. */
+export const getPrescription = async (req, res, next) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid consultation id');
+    }
+    const consultation = await Consultation.findOne({ _id: req.params.id, userId: req.userId });
+    if (!consultation) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Consultation not found');
+    const document = await buildPrescriptionDocument(consultation);
+    if (!document) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'No prescription for this consultation yet');
+    }
+    logger.info('prescription_downloaded', {
+      action: 'prescription_downloaded',
+      userId: req.userId,
+      consultationId: String(consultation._id),
+    });
+    return sendResponse(res, HTTP_STATUS.OK, 'Prescription fetched', document);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const getMessages = async (req, res, next) => {
   try {
     if (!isValidObjectId(req.params.id)) {

@@ -74,6 +74,9 @@ export const describeEarning = (e) => ({
   currency: e.currency,
   gross: fromMinor(e.grossMinor),
   commissionPercent: bpsToPercent(e.commissionBps),
+  commissionSource: e.commissionSource,
+  /** A commission-free session from a referral credit. */
+  freeSession: e.commissionSource === 'referral',
   commission: fromMinor(e.commissionMinor),
   net: fromMinor(e.netMinor),
   status: e.status,

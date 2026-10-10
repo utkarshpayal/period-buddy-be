@@ -22,7 +22,13 @@ const doctorEarningSchema = new mongoose.Schema(
     currency: { type: String, default: 'INR' },
     grossMinor: { type: Number, required: true },
     commissionBps: { type: Number, default: 0 },
-    commissionSource: { type: String, enum: ['default', 'doctor', 'none'], default: 'none' },
+    /** 'referral': a commission-free session from a ReferralCredit (referralCreditId). */
+    commissionSource: {
+      type: String,
+      enum: ['default', 'doctor', 'none', 'referral'],
+      default: 'none',
+    },
+    referralCreditId: { type: mongoose.Schema.Types.ObjectId, ref: 'ReferralCredit' },
     commissionMinor: { type: Number, default: 0 },
     netMinor: { type: Number, required: true },
 

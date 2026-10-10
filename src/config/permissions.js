@@ -44,6 +44,9 @@ export const PERMISSIONS = {
   // Doctor commission, earnings ledger and wallet withdrawals
   PAYOUTS_READ: 'payouts.read',
   PAYOUTS_MANAGE: 'payouts.manage',
+  // Gynac-refers-gynac program: referrals, commission-free session credits
+  REFERRALS_READ: 'referrals.read',
+  REFERRALS_MANAGE: 'referrals.manage',
 
   // Organisation
   STAFF_MANAGE: 'staff.manage',
@@ -136,7 +139,14 @@ export const STAFF_ROLES = {
     label: 'Clinical Admin',
     department: DEPARTMENTS.CLINICAL,
     level: 2,
-    permissions: [P.DOCTORS_READ, P.DOCTORS_MANAGE, P.PAYOUTS_READ, P.PAYOUTS_MANAGE],
+    permissions: [
+      P.DOCTORS_READ,
+      P.DOCTORS_MANAGE,
+      P.PAYOUTS_READ,
+      P.PAYOUTS_MANAGE,
+      P.REFERRALS_READ,
+      P.REFERRALS_MANAGE,
+    ],
   },
 };
 
