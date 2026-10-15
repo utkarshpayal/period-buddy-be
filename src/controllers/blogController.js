@@ -441,3 +441,214 @@ export const deleteBlog = async (req, res, next) => {
     next(error);
   }
 };
+
+/* ──────────────────────────────────────────────────────────
+   Public (unauthenticated) read API — used by the marketing site's /blog.
+   Read-only, published posts only, and an explicit field allowlist so
+   internal analytics (totalReadSeconds, readSessionCount) and authorId
+   never leave the API.
+────────────────────────────────────────────────────────── */
+
+// `content` is selected for lists too, only to compute reading time; it's
+// dropped again in toPublicBlog unless the caller asks for it.
+const PUBLIC_LIST_FIELDS =
+  'title slug excerpt content coverImageUrl category tags author readTimeMinutes ' +
+  'viewCount publishedAt updatedAt';
+const PUBLIC_DETAIL_FIELDS = `${PUBLIC_LIST_FIELDS} seoTitle seoDescription canonicalUrl`;
+const WORDS_PER_MINUTE = 200;
+const PUBLIC_SORTS = {
+  latest: { publishedAt: -1 },
+  popular: { viewCount: -1, publishedAt: -1 },
+};
+// Lets the CDN/browser reuse public blog responses briefly; posts change
+// rarely and a few minutes of staleness after a CMS edit is fine.
+const PUBLIC_CACHE_HEADER = 'public, max-age=300, stale-while-revalidate=600';
+
+const publishedFilter = () => ({ status: blogStatusEnum.PUBLISHED, isPublished: true });
+
+/** Reading time from the article's length. The app's dwell-time average
+ * (withEffectiveReadTime) measures how long people kept it open, which is
+ * not what a reader deciding whether to start an article wants to know. */
+export const readingMinutes = (content = '', fallback = 0) => {
+  const words = String(content).trim().split(/\s+/).filter(Boolean).length;
+  if (!words) return Math.max(1, fallback || 1);
+  return Math.max(1, Math.round(words / WORDS_PER_MINUTE));
+};
+
+/** Shapes a blog for the public API: only the fields a public reader
+ * should see. */
+export const toPublicBlog = (blog, { includeContent = false } = {}) => {
+  const obj = blog.toObject ? blog.toObject() : blog;
+  return {
+    id: String(obj._id),
+    title: obj.title,
+    slug: obj.slug,
+    excerpt: obj.excerpt || '',
+    coverImageUrl: obj.coverImageUrl || null,
+    category: obj.category,
+    tags: obj.tags || [],
+    author: obj.author,
+    readTimeMinutes: readingMinutes(obj.content, obj.readTimeMinutes),
+    publishedAt: obj.publishedAt || obj.createdAt,
+    updatedAt: obj.updatedAt,
+    ...(includeContent
+      ? {
+          content: obj.content,
+          seoTitle: obj.seoTitle || null,
+          seoDescription: obj.seoDescription || null,
+          canonicalUrl: obj.canonicalUrl || null,
+        }
+      : {}),
+  };
+};
+
+/** GET /api/blogs/public?topic=&tag=&search=&sort=latest|popular&page=&limit= */
+export const getPublicBlogs = async (req, res, next) => {
+  try {
+    const { topic, tag, search } = req.query;
+    const sort = Object.hasOwn(PUBLIC_SORTS, req.query.sort)
+      ? PUBLIC_SORTS[req.query.sort]
+      : PUBLIC_SORTS.latest;
+    const { page, limit, skip } = getPagination(req.query, { limit: 12, maxLimit: 24 });
+
+    const filter = publishedFilter();
+    if (typeof topic === 'string' && topic) filter.category = topic;
+    if (typeof tag === 'string' && tag) filter.tags = tag;
+    if (typeof search === 'string' && search.trim()) {
+      const pattern = { $regex: escapeRegex(search.trim().slice(0, 100)), $options: 'i' };
+      filter.$or = [{ title: pattern }, { excerpt: pattern }, { tags: pattern }];
+    }
+
+    const [blogs, total] = await Promise.all([
+      Blog.find(filter).select(PUBLIC_LIST_FIELDS).sort(sort).skip(skip).limit(limit),
+      Blog.countDocuments(filter),
+    ]);
+
+    res.set('Cache-Control', PUBLIC_CACHE_HEADER);
+    return sendResponse(res, HTTP_STATUS.OK, 'Blogs fetched', {
+      blogs: blogs.map((blog) => toPublicBlog(blog)),
+      pagination: buildPagination({ page, limit, total }),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** GET /api/blogs/public/topics — Topics (categories) with post counts, plus
+ * the most-used tags, for the blog's topic navigation. */
+export const getPublicBlogTopics = async (req, res, next) => {
+  try {
+    const [topics, tags] = await Promise.all([
+      Blog.aggregate([
+        { $match: publishedFilter() },
+        { $sort: { publishedAt: -1 } },
+        {
+          $group: {
+            _id: '$category',
+            count: { $sum: 1 },
+            coverImageUrl: { $first: '$coverImageUrl' },
+          },
+        },
+        { $sort: { count: -1 } },
+      ]),
+      Blog.aggregate([
+        { $match: publishedFilter() },
+        { $unwind: '$tags' },
+        { $group: { _id: '$tags', count: { $sum: 1 } } },
+        { $sort: { count: -1, _id: 1 } },
+        { $limit: 20 },
+      ]),
+    ]);
+
+    res.set('Cache-Control', PUBLIC_CACHE_HEADER);
+    return sendResponse(res, HTTP_STATUS.OK, 'Blog topics fetched', {
+      topics: topics
+        .filter((t) => t._id)
+        .map((t) => ({ id: t._id, count: t.count, coverImageUrl: t.coverImageUrl || null })),
+      tags: tags.map((t) => ({ name: t._id, count: t.count })),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** GET /api/blogs/public/:slug — One published post with its full content,
+ * plus up to 3 related posts (same topic or a shared tag). */
+export const getPublicBlogBySlug = async (req, res, next) => {
+  try {
+    const blog = await Blog.findOne({ ...publishedFilter(), slug: req.params.slug }).select(
+      PUBLIC_DETAIL_FIELDS,
+    );
+    if (!blog) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Blog not found');
+
+    const relatedOr = [{ category: blog.category }];
+    if (blog.tags?.length) relatedOr.push({ tags: { $in: blog.tags } });
+    let related = await Blog.find({ ...publishedFilter(), _id: { $ne: blog._id }, $or: relatedOr })
+      .select(PUBLIC_LIST_FIELDS)
+      .sort({ publishedAt: -1 })
+      .limit(3);
+    // Top up with the latest posts so the "keep reading" row is never empty.
+    if (related.length < 3) {
+      const exclude = [blog._id, ...related.map((r) => r._id)];
+      const latest = await Blog.find({ ...publishedFilter(), _id: { $nin: exclude } })
+        .select(PUBLIC_LIST_FIELDS)
+        .sort({ publishedAt: -1 })
+        .limit(3 - related.length);
+      related = [...related, ...latest];
+    }
+
+    res.set('Cache-Control', PUBLIC_CACHE_HEADER);
+    return sendResponse(res, HTTP_STATUS.OK, 'Blog post', {
+      blog: toPublicBlog(blog, { includeContent: true }),
+      related: related.map((r) => toPublicBlog(r)),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const SITE_URL = (process.env.PUBLIC_SITE_URL || 'https://thenura.care').replace(/\/$/, '');
+const xmlEscape = (value) =>
+  String(value).replace(
+    /[<>&'"]/g,
+    (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' })[c],
+  );
+
+/** GET /api/blogs/public/sitemap.xml — Every published post and topic page,
+ * so search engines find articles the static site sitemap can't list. The
+ * marketing site proxies this at /sitemap-blog.xml. */
+export const getPublicBlogSitemap = async (req, res, next) => {
+  try {
+    const [blogs, topics] = await Promise.all([
+      Blog.find(publishedFilter()).select('slug updatedAt publishedAt').sort({ publishedAt: -1 }),
+      Blog.distinct('category', publishedFilter()),
+    ]);
+
+    const urls = [
+      `<url><loc>${SITE_URL}/blog</loc></url>`,
+      ...topics
+        .filter(Boolean)
+        .map(
+          (t) => `<url><loc>${SITE_URL}/blog/topic/${xmlEscape(encodeURIComponent(t))}</loc></url>`,
+        ),
+      ...blogs.map((b) => {
+        const lastmod = (b.updatedAt || b.publishedAt)?.toISOString?.().slice(0, 10);
+        return (
+          `<url><loc>${SITE_URL}/blog/${xmlEscape(encodeURIComponent(b.slug))}</loc>` +
+          `${lastmod ? `<lastmod>${lastmod}</lastmod>` : ''}</url>`
+        );
+      }),
+    ];
+
+    res.set('Cache-Control', 'public, max-age=3600');
+    return res
+      .type('application/xml')
+      .send(
+        '<?xml version="1.0" encoding="UTF-8"?>\n' +
+          '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
+          `${urls.join('\n')}\n</urlset>\n`,
+      );
+  } catch (error) {
+    next(error);
+  }
+};
