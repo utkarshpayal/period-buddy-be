@@ -6,6 +6,39 @@ import { PERMISSIONS } from '../config/permissions.js';
 
 const router = express.Router();
 
+/*
+ * Public, read-only routes for the marketing website's blog. Registered
+ * before `/:slug` so "public" is never read as a slug.
+ */
+
+/**
+ * @route   GET /api/blogs/public
+ * @desc    Public: paginated published blogs (?topic=&tag=&search=&sort=latest|popular&page=&limit=)
+ * @access  Public
+ */
+router.get('/public', blogController.getPublicBlogs);
+
+/**
+ * @route   GET /api/blogs/public/topics
+ * @desc    Public: blog topics with post counts and the most-used tags
+ * @access  Public
+ */
+router.get('/public/topics', blogController.getPublicBlogTopics);
+
+/**
+ * @route   GET /api/blogs/public/sitemap.xml
+ * @desc    Public: XML sitemap of every published post and topic page
+ * @access  Public
+ */
+router.get('/public/sitemap.xml', blogController.getPublicBlogSitemap);
+
+/**
+ * @route   GET /api/blogs/public/:slug
+ * @desc    Public: a single published blog post with related posts
+ * @access  Public
+ */
+router.get('/public/:slug', blogController.getPublicBlogBySlug);
+
 /**
  * @route   GET /api/blogs
  * @desc    Get paginated published blogs (?category=&tag=&search=&page=&limit=)

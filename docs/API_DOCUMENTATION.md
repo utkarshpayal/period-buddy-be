@@ -1156,6 +1156,60 @@ Soft-deletes own post.
 
 Response: paginated published blogs without full content.
 
+### Public blog API (marketing website)
+
+No auth. Read-only, published posts only, served with `Cache-Control: public, max-age=300`. Used by the marketing site's `/blog`. Internal analytics (`totalReadSeconds`, `readSessionCount`) and `authorId` are never returned.
+
+#### GET `/api/blogs/public?topic=health&tag=cycle&search=cramps&sort=latest&page=1&limit=12`
+
+`topic` is the blog `category`. `sort`: `latest` (default) or `popular` (by views). `limit` max 24.
+
+```json
+{
+  "success": true,
+  "data": {
+    "blogs": [
+      {
+        "id": "blogId",
+        "title": "Understanding Your Hormonal Cycle",
+        "slug": "understanding-your-hormonal-cycle",
+        "excerpt": "Short summary",
+        "coverImageUrl": "https://...",
+        "category": "health",
+        "tags": ["cycle", "hormones"],
+        "author": "Nura Team",
+        "readTimeMinutes": 5,
+        "publishedAt": "2026-10-01T00:00:00.000Z",
+        "updatedAt": "2026-10-02T00:00:00.000Z"
+      }
+    ],
+    "pagination": { "page": 1, "limit": 12, "total": 21, "pages": 2, "hasNextPage": true, "hasPrevPage": false }
+  }
+}
+```
+
+#### GET `/api/blogs/public/topics`
+
+```json
+{
+  "success": true,
+  "data": {
+    "topics": [{ "id": "health", "count": 12, "coverImageUrl": "https://..." }],
+    "tags": [{ "name": "hormones", "count": 3 }]
+  }
+}
+```
+
+#### GET `/api/blogs/public/:slug`
+
+Response: `{ "blog": { ...list fields, "content", "seoTitle", "seoDescription", "canonicalUrl" }, "related": [ ...up to 3 list-shaped posts ] }`. Related posts share the topic or a tag, topped up with the latest posts. 404 if the slug isn't published.
+
+#### GET `/api/blogs/public/sitemap.xml`
+
+XML sitemap of `/blog`, every topic page and every published post on the marketing site (`PUBLIC_SITE_URL`, default `https://thenura.care`). The site proxies it at `/sitemap-blog.xml`.
+
+`readTimeMinutes` in the public API is computed from the article's word count (200 wpm), not the app's dwell-time average.
+
 ### GET `/api/blogs/feed?type=all&page=1&limit=10&search=period`
 
 `type`: `all`, `blog`, `reel`.

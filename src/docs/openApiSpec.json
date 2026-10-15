@@ -7200,6 +7200,159 @@
         ]
       }
     },
+    "/api/blogs/public": {
+      "get": {
+        "tags": [
+          "Blogs & Articles"
+        ],
+        "summary": "Public: paginated published blogs",
+        "description": "Public: paginated published blogs (?topic=&tag=&search=&sort=latest|popular&page=&limit=)\n\n**Access:** Public",
+        "operationId": "get__api_blogs_public",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/blogs/public/topics": {
+      "get": {
+        "tags": [
+          "Blogs & Articles"
+        ],
+        "summary": "Public: blog topics with post counts and the most-used tags",
+        "description": "Public: blog topics with post counts and the most-used tags\n\n**Access:** Public",
+        "operationId": "get__api_blogs_public_topics",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/blogs/public/sitemap.xml": {
+      "get": {
+        "tags": [
+          "Blogs & Articles"
+        ],
+        "summary": "Public: XML sitemap of every published post and topic page",
+        "description": "Public: XML sitemap of every published post and topic page\n\n**Access:** Public",
+        "operationId": "get__api_blogs_public_sitemap_xml",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/blogs/public/{slug}": {
+      "get": {
+        "tags": [
+          "Blogs & Articles"
+        ],
+        "summary": "Public: a single published blog post with related posts",
+        "description": "Public: a single published blog post with related posts\n\n**Access:** Public",
+        "operationId": "get__api_blogs_public__slug",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Identifier or key: slug"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
     "/api/blogs": {
       "get": {
         "tags": [
