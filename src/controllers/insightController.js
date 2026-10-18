@@ -16,7 +16,7 @@ const PHASE_TEMPLATES = {
     dailySummary:
       "You're in your period phase — your body is shedding the uterine lining. Rest and gentle self-care go a long way today.",
     hormoneExplanation:
-      'Estrogen and progesterone are at their lowest levels during your period, which is what triggers menstruation. Lower hormone levels can also explain lower energy and mood dips.',
+      'Your period starts when estrogen and progesterone drop. Some people also notice lower energy or mood dips around this time.',
     exerciseSuggestions: ['Gentle yoga or stretching', 'Short walks', 'Light mobility work'],
     nutritionSuggestions: [
       'Iron-rich foods (leafy greens, lentils) to offset blood loss',
@@ -24,7 +24,7 @@ const PHASE_TEMPLATES = {
       'Limit excess caffeine and salt if you experience bloating',
     ],
     sleepSuggestions: [
-      'Aim for extra rest — cramps and lower hormones can disrupt sleep',
+      'Aim for extra rest if cramps disrupt your sleep',
       'Use a heating pad before bed to ease cramps',
       'Keep a consistent wind-down routine',
     ],
@@ -36,39 +36,39 @@ const PHASE_TEMPLATES = {
   },
   follicular: {
     dailySummary:
-      "You're in your follicular phase — rising estrogen is fueling more energy and a lifted mood.",
+      "You're in your follicular phase — estrogen is rising, and some people notice more energy and a lifted mood.",
     hormoneExplanation:
-      'Estrogen begins rising as your body prepares an egg for release. This typically brings improved energy, mood, and mental clarity compared to your period.',
+      'Estrogen begins rising as your body prepares an egg for release. Some people notice better energy and mood compared to their period, but everyone is different.',
     exerciseSuggestions: [
       'Cardio or dance workouts',
       'Strength training',
       'Try a new fitness class',
     ],
     nutritionSuggestions: [
-      'Lean proteins to support increasing activity levels',
-      'Fresh fruits and vegetables for rising metabolism',
+      'Protein to help you recover if you are working out',
+      'Plenty of fresh fruits and vegetables',
       'Fermented foods to support gut health',
     ],
     sleepSuggestions: [
-      'Energy is naturally higher — keep a consistent sleep schedule anyway',
+      'Keep a consistent sleep schedule, even if you feel more energetic',
       'Get morning sunlight to reinforce your circadian rhythm',
-      'Avoid late caffeine as activity levels rise',
+      'Avoid caffeine late in the day',
     ],
     wellnessRecommendations: [
       'Good time to start new projects or habits',
-      'Channel rising energy into productive goals',
-      'Plan demanding tasks for this window',
+      'If you feel energized, put it toward goals you care about',
+      'Some people like to plan bigger tasks for now',
     ],
   },
   ovulation: {
     dailySummary:
-      "You're around ovulation — energy, confidence, and libido are often at their peak this phase.",
+      "You're around ovulation — some people notice more energy, confidence, or libido now.",
     hormoneExplanation:
-      'A surge in luteinizing hormone triggers the release of an egg, while estrogen peaks just before. Testosterone also rises slightly, which can boost energy and libido.',
+      'A surge in luteinizing hormone triggers the release of an egg, while estrogen peaks just before. Testosterone also rises slightly, which may play a part in libido for some people.',
     exerciseSuggestions: [
       'High-intensity workouts',
       'Group sports or classes',
-      'Peak-performance training',
+      'Harder workouts if you feel up to it',
     ],
     nutritionSuggestions: [
       'Antioxidant-rich foods (berries, colorful vegetables)',
@@ -76,33 +76,33 @@ const PHASE_TEMPLATES = {
       'Stay well hydrated, especially with more intense exercise',
     ],
     sleepSuggestions: [
-      'Some notice a slight body temperature rise — keep your room cool',
-      'Maintain consistent sleep/wake times despite higher energy',
-      'Wind down screens before bed even on high-energy days',
+      'Body temperature rises slightly after ovulation — keep your room cool',
+      'Keep consistent sleep and wake times',
+      'Wind down screens before bed',
     ],
     wellnessRecommendations: [
-      'Great window for important conversations or presentations',
+      'If you feel confident, it could be a good time for big conversations',
       'Track cervical mucus or BBT if you are trying to conceive',
-      'Socialize — confidence tends to peak now',
+      'Make plans with friends if you feel like it',
     ],
   },
   luteal: {
     dailySummary:
-      "You're in your luteal phase — progesterone is rising, which can bring more introspective energy and PMS symptoms.",
+      "You're in your luteal phase — progesterone rises after ovulation, then falls in the days before your period. Some people notice PMS symptoms or feel hungrier now.",
     hormoneExplanation:
       'Progesterone rises after ovulation to prepare the uterine lining. If pregnancy does not occur, both estrogen and progesterone drop toward the end of this phase, which is linked to PMS symptoms.',
     exerciseSuggestions: [
       'Moderate cardio',
       'Pilates or yoga',
-      'Lower-intensity strength training',
+      'Strength training at whatever level feels right',
     ],
     nutritionSuggestions: [
-      'Complex carbs to help stabilize mood swings',
-      'Calcium and magnesium-rich foods to ease PMS symptoms',
+      'Complex carbs to keep you full if you feel hungrier',
+      'Calcium-rich foods, which may help ease PMS for some people',
       'Limit sugar and caffeine if cravings or irritability spike',
     ],
     sleepSuggestions: [
-      'Progesterone can be sedating early on — allow extra rest',
+      'Some people feel sleepier after ovulation — allow extra rest',
       'Keep a cooler room as body temperature rises slightly',
       'Wind down earlier if PMS affects sleep quality',
     ],
@@ -158,7 +158,7 @@ const MOOD_INSIGHTS = {
   anxious:
     "You've logged some anxiety recently — grounding techniques like slow breathing may help ease it.",
   irritable:
-    "You've noted irritability recently — this often lines up with hormonal shifts, so be patient with yourself.",
+    "You've noted irritability recently — for some people this lines up with hormonal shifts, so be patient with yourself.",
   neutral: 'Your mood has been steady lately.',
   energetic: "You've been logging high energy — a good time to tackle bigger goals.",
 };

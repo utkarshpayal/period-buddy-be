@@ -4,6 +4,10 @@
 //   - 'boolean': answer is true/false, full `weight` is scored when true
 //   - 'scale':   answer is an integer 0-3, weight is scored proportionally
 //                (answer / 3) * weight
+// `redFlag: true` marks an answer that should be checked by a doctor whatever
+// the total score (a 'boolean' answered yes, or a 'scale' answered at its max,
+// 3) — see utils/screeningScoring.js. `redFlagReason` is the plain-language
+// line added to the doctor-discussion summary.
 
 export const SCREENING_DISCLAIMER =
   'This is an educational screening tool, not a medical diagnosis. Please consult a healthcare provider for proper evaluation.';
@@ -16,19 +20,19 @@ export const SCREENING_QUESTIONS = {
       id: 'pcos_irregular_cycles',
       text: 'Are your menstrual cycles irregular (shorter than 21 days or longer than 35 days, or unpredictable)?',
       type: 'boolean',
-      weight: 20,
+      weight: 25,
     },
     {
       id: 'pcos_missed_periods',
       text: 'Have you missed periods or gone several months without one, outside of pregnancy?',
       type: 'boolean',
-      weight: 15,
+      weight: 20,
     },
     {
       id: 'pcos_hirsutism',
       text: 'Have you noticed excess hair growth on your face, chest, or back?',
       type: 'boolean',
-      weight: 15,
+      weight: 20,
     },
     {
       id: 'pcos_acne',
@@ -40,7 +44,7 @@ export const SCREENING_QUESTIONS = {
       id: 'pcos_weight_change',
       text: 'Have you experienced unexplained weight gain or difficulty losing weight?',
       type: 'boolean',
-      weight: 15,
+      weight: 5,
     },
     {
       id: 'pcos_hair_thinning',
@@ -52,7 +56,7 @@ export const SCREENING_QUESTIONS = {
       id: 'pcos_family_history',
       text: 'Does anyone in your immediate family have PCOS or type 2 diabetes?',
       type: 'boolean',
-      weight: 10,
+      weight: 5,
     },
     {
       id: 'pcos_skin_darkening',
@@ -67,6 +71,8 @@ export const SCREENING_QUESTIONS = {
       text: 'How severe is your pelvic pain during periods, on a scale of none to severe?',
       type: 'scale',
       weight: 20,
+      redFlag: true,
+      redFlagReason: 'Severe period pain',
     },
     {
       id: 'endo_pain_worsening',
@@ -79,12 +85,16 @@ export const SCREENING_QUESTIONS = {
       text: 'Do you experience pelvic pain outside of your period days?',
       type: 'boolean',
       weight: 15,
+      redFlag: true,
+      redFlagReason: 'Pelvic pain outside your period',
     },
     {
       id: 'endo_pain_intercourse',
       text: 'Do you experience pain during or after intercourse?',
       type: 'boolean',
       weight: 15,
+      redFlag: true,
+      redFlagReason: 'Pain during or after sex',
     },
     {
       id: 'endo_heavy_bleeding',
@@ -117,6 +127,8 @@ export const SCREENING_QUESTIONS = {
       text: 'How heavy is your menstrual flow, on a scale of light to very heavy?',
       type: 'scale',
       weight: 20,
+      redFlag: true,
+      redFlagReason: 'Very heavy menstrual flow',
     },
     {
       id: 'fibroid_prolonged_periods',
@@ -147,12 +159,16 @@ export const SCREENING_QUESTIONS = {
       text: 'Do you experience pain during intercourse?',
       type: 'boolean',
       weight: 10,
+      redFlag: true,
+      redFlagReason: 'Pain during sex',
     },
     {
       id: 'fibroid_anemia_symptoms',
-      text: 'Have you felt unusually fatigued or short of breath, possibly from heavy blood loss?',
+      text: 'Have you felt unusually tired, dizzy, or short of breath, possibly from heavy blood loss?',
       type: 'boolean',
       weight: 10,
+      redFlag: true,
+      redFlagReason: 'Tiredness or breathlessness that may mean anaemia (low iron)',
     },
     {
       id: 'fibroid_family_history',
@@ -203,6 +219,8 @@ export const SCREENING_QUESTIONS = {
       text: 'Have you noticed any swelling or lump in the front of your neck?',
       type: 'boolean',
       weight: 15,
+      redFlag: true,
+      redFlagReason: 'A lump or swelling in the front of the neck',
     },
     {
       id: 'thyroid_family_history',
@@ -223,3 +241,27 @@ export const getRiskLevel = (score) => {
   if (score <= RISK_THRESHOLDS.MODERATE_MAX) return 'moderate';
   return 'high';
 };
+
+// Any red-flag answer (see `redFlag` above) lifts the result to at least this
+// level — "talk to a doctor" — however low the weighted score is.
+export const RED_FLAG_MIN_RISK = 'moderate';
+
+const RISK_ORDER = ['low', 'moderate', 'high'];
+
+/** The higher of two risk levels. */
+export const maxRiskLevel = (a, b) =>
+  RISK_ORDER[Math.max(RISK_ORDER.indexOf(a), RISK_ORDER.indexOf(b), 0)];
+
+// Rotterdam criteria: ovulatory dysfunction (irregular / absent periods) plus
+// clinical hyperandrogenism. Both present → at least 'moderate'.
+export const PCOS_OVULATORY_IDS = ['pcos_irregular_cycles', 'pcos_missed_periods'];
+export const PCOS_ANDROGEN_IDS = ['pcos_hirsutism', 'pcos_acne', 'pcos_hair_thinning'];
+
+// 2023 International PCOS Guideline: adult criteria don't apply within ~8
+// years of the first period, when irregular cycles and acne are common.
+export const PCOS_TEEN_NOTE =
+  "If you're under 18 or had your first period less than about 8 years ago, adult PCOS criteria don't apply: irregular cycles and acne are common in the teen years. A doctor may suggest watching how things change over time before giving any diagnosis.";
+
+// Age (years) below which the teen caveat is shown: ~8 years after an average
+// first period at 12.
+export const PCOS_TEEN_NOTE_MAX_AGE = 20;

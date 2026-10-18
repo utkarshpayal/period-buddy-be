@@ -20,7 +20,7 @@ export const generateCareSuggestions = (permissions, cycle, recentLogs) => {
           category: 'Cycle Phase',
           title: 'Period Phase Support',
           message:
-            'Her energy levels are naturally lower right now as her body sheds its lining. Focus on rest and comfort.',
+            'Her energy may be lower right now as her body sheds its lining. Rest and comfort can help.',
         });
         dos.push(
           'Offer a warm heating pad or hot water bottle for cramps.',
@@ -28,7 +28,7 @@ export const generateCareSuggestions = (permissions, cycle, recentLogs) => {
           'Take over extra household chores so she can rest.',
         );
         donts.push(
-          'Avoid planning high-intensity activities or long outings.',
+          'Avoid planning long outings without checking how she feels.',
           'Do not dismiss physical pain or mood shifts.',
         );
         break;
@@ -39,12 +39,12 @@ export const generateCareSuggestions = (permissions, cycle, recentLogs) => {
           category: 'Cycle Phase',
           title: 'Follicular Phase Support',
           message:
-            'Estrogen is rising, bringing a boost in physical energy, creativity, and optimism. Great time for new activities.',
+            'Estrogen is rising, and some people feel more energetic and upbeat now. Ask what she is in the mood for.',
         });
         dos.push(
-          'Plan an active or adventurous date night.',
+          'Suggest an active or adventurous date night if she is up for it.',
           'Support her in starting new projects or setting goals.',
-          'Match her energetic vibe with enthusiasm.',
+          'Match her energy if she is feeling upbeat.',
         );
         donts.push('Try not to hold her back or keep things too routine/predictable.');
         break;
@@ -55,14 +55,14 @@ export const generateCareSuggestions = (permissions, cycle, recentLogs) => {
           category: 'Cycle Phase',
           title: 'Ovulation Phase Support',
           message:
-            'She is at her peak energy, confidence, and social openness. Communication is usually easiest and most fluid now.',
+            'Some people feel more energetic, confident, and social around ovulation. Check in on how she is feeling.',
         });
         dos.push(
           'Show physical affection and plan romantic dates.',
           'Encourage her social and creative endeavors.',
           'Engage in deep, meaningful conversations.',
         );
-        donts.push("Don't hesitate to matches her social energy.");
+        donts.push("Don't assume how she feels — ask what she wants to do.");
         break;
 
       case 'luteal':
@@ -71,7 +71,7 @@ export const generateCareSuggestions = (permissions, cycle, recentLogs) => {
           category: 'Cycle Phase',
           title: 'Luteal Phase (PMS Days) Support',
           message:
-            'Progesterone is peaking and then dropping, which can cause fatigue, food cravings, and mood fluctuations.',
+            'Progesterone rises after ovulation, then drops before her period. Some people feel tired, hungrier, or moodier in these days.',
         });
         dos.push(
           'Offer reassuring words and listen without trying to "fix" everything.',
@@ -174,8 +174,7 @@ export const generateCareSuggestions = (permissions, cycle, recentLogs) => {
         suggestions.push({
           category: 'Symptom Relief',
           title: 'Cramps Relief',
-          message:
-            'Uterine contractions are causing discomfort. Heat, gentle massage, and hydration will help.',
+          message: 'Uterine contractions are causing discomfort. Heat and gentle massage can help.',
         });
         dos.push(
           'Fetch a hot water bottle or heating pad.',
@@ -187,12 +186,12 @@ export const generateCareSuggestions = (permissions, cycle, recentLogs) => {
         suggestions.push({
           category: 'Symptom Relief',
           title: 'Headache Support',
-          message: 'Hormonal headaches require a quiet, dark environment to recover.',
+          message: 'A quiet, dark room can help a headache ease.',
         });
         dos.push(
           'Dim the lights and keep noises low.',
           'Offer a cool, damp washcloth for her forehead.',
-          'Ensure she stays hydrated with electrolytes.',
+          'Bring her a glass of water.',
         );
         donts.push('Limit screen time and bright light exposure in her space.');
       } else if (sym.includes('bloat')) {
@@ -227,7 +226,7 @@ export const generateCareSuggestions = (permissions, cycle, recentLogs) => {
       suggestions.push({
         category: 'Health Metric',
         title: 'High Stress Alert',
-        message: `Her stress is logged at ${latestLog.stressLevel}/10. High stress affects hormone balance and cycle comfort.`,
+        message: `Her stress is logged at ${latestLog.stressLevel}/10. High stress can affect her cycle and how she feels.`,
       });
       dos.push(
         'Encourage her to step away from work/screens early.',
@@ -251,7 +250,7 @@ export const generateCareSuggestions = (permissions, cycle, recentLogs) => {
       suggestions.push({
         category: 'Health Metric',
         title: 'Hydration Nudge',
-        message: `Her water intake is a bit low today (${latestLog.waterIntake}ml). Hydration is key to reducing cramps and bloating.`,
+        message: `Her water intake is a bit low today (${latestLog.waterIntake}ml). Drinking enough water helps her feel her best.`,
       });
       dos.push(
         'Hand her a glass or bottle of fresh water with lemon or cucumber.',
