@@ -16,6 +16,7 @@ import {
   MAX_QUESTION_LENGTH,
   SUGGESTED_QUESTIONS,
   generateCompanionAnswer,
+  getAgeBand,
 } from '../utils/companionChat.js';
 
 const QUESTION_CATEGORY_ALIASES = {
@@ -178,6 +179,8 @@ export const askQuestion = async (req, res, next) => {
       query,
       language,
       userId: req.userId,
+      // Anonymous askers are 'unknown' and get the conservative, educational tone.
+      ageBand: getAgeBand(req.user?.dateOfBirth),
     });
 
     let tokensAwarded = 0;

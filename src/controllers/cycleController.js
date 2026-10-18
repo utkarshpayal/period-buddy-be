@@ -18,10 +18,15 @@ import {
   buildCycleAnalytics,
   calculateTrackingStreak,
   computeCyclePredictions,
+  cycleForDate,
   predictCycleFromHistory,
   prepareCycleHistory,
 } from '../utils/cycle.js';
 import { loadPredictionLogs } from '../utils/predictionLogs.js';
+import { computeAgeFromDob } from '../utils/companionChat.js';
+
+// Finished cycles needed before a symptom pattern is shown.
+const MIN_SYMPTOM_CYCLES = 3;
 
 /* ──────────────────────────────────────────────
    Controllers
@@ -575,7 +580,10 @@ export const getPredictions = async (req, res, next) => {
     // Pass the full log history so the prediction is anchored on the user's
     // actual logged periods (and their real cycle-length variability), not a
     // fixed configured cycle length.
-    const predictions = computeCyclePredictions(settings, logs, { today: clientToday(req) });
+    const predictions = computeCyclePredictions(settings, logs, {
+      today: clientToday(req),
+      age: computeAgeFromDob(req.user?.dateOfBirth),
+    });
     const analyticsData = buildCycleAnalytics(logs, settings).map((item) => ({
       month: new Date(`${item.month}-01T00:00:00.000Z`).toLocaleDateString('en-US', {
         month: 'short',
@@ -664,45 +672,41 @@ export const getSymptomPredictions = async (req, res, next) => {
     // built once instead of once per symptom log; predictCycleFromHistory
     // returns exactly what computeCyclePredictions(settings, allLogs, ...)
     // would (utils/__tests__/cyclePrediction.test.js checks this).
-    const history = prepareCycleHistory(settings, allLogs);
-    const nextCycleStart = predictCycleFromHistory(settings, history, {
-      today: clientToday(req),
-    }).nextPeriodDateKey;
+    const age = computeAgeFromDob(req.user?.dateOfBirth);
+    const history = prepareCycleHistory(settings, allLogs, { age });
+    const now = predictCycleFromHistory(settings, history, { today: clientToday(req) });
+    const nextCycleStart = now.nextPeriodDateKey;
+    // The cycle in progress isn't finished, so it can't say whether a symptom
+    // "usually" shows up in its later phases: it's left out of the counts.
+    const currentCycleKey = now.currentPeriodStartDateISO.slice(0, 10);
 
-    const logs = allLogs.filter((log) => log.symptoms && log.symptoms.length > 0);
+    // For each phase: the cycles where anything at all was logged in that
+    // phase (the denominator: a cycle with no logs there says nothing), and
+    // per symptom the cycles it was logged in. Keyed by cycle start, so
+    // repeat logs within one cycle count once.
+    const phaseCycles = new Map(); // phase -> Set(cycleKey)
+    const occurrenceCycles = new Map(); // `${symptom}::${phase}` -> Set(cycleKey)
+    const allCycleKeys = new Set();
 
-    // Bucket every symptom occurrence by (symptom, phase), and track which
-    // distinct historical cycle each occurrence belongs to (keyed by that
-    // cycle's actual period-start date, from the same episode-based anchor
-    // getPredictions/insights use — not a raw offset from the
-    // user-configured lastPeriodStartDate, which drifts out of sync from
-    // real logged periods over time — see docs/fixes.md 1.4) so repeat logs
-    // within the same cycle only count once.
-    const bucketKey = (symptom, phase) => `${symptom}::${phase}`;
-    const occurrenceCycles = new Map(); // bucketKey -> Set(cycleIndex)
-    const allCycleIndexes = new Set();
-
-    logs.forEach((log) => {
-      const { currentPeriodStartDateISO, currentPhase } = predictCycleFromHistory(
-        settings,
-        history,
-        { today: log.date },
-      );
-      const cycleIndex = currentPeriodStartDateISO;
-      const phase = currentPhase;
-
-      allCycleIndexes.add(cycleIndex);
-
+    allLogs.forEach((log) => {
+      const placed = cycleForDate(settings, history, log.dateKey);
+      if (!placed || placed.cycleKey === currentCycleKey) return;
+      const { cycleKey, phase } = placed;
+      allCycleKeys.add(cycleKey);
+      if (!phaseCycles.has(phase)) phaseCycles.set(phase, new Set());
+      phaseCycles.get(phase).add(cycleKey);
       (log.symptoms || []).forEach((symptom) => {
-        const key = bucketKey(symptom, phase);
+        const key = `${symptom}::${phase}`;
         if (!occurrenceCycles.has(key)) occurrenceCycles.set(key, new Set());
-        occurrenceCycles.get(key).add(cycleIndex);
+        occurrenceCycles.get(key).add(cycleKey);
       });
     });
 
-    const cyclesAnalyzed = allCycleIndexes.size;
+    const cyclesAnalyzed = allCycleKeys.size;
 
-    if (cyclesAnalyzed < 2) {
+    // Below 3 finished cycles a pattern can't be told apart from chance
+    // (2 of 2 would read as "every cycle").
+    if (cyclesAnalyzed < MIN_SYMPTOM_CYCLES) {
       logger.info('symptom_predictions_insufficient_data', {
         action: 'symptom_predictions_insufficient_data',
         userId: req.userId,
@@ -711,8 +715,8 @@ export const getSymptomPredictions = async (req, res, next) => {
       return sendResponse(
         res,
         HTTP_STATUS.OK,
-        'Log at least 2 cycles to unlock symptom predictions',
-        { nextCycleStart, predictions: [] },
+        `Log at least ${MIN_SYMPTOM_CYCLES} cycles to unlock symptom predictions`,
+        { nextCycleStart, predictions: [], cyclesAnalyzed },
       );
     }
 
@@ -720,15 +724,17 @@ export const getSymptomPredictions = async (req, res, next) => {
       .map(([key, cycleSet]) => {
         const [symptom, phase] = key.split('::');
         const occurrences = cycleSet.size;
+        const phaseTotal = phaseCycles.get(phase)?.size ?? 0;
         return {
           symptom,
           phase,
-          likelihood: Math.round((occurrences / cyclesAnalyzed) * 100),
+          likelihood: phaseTotal ? Math.round((occurrences / phaseTotal) * 100) : 0,
           occurrences,
-          cyclesAnalyzed,
+          // Per phase: cycles with any log in this phase.
+          cyclesAnalyzed: phaseTotal,
         };
       })
-      .filter((prediction) => prediction.occurrences >= 2)
+      .filter((p) => p.occurrences >= 2 && p.cyclesAnalyzed >= MIN_SYMPTOM_CYCLES)
       .sort((a, b) => b.likelihood - a.likelihood);
 
     logger.info('symptom_predictions_fetched', {
@@ -741,6 +747,7 @@ export const getSymptomPredictions = async (req, res, next) => {
     return sendResponse(res, HTTP_STATUS.OK, 'Symptom predictions computed', {
       nextCycleStart,
       predictions,
+      cyclesAnalyzed,
     });
   } catch (error) {
     logger.error('symptom_predictions_error', { userId: req.userId, error: error.message });
