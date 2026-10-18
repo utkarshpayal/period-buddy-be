@@ -109,6 +109,9 @@ const communityPostSchema = new mongoose.Schema(
 );
 
 communityPostSchema.index({ isActive: 1, status: 1, createdAt: -1 });
+// GET /api/community feed: isActive (+ category) filter, newest first.
+communityPostSchema.index({ isActive: 1, createdAt: -1 });
+communityPostSchema.index({ isActive: 1, category: 1, createdAt: -1 });
 communityPostSchema.index({ category: 1, createdAt: -1 });
 communityPostSchema.index({ userId: 1, createdAt: -1 });
 

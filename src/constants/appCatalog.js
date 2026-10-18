@@ -433,5 +433,19 @@ export const DEFAULT_SETTINGS = {
     message: 'Update The Nura to get the latest features and fixes.',
     androidUrl: null,
     iosUrl: null,
+    // Optional "What's new" bullet points under the message (≤5, ≤80 chars each).
+    highlights: [],
+    ctaLabel: 'Update now', // the primary button
+    // false: people below latestVersion can't close the prompt ("Later" hidden).
+    // Never blocks someone already on latestVersion — hard blocks are minVersion.
+    dismissible: true,
+    // true: show the prompt to every app user, whatever version they run.
+    forceShowAll: false,
+    // The prompt shows once per promptId (or per latestVersion when unset):
+    // the CMS sets a new id to show it again to people who closed it.
+    promptId: null,
   },
 };
+
+export const UPDATE_HIGHLIGHTS_MAX = 5;
+export const UPDATE_HIGHLIGHT_MAX_LENGTH = 80;

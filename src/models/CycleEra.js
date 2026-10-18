@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { invalidateMemoOnWrite } from '../utils/memoCache.js';
 import { CYCLE_PHASES } from '../utils/cycle.js';
 
 /**
@@ -18,5 +19,8 @@ const cycleEraSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+
+// Any write drops the cached app-facing list (utils/memoCache.js).
+cycleEraSchema.plugin(invalidateMemoOnWrite, { prefix: 'genz:' });
 
 export default mongoose.model('CycleEra', cycleEraSchema);

@@ -89,4 +89,10 @@ const cycleSettingsSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+// Scheduler candidate queries (checkinCallScheduler.js, dailyNotificationScheduler.js).
+cycleSettingsSchema.index({ checkinCallEnabled: 1 });
+cycleSettingsSchema.index({ remindersEnabled: 1 });
+cycleSettingsSchema.index({ ovulationReminder: 1 });
+cycleSettingsSchema.index({ fertilityReminder: 1 });
+
 export default mongoose.model('CycleSettings', cycleSettingsSchema);

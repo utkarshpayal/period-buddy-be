@@ -221,7 +221,8 @@ userSchema.plugin(encryptFields, {
   fields: ['twoFactor.totpSecret', 'twoFactor.pendingTotpSecret'],
 });
 
-userSchema.index({ email: 1 });
+// email is indexed by its `unique: true`.
+userSchema.index({ createdAt: -1 });
 userSchema.index({ isActive: 1, createdAt: -1 });
 
 export default mongoose.model('User', userSchema);

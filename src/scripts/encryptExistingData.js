@@ -32,6 +32,8 @@ import BuddyMessage from '../models/BuddyMessage.js';
 import CheckinCall from '../models/CheckinCall.js';
 import Document from '../models/Document.js';
 import User from '../models/User.js';
+import ReelComment from '../models/ReelComment.js';
+import SupportTicket from '../models/SupportTicket.js';
 
 /**
  * Keep in step with the `encryptFields` plugin calls in the models. A third
@@ -49,6 +51,8 @@ export const ENCRYPTED = [
   [CheckinCall, ['summary']],
   [Document, ['extractedText']],
   [User, ['twoFactor.totpSecret', 'twoFactor.pendingTotpSecret']],
+  [ReelComment, ['text']],
+  [SupportTicket, ['subject', 'message', 'replies.message']],
 ];
 
 const apply = process.argv.includes('--apply');

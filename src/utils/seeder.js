@@ -494,11 +494,15 @@ export const seedDatabase = async () => {
     }
 
     // Seed Blogs — upsert by slug (not a one-time count guard) so newly added
-    // articles land on existing databases, and so the earlier seed blogs that
-    // were saved without status:'published' (and were therefore invisible in
-    // the feed) get corrected on the next boot.
+    // articles land on existing databases. Insert-only ($setOnInsert): this
+    // used to `$set` the whole seed post on every boot, so each deploy or
+    // restart re-published seed blogs an admin had unpublished/archived,
+    // reset their publishedAt to "now" and reverted their edits — the admin's
+    // status change looked like it hadn't stuck.
     const blogResults = await Promise.all(
-      blogData.map((blog) => Blog.updateOne({ slug: blog.slug }, { $set: blog }, { upsert: true })),
+      blogData.map((blog) =>
+        Blog.updateOne({ slug: blog.slug }, { $setOnInsert: blog }, { upsert: true }),
+      ),
     );
     const blogsUpserted = blogResults.filter((r) => r.upsertedCount > 0).length;
     logger.info('seeder_blogs_seeded', {
@@ -571,6 +575,10 @@ export const seedDatabase = async () => {
       { isPublished: { $ne: true }, status: 'published' },
       { $set: { status: 'draft' } },
     );
+    // Reading time is computed from content now; fix posts saved with none,
+    // a hand-typed estimate, or an older formula. Only changed posts are
+    // written, without touching updatedAt.
+    await Blog.backfillReadTimes();
     // Accounts deleted in-app before accountLifecycle existed: set deletedAt
     // and tear down what they left behind (visible posts, partner links…).
     await backfillLegacyDeletedAccounts();

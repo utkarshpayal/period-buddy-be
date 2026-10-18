@@ -165,6 +165,9 @@ export const replayChangeRequest = async (changeRequest, reviewerReq) => {
     body: { ...(changeRequest.body || {}) },
     user: requester,
     userId: String(requester._id),
+    // The approver, for controllers whose side effects depend on who signed
+    // off (e.g. content publishing records the approver as medical reviewer).
+    approvedBy: reviewerReq.user,
     ip: reviewerReq.ip,
     headers: {},
     get: () => undefined,

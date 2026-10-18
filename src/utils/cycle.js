@@ -310,14 +310,28 @@ export const computeCyclePredictions = (settings, logs = [], options = {}) => {
     options = logs;
     logs = [];
   }
+  return predictCycleFromHistory(settings, prepareCycleHistory(settings, logs), options);
+};
 
-  const periodLength = settings.periodLength || 5;
-  // Callers answering a request pass the person's local today (clientToday).
-  const today = options.today ? new Date(options.today) : new Date();
-
+/**
+ * The part of computeCyclePredictions that depends only on the log history
+ * (period episodes and cycle-length analysis), not on "today". Callers that
+ * predict for many dates over the same history (symptom predictions) build
+ * it once and call predictCycleFromHistory per date; the result is exactly
+ * computeCyclePredictions(settings, logs, options).
+ */
+export const prepareCycleHistory = (settings, logs = []) => {
   const episodes = derivePeriodEpisodes(logs);
   const cycleLengths = computeCycleLengths(episodes);
   const analysis = analyzeCycleHistory(cycleLengths, settings.cycleLength || 28);
+  return { episodes, analysis };
+};
+
+/** computeCyclePredictions for a prepared history (see prepareCycleHistory). */
+export const predictCycleFromHistory = (settings, { episodes, analysis }, options = {}) => {
+  const periodLength = settings.periodLength || 5;
+  // Callers answering a request pass the person's local today (clientToday).
+  const today = options.today ? new Date(options.today) : new Date();
   const cycleLength = analysis.predictedCycleLength;
 
   // The prediction anchor is the most recent *actual* logged period start; only

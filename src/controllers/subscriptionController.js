@@ -24,6 +24,7 @@ import {
   redeemCoupon,
 } from '../utils/couponAccess.js';
 import logger from '../utils/logger.js';
+import { memo } from '../utils/memoCache.js';
 
 /**
  * Resolves { source, planId, featureKey } to the item's live base price,
@@ -110,7 +111,13 @@ const applyCouponToAmount = async (couponCode, amount, userId) => {
 /** GET /api/subscriptions/plans — active bundles for the pricing/paywall screen. */
 export const getPlans = async (req, res, next) => {
   try {
-    const plans = await SubscriptionPlan.find({ isActive: true }).sort({ sortOrder: 1 });
+    // Same catalogue for everyone; cached for a minute, dropped on any
+    // admin write (SubscriptionPlan's invalidateMemoOnWrite).
+    const plans = await memo('subscriptions:plans', async () =>
+      (await SubscriptionPlan.find({ isActive: true }).sort({ sortOrder: 1 })).map((plan) =>
+        plan.toJSON(),
+      ),
+    );
     return sendResponse(res, HTTP_STATUS.OK, 'Plans fetched', plans);
   } catch (error) {
     next(error);
@@ -122,10 +129,14 @@ export const getPlans = async (req, res, next) => {
  * calling the real endpoint. */
 export const getFeatures = async (req, res, next) => {
   try {
-    const features = await SubscriptionFeature.find({ isActive: true }).sort({
-      category: 1,
-      sortOrder: 1,
-    });
+    const features = await memo('subscriptions:features', async () =>
+      (
+        await SubscriptionFeature.find({ isActive: true }).sort({
+          category: 1,
+          sortOrder: 1,
+        })
+      ).map((feature) => feature.toJSON()),
+    );
     return sendResponse(res, HTTP_STATUS.OK, 'Features fetched', features);
   } catch (error) {
     next(error);

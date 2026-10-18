@@ -13,12 +13,17 @@ import Notification from '../models/Notification.js';
 import RewardTransaction from '../models/RewardTransaction.js';
 import ScreeningAssessment from '../models/ScreeningAssessment.js';
 import QaChatSession from '../models/QaChatSession.js';
+import SupportTicket from '../models/SupportTicket.js';
+import BlogReader from '../models/BlogReader.js';
 import SchemeApplication from '../models/SchemeApplication.js';
 import Partner from '../models/Partner.js';
 import PartnerMessage from '../models/PartnerMessage.js';
 import BuddyMessage from '../models/BuddyMessage.js';
 import CommunityPost from '../models/Community.js';
 import Comment from '../models/Comment.js';
+import ReelLike from '../models/ReelLike.js';
+import ReelSave from '../models/ReelSave.js';
+import ReelComment from '../models/ReelComment.js';
 import LaunchInterest from '../models/LaunchInterest.js';
 import { getSignedViewUrl } from './s3.js';
 import { listSessions } from './sessions.js';
@@ -75,6 +80,11 @@ export const buildDataExport = async (userId) => {
     posts,
     comments,
     waitlists,
+    supportTickets,
+    blogReads,
+    reelLikes,
+    reelSaves,
+    reelComments,
     sessions,
   ] = await Promise.all([
     CycleSettings.find({ userId }).lean(),
@@ -99,6 +109,14 @@ export const buildDataExport = async (userId) => {
     CommunityPost.find({ userId }).sort({ createdAt: 1 }).lean(),
     Comment.find({ userId }).sort({ createdAt: 1 }).lean(),
     LaunchInterest.find({ user: userId }).lean(),
+    SupportTicket.find({ userId })
+      .select('-assignee -replies.authorId -adminEmailDelivered')
+      .sort({ createdAt: 1 })
+      .lean(),
+    BlogReader.find({ userId }).select('-userId').lean(),
+    ReelLike.find({ userId }).select('-userId').sort({ createdAt: 1 }).lean(),
+    ReelSave.find({ userId }).select('-userId').sort({ createdAt: 1 }).lean(),
+    ReelComment.find({ userId }).select('-userId').sort({ createdAt: 1 }).lean(),
     listSessions(userId),
   ]);
 
@@ -130,6 +148,9 @@ export const buildDataExport = async (userId) => {
     schemeApplications: all(schemeApplications),
     notifyMeLists: all(waitlists),
     notifications: all(notifications),
+    supportTickets: all(supportTickets),
+    blogReads: all(blogReads),
+    reels: { likes: all(reelLikes), saves: all(reelSaves), comments: all(reelComments) },
     signedInDevices: sessions,
   };
 };

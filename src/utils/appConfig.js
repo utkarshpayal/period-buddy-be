@@ -19,6 +19,8 @@ import {
   THEME_TOKEN_KEYS,
   TILE_COLOR_KEYS,
   TILE_ICONS,
+  UPDATE_HIGHLIGHTS_MAX,
+  UPDATE_HIGHLIGHT_MAX_LENGTH,
 } from '../constants/appCatalog.js';
 import { isValidNotificationRoute } from './notificationRoute.js';
 
@@ -521,6 +523,8 @@ export const mergeSettings = (saved = {}) => ({
   update: { ...DEFAULT_SETTINGS.update, ...(saved?.update || {}) },
 });
 
+const PROMPT_ID = /^[A-Za-z0-9._-]+$/;
+
 export const parseSettings = (value) => {
   if (!value || typeof value !== 'object') return { error: 'settings must be an object' };
   const m = value.maintenance ?? {};
@@ -530,7 +534,32 @@ export const parseSettings = (value) => {
   const mMessage = optionalText(m.message, 300, 'Maintenance message');
   const uTitle = optionalText(u.title, 60, 'Update title');
   const uMessage = optionalText(u.message, 300, 'Update message');
-  for (const r of [mTitle, mMessage, uTitle, uMessage]) if (r.error) return { error: r.error };
+  const uCta = optionalText(u.ctaLabel, 24, 'Update button label');
+  const uPromptId = optionalText(u.promptId, 40, 'Prompt id');
+  for (const r of [mTitle, mMessage, uTitle, uMessage, uCta, uPromptId]) {
+    if (r.error) return { error: r.error };
+  }
+  if (uPromptId.value && !PROMPT_ID.test(uPromptId.value)) {
+    return { error: 'Prompt id may only use letters, numbers, dots, dashes and underscores' };
+  }
+  for (const field of ['forceShowAll', 'dismissible']) {
+    if (u[field] !== undefined && u[field] !== null && typeof u[field] !== 'boolean') {
+      return { error: `update.${field} must be true or false` };
+    }
+  }
+  const highlights = [];
+  if (u.highlights !== undefined && u.highlights !== null) {
+    if (!Array.isArray(u.highlights)) return { error: 'update.highlights must be a list' };
+    for (const item of u.highlights) {
+      const h = optionalText(item, UPDATE_HIGHLIGHT_MAX_LENGTH, 'Each “What’s new” point');
+      if (h.error) return { error: h.error };
+      if (h.value) highlights.push(h.value);
+    }
+    if (highlights.length > UPDATE_HIGHLIGHTS_MAX) {
+      return { error: `Add at most ${UPDATE_HIGHLIGHTS_MAX} “What’s new” points` };
+    }
+  }
+  if (m.enabled === true && !mMessage.value) return { error: 'Add a maintenance message' };
   if (m.enabled === true && !mMessage.value) return { error: 'Add a maintenance message' };
 
   const versions = {};
@@ -554,7 +583,12 @@ export const parseSettings = (value) => {
     else if (!isHttpsUrl(v)) return { error: 'Store links must be full https:// URLs' };
     else links[field] = String(v).trim();
   }
-  if ((versions.minVersion || versions.latestVersion) && !links.androidUrl && !links.iosUrl) {
+  const forceShowAll = u.forceShowAll === true;
+  if (
+    (versions.minVersion || versions.latestVersion || forceShowAll) &&
+    !links.androidUrl &&
+    !links.iosUrl
+  ) {
     return { error: 'Add at least one store link so people can update' };
   }
 
@@ -570,6 +604,11 @@ export const parseSettings = (value) => {
         title: uTitle.value || DEFAULT_SETTINGS.update.title,
         message: uMessage.value || DEFAULT_SETTINGS.update.message,
         ...links,
+        highlights,
+        ctaLabel: uCta.value || DEFAULT_SETTINGS.update.ctaLabel,
+        dismissible: u.dismissible !== false,
+        forceShowAll,
+        promptId: uPromptId.value,
       },
     },
   };

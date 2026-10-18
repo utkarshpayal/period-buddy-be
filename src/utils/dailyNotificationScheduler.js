@@ -1,7 +1,7 @@
 import CycleSettings from '../models/CycleSettings.js';
-import CycleLog from '../models/CycleLog.js';
 import Notification from '../models/Notification.js';
 import { computeCyclePredictions } from './cycle.js';
+import { loadPredictionLogs } from './predictionLogs.js';
 import { dateToDateKey, timingSafeEqualStrings, todayDateKey } from './apiHelpers.js';
 import { sendResponse, sendError } from './sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
@@ -55,10 +55,21 @@ const DAILY_NUDGE_MESSAGES = [
  * trade-off for day-granularity reminders (unlike the check-in call's
  * chosen time-of-day, which does track a real per-user timezone offset).
  */
+// What the tick reads from each settings doc (computeCyclePredictions uses
+// periodLength, cycleLength and lastPeriodStartDate). Hydrated, not lean,
+// so selected paths keep their schema defaults (remindersEnabled: true).
+const SETTINGS_FIELDS =
+  'userId lastPeriodStartDate cycleLength periodLength pregnancyMode remindersEnabled ' +
+  'reminderDaysBefore ovulationReminder fertilityReminder';
+
+// Users processed concurrently per batch: each one is a log read plus up to
+// three guarded writes, so a small batch keeps the pool free for requests.
+const USER_BATCH_SIZE = 10;
+
 export const runDailyNotificationTick = async () => {
   const allCandidates = await CycleSettings.find({
     $or: [{ remindersEnabled: true }, { ovulationReminder: true }, { fertilityReminder: true }],
-  });
+  }).select(SETTINGS_FIELDS);
   // Suspended/deleted accounts get no reminders (or inbox rows).
   const liveIds = await activeUserIdSet(allCandidates.map((settings) => settings.userId));
   const candidates = allCandidates.filter((settings) => liveIds.has(String(settings.userId)));
@@ -68,9 +79,9 @@ export const runDailyNotificationTick = async () => {
   let dailyNudgesSent = 0;
   const todayKey = todayDateKey();
 
-  for (const settings of candidates) {
+  const processUser = async (settings) => {
     try {
-      const logs = await CycleLog.find({ userId: settings.userId }).sort({ dateKey: 1 });
+      const logs = await loadPredictionLogs(settings.userId);
       const predictions = computeCyclePredictions(settings, logs);
 
       // Each guard below is claimed atomically (the guard field's own
@@ -162,6 +173,10 @@ export const runDailyNotificationTick = async () => {
         error: error.message,
       });
     }
+  };
+
+  for (let i = 0; i < candidates.length; i += USER_BATCH_SIZE) {
+    await Promise.all(candidates.slice(i, i + USER_BATCH_SIZE).map(processUser));
   }
 
   return {

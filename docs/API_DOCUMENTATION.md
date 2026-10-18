@@ -52,6 +52,7 @@ Standard error wrapper:
 | Health concerns encyclopedia | `/api/health-issues/*` |
 | Hygiene and sexual wellbeing | `/api/wellbeing/*` |
 | Content management web app | `/api/content/*` |
+| Help & support tickets | `/api/support/*`, admin `/api/admin/support/*` |
 
 ## Health
 
@@ -291,13 +292,16 @@ Response:
   "data": {
     "total": 42,
     "byType": {
-      "blog": { "total": 10, "published": 8, "draft": 2 },
-      "video": { "total": 12, "active": 11, "inactive": 1 },
-      "question-answer": { "total": 20, "published": 18, "draft": 2 }
-    }
+      "blog": { "total": 10, "published": 8, "draft": 2, "inReview": 1 },
+      "video": { "total": 12, "active": 11, "inactive": 1, "inReview": 0 },
+      "question-answer": { "total": 20, "published": 18, "draft": 2, "inReview": 1 }
+    },
+    "awaitingReview": 2
   }
 }
 ```
+
+`draft`/`inactive` count every hidden item, in-review ones included; `inReview` counts the items awaiting medical review and `awaitingReview` is their total across types.
 
 ### GET `/api/content?type=all&status=all&search=period&page=1&limit=20`
 
@@ -305,7 +309,7 @@ Query params:
 
 `type`: `all`, `blog`, `video`, `question-answer`, `health-issue`, `wellbeing`
 
-`status`: `all`, `published`, `draft`, `active`, `inactive`
+`status`: `all`, `published`, `draft`, `active`, `inactive`, `in_review` (awaiting medical review), `archived` (blogs). `draft`/`inactive` leave out items in review.
 
 `category`, `tag`/`tags`, `resourceType`, and `featured` are supported where relevant.
 
@@ -322,6 +326,17 @@ Response:
         "type": "blog",
         "title": "Period Myths Debunked",
         "status": "draft",
+        "review": {
+          "medicallyReviewed": true,
+          "by": "Asha Rao",
+          "at": "2026-10-16T10:00:00.000Z",
+          "note": null,
+          "submittedAt": "2026-10-15T09:00:00.000Z",
+          "submittedBy": "Priya Shah",
+          "sentBackAt": null,
+          "sentBackBy": null,
+          "sentBackNote": null
+        },
         "imageUrl": "https://..."
       }
     ],
@@ -333,7 +348,7 @@ Response:
 
 ### POST `/api/content/:type`
 
-Creates content for the selected type. `status` can be `published`/`active` or `draft`/`inactive`.
+Creates content for the selected type. `status` can be `published`/`active` or `draft`/`inactive`. Staff without `content.publish` always create drafts. `medicallyReviewed`, `reviewedBy`, `reviewedAt`, `reviewNote` and `inReview` are ignored on create and update; see [Medical review](#medical-review).
 
 Blog payload:
 
@@ -343,13 +358,14 @@ Blog payload:
   "content": "Full article",
   "excerpt": "Short summary",
   "coverImageUrl": "https://...",
-  "category": "Education",
+  "category": "health",
   "tags": ["periods"],
   "author": "Period Buddy Team",
-  "readTimeMinutes": 5,
   "status": "published"
 }
 ```
+
+Blog `category` is one of `general`, `health`, `lifestyle`, `beauty` (any case; defaults to `general`, anything else is a `400`). `readTimeMinutes` is not accepted: it is computed from `content` (~200 words a minute, at least 1) on every create and update.
 
 Video payload:
 
@@ -451,11 +467,44 @@ or
 { "status": "draft" }
 ```
 
-For videos, health issues, and wellbeing resources use `active` or `inactive`.
+For videos, health issues, and wellbeing resources use `active` or `inactive`. The action verbs are accepted too (`publish`/`unpublish`, `activate`/`deactivate`, `show`/`hide`), and so are boolean flags (`isPublished`, `isActive`, `publish`, `published`, `active`, `visible`). With no status or flag at all the item is published. Blogs can also be `archived` (`archive`): hidden like a draft, listed with `?status=archived` and left out of `?status=draft`. A blog keeps its `publishedAt` when re-published; it is set only the first time it goes live (or from an explicit `publishedAt`). Its slug only changes when a post that isn't live is renamed.
 
 ### DELETE `/api/content/:type/:id`
 
 Soft-deletes the item by making it draft/inactive.
+
+### Medical review
+
+Every type (blogs, Q&As, videos/reels, health issues, wellbeing guides) goes through medical review before it's public:
+
+`draft` → **submit** → `in_review` → **approve** → `published`/`active` (stamped), or **mark_reviewed** → stays a draft (stamped), or **send_back** (note required) → `draft`.
+
+An item in review is always hidden from the app. Admin items carry `status: "in_review"` and a `review` object (`medicallyReviewed`, `by`, `at`, `note`, `submittedAt`/`submittedBy`, `sentBackAt`/`sentBackBy`/`sentBackNote`).
+
+#### POST `/api/content/:type/:id/review`
+
+```json
+{ "action": "send_back", "note": "Please cite a source for the dosage." }
+```
+
+| `action` | Needs | From | Result |
+| --- | --- | --- | --- |
+| `submit` | `content.write` | draft / inactive | in review |
+| `approve` | `content.approve` | in review | published + stamped |
+| `mark_reviewed` | `content.approve` | in review, draft or live | stamped; visibility unchanged (in review → draft) |
+| `send_back` | `content.approve` | in review | draft, stamp cleared; `note` (≤ 500 chars) required |
+
+`note` is optional for `approve`/`mark_reviewed` (stored as the stamp's `reviewNote`). Answers `200` with the updated item, `400` for an unknown action or a missing/long note, `403` without the permission, `409` when the item isn't in the right state (or changed meanwhile: the transition is a compare-and-set). This route is not approval-gated. Each action is audit-logged (`content.review_submitted`, `content.review_approved`, `content.review_marked`, `content.review_sent_back`).
+
+**The stamp** (`medicallyReviewed: true`, `reviewedBy`, `reviewedById`, `reviewedAt`, optional `reviewNote`) is written only by the server. `reviewedBy` is the acting admin's first + last name from their User record (the email when there's no name). Only `content.approve` holders produce one:
+
+- `approve` and `mark_reviewed` stamp the item.
+- A `content.approve` holder publishing a hidden item (create as live, `PUT` with a live status, `PATCH .../publish`) stamps it too. So does approving a Content Admin's publish/edit ChangeRequest: the approver is the reviewer.
+- When someone without `content.approve` changes the medical substance of a stamped item (blog title/content/excerpt, Q&A question/answer/shortAnswer, video title/video/poll question, health issue title/summary/guide/symptoms/causes/treatment/prevention/whenToSeeDoctor, guide title/summary/extendedGuide/video/audio), the stamp is cleared (`content.review_cleared`) and the item needs re-review. Edits made by a reviewer keep it.
+
+Content Admins (`content.write` only) still can't publish: creates are forced to draft, and publishing or editing something live becomes a ChangeRequest. `PATCH .../publish` with `status: "in_review"` is a `400`; use this route. Any explicit publish/unpublish takes an item out of review.
+
+**App/public reads** (`/api/blogs`, `/api/blogs/public*`, `/api/questions`, `/api/reels`, `/api/health-issues`, `/api/wellbeing`) serve published items only and include `medicallyReviewed`, `reviewedBy` and `reviewedAt`. `reviewedById`, `reviewNote`, `inReview` and the workflow fields are `select: false` on the models and never leave the admin API.
 
 ## Cycle Tracker
 
@@ -545,9 +594,11 @@ Response:
 }
 ```
 
-### GET `/api/cycle/logs?month=YYYY-MM`
+### GET `/api/cycle/logs?month=YYYY-MM` / `?year=YYYY`
 
-Response: array of day logs.
+Optional filters: `month=YYYY-MM` (one month) or `year=YYYY` (a whole year in one request, instead of 12 month calls). `month` wins if both are sent; a malformed value is a 400. With neither, every log is returned.
+
+Response: array of day logs, oldest first.
 
 ### GET `/api/cycle/log/:dateKey`
 
@@ -826,7 +877,9 @@ Response: paid consultation with starter doctor message and `+10` tokens.
 
 ### GET `/api/consultation/my`
 
-Response: current user's consultations populated with doctor details.
+Response: current user's consultations (newest first) populated with doctor details, as a bare array in `data`.
+
+Optional paging: send `?page=` and/or `?limit=` (default 20, max 100) and `data` is that page (still a bare array), with `pagination` (`{ page, limit, total, pages, hasNextPage, hasPrevPage }`) next to `data` on the envelope. Without either param the full list is returned exactly as before.
 
 ### GET `/api/consultation/:id/messages`
 
@@ -1061,6 +1114,8 @@ Payload:
 { "transcript": "Log today's entry", "language": "en-IN", "pendingAction": null, "confirmed": false }
 ```
 
+Optional `history`: the last few turns as `[{ "role": "user" | "assistant", "text": "..." }]` (the server keeps the last 8, each cut to 600 characters, and drops anything else), so follow-ups like "why?" make sense. The agent is also given the user's current cycle day/phase and next expected period, and "today" is the phone's local date from `X-Timezone-Offset` (also the default `dateKey` for a confirmed log). Replies are written to be spoken: one to three short sentences, no markdown.
+
 `pendingAction` is the `{ action, payload }` echoed back from the previous turn's `action_proposal`/`action_confirm` response so the conversation can span multiple turns without server-side session state. Set `confirmed: true` alongside a `pendingAction` from an `action_confirm` reply to execute it.
 
 Response (`data` is one of):
@@ -1086,7 +1141,9 @@ Delete soft-unpublishes the Q&A.
 
 ## Community
 
-### GET `/api/community?category=general&search=cycle&page=1&limit=15`
+### GET `/api/community?category=general&tag=cramps&search=cycle&page=1&limit=15`
+
+`tag` matches one of a post's tags exactly, ignoring case and a leading `#`. `search` also matches tags.
 
 Response:
 
@@ -1117,6 +1174,8 @@ Payload:
 ```json
 { "title": "Cycle milestone", "content": "I tracked consistently.", "category": "success_story", "tags": ["tracking"], "isAnonymous": true }
 ```
+
+`tags` are free-form (the app's "+ Add tag"): each is trimmed, a leading `#` and any character other than letters, digits, spaces, `-` and `_` are removed, and duplicates are dropped ignoring case. At most 5 tags of up to 24 characters each, otherwise `400`.
 
 ### GET `/api/community/:id`
 
@@ -1208,7 +1267,7 @@ Response: `{ "blog": { ...list fields, "content", "seoTitle", "seoDescription", 
 
 XML sitemap of `/blog`, every topic page and every published post on the marketing site (`PUBLIC_SITE_URL`, default `https://thenura.care`). The site proxies it at `/sitemap-blog.xml`.
 
-`readTimeMinutes` in the public API is computed from the article's word count (200 wpm), not the app's dwell-time average.
+`readTimeMinutes` (public and app API alike) is computed from the article's word count (200 wpm, at least 1) and stored on every write; posts saved before that are backfilled when read. The app API also returns `averageReadMinutes`, the average time readers kept the post open (null until someone has).
 
 ### GET `/api/blogs/feed?type=all&page=1&limit=10&search=period`
 
@@ -1262,13 +1321,14 @@ Create payload:
   "content": "Full article",
   "excerpt": "Short summary",
   "coverImageUrl": "https://...",
-  "category": "Education",
+  "category": "health",
   "tags": ["periods"],
   "author": "Period Buddy Team",
-  "readTimeMinutes": 5,
   "isPublished": true
 }
 ```
+
+`status` (`published`/`draft`/`archived`, or `publish`/`unpublish`/`archive`) and `isPublished` are kept in step; `publishedAt` and `readTimeMinutes` are set by the server.
 
 ## Reels
 
@@ -1293,8 +1353,16 @@ Response:
         "directMp4Url": "https://...",
         "pollQuestion": "Vote for the next video topic:",
         "pollOptions": [{ "optionId": "o1", "topic": "Stress", "votes": 142 }],
+        "description": "Caption shown under the video",
+        "tags": ["cycle", "hormones"],
         "followedByMe": false,
-        "votedOptionId": null
+        "votedOptionId": null,
+        "isLiked": true,
+        "isSaved": false,
+        "likeCount": 120,
+        "commentCount": 8,
+        "saveCount": 14,
+        "viewCount": 3420
       }
     ],
     "pagination": {}
@@ -1302,13 +1370,66 @@ Response:
 }
 ```
 
+`isLiked`/`isSaved` are the caller's own state, worked out for the whole page with one `$in` query each on `ReelLike`/`ReelSave` (no per-reel lookups). `commentCount` counts visible comments only.
+
+### GET `/api/reels/saved?page=1&limit=10`
+
+The caller's saved reels, newest save first, same reel shape as above. Reels that were unpublished since drop out of the page (`pagination.total` still counts their saves).
+
 ### GET `/api/reels/:id`
 
-Response: single reel, increments views.
+Response: one published reel with the same fields. It doesn't count a view (it used to; the app now counts views with `/view` after real playback).
 
 ### PATCH `/api/reels/:id/view`
 
-Records a view.
+Records a view. The app calls it once a reel has played for about 2 seconds.
+
+### POST `/api/reels/:id/like` and POST `/api/reels/:id/save`
+
+Payload `{ "liked": true }` / `{ "saved": true }` (`false` to undo). These **set** the state rather than toggle it, so a double tap or a retry can't flip it back. `likeCount`/`saveCount` on the reel only move when the request actually created or removed the `ReelLike`/`ReelSave` row (unique on reel + user).
+
+Response: `{ "liked": true, "likeCount": 121 }` / `{ "saved": true, "saveCount": 15 }`. `400` without a boolean, `404` for an unknown or unpublished reel.
+
+### GET `/api/reels/:id/comments?cursor=<commentId>&limit=20`
+
+Newest first. `cursor` is the id of the last comment already shown (`nextCursor` from the previous page; `null` means no more). `limit` defaults to 20, at most 50.
+
+```json
+{
+  "success": true,
+  "data": {
+    "comments": [
+      {
+        "id": "commentId",
+        "reelId": "reelId",
+        "text": "This helped, thank you",
+        "createdAt": "2026-10-16T09:00:00.000Z",
+        "author": { "name": "Asha", "avatar": "https://..." },
+        "isOwn": false,
+        "canDelete": false
+      }
+    ],
+    "nextCursor": "commentId",
+    "commentCount": 8
+  }
+}
+```
+
+The author's account id is never sent. Staff with `content.write` can add `?moderation=1` (Content Studio → Video Reels → Comments): hidden comments are included, each with `isHidden` and `reportCount`, and unpublished reels can be read.
+
+### POST `/api/reels/:id/comments`
+
+Payload `{ "text": "..." }`, trimmed, 1–500 characters. Rate-limited per person (`REEL_COMMENT_RATE_LIMIT_MAX`, default 20 per `REEL_COMMENT_RATE_LIMIT_WINDOW_MS`, 10 min). `201` with `{ comment, commentCount }`. The text is encrypted at rest (`encryptFields`), so comments can't be searched in the database.
+
+### DELETE `/api/reels/:id/comments/:commentId`
+
+The comment's author, or staff with `content.write` (that removal is written to the audit log as `reel_comment.deleted`). Response `{ commentCount }`. `403` for anyone else.
+
+### POST `/api/reels/:id/comments/:commentId/report`
+
+Reports a comment once per person (not your own: `400`). After 5 different people report it, it's hidden from everyone and leaves `commentCount`; moderators still see it. Response `{ reported: true }`. Shares the comment rate limit.
+
+Likes, saves and comments are removed (with the counters adjusted) when an account is deleted, and are included in the data export under `reels`.
 
 ### PATCH `/api/reels/:id/follow`
 
@@ -1342,9 +1463,13 @@ Create payload:
   "thumbnailUrl": "https://...",
   "directMp4Url": "https://...",
   "pollQuestion": "Next topic?",
-  "pollOptions": [{ "optionId": "o1", "topic": "Stress", "votes": 0 }]
+  "pollOptions": [{ "optionId": "o1", "topic": "Stress", "votes": 0 }],
+  "description": "Optional caption (≤ 2200 chars)",
+  "tags": ["cycle", "stress"]
 }
 ```
+
+Tags are trimmed, lowercased, de-duplicated and capped at 10. The Content Studio's `/api/content` video create/update takes the same `description` (or `summary`) and `tags`, and its video items carry `summary`, `tags` and `metrics: { views, likes, comments, saves }`.
 
 ## Health Issues
 
@@ -1476,6 +1601,20 @@ To message specific people instead: `{ "title": "...", "body": "...", "audience"
 
 `saveToInbox` (default `true`) also writes a `system` in-app `Notification` per user. Tokens FCM reports as dead are removed from users automatically.
 
+**What a tap opens** (same fields on `/test`, broadcasts and schedules; all optional, sent as FCM `data` and stored on the inbox row's `data`):
+
+- `route`: an in-app path such as `/tracker` (no full URLs).
+- `storeUrl`: a store link the tap opens instead, for "Update the app" pushes. Only `https://play.google.com/…`, `market://…` and `https://apps.apple.com/…` are accepted (no credentials or ports); anything else is a `400`. The app opens `market://` first on Android and falls back to the https Play link.
+- `iosStoreUrl`: an `https://apps.apple.com/…` link that iPhones open instead of `storeUrl`.
+- `kind`: `"app_update"` marks an update push. When it has no `storeUrl`/`iosStoreUrl`, the server fills them from App settings (`settings.update.androidUrl` / `iosUrl`, the CMS's Update prompt links), and a `400` asks for a link when none is set there. With an explicit Play link, iPhones still get the App settings' App Store link.
+- `route` and a store link can't be combined (`400`).
+
+```json
+{ "title": "A new version is here", "body": "Tap to update The Nura", "audience": "all", "kind": "app_update", "icon": "sparkles" }
+```
+
+FCM data for that push: `{ "type": "system", "kind": "app_update", "storeUrl": "https://play.google.com/store/apps/details?id=…", "iosStoreUrl": "https://apps.apple.com/…", "icon": "sparkles", "broadcastId": "…" }`. App builds older than this feature open the notifications list instead.
+
 ### GET `/api/admin/notifications/broadcasts?page=1&limit=20`
 
 Paginated history. Each broadcast has `status` (`queued` | `running` | `completed` | `failed` | `cancelled`), `totalUsers`, `processedUsers`, `sentCount`, `failedCount`, `invalidTokenCount`, `inboxCount`, `lastError`.
@@ -1571,10 +1710,16 @@ The app sends `Authorization` when signed in (a bad token is ignored, never a 40
 - **`screenSections`**: `{ profile, care_hub, wellness_hub, explore_hub }`, each a list of `{ key, visible, order, text, audience, startAt, endAt }` (always complete, defaults filled in). `text` overrides a block's heading or intro (null = the app's own; only Home's `insights` / `moreForYou`, Profile's `account` / `preferences` / `privacyHelp` and each hub's `intro` have one). `audience` and the ISO `startAt` / `endAt` narrow who sees a block and when; the app checks them. Profile: `identity`, `completeProfile`, `stats`, `account`, `preferences`, `privacyHelp`, `promo`, `shortcuts`, `logout`. Each hub: `intro`, `promo`, `tiles`. Blocks marked `required` in the catalog (`identity`, `account`, `preferences`, `privacyHelp`, `logout`, `tiles`) are always `visible: true`, for everyone, with no dates.
 - **`screenTitles`**: hub title overrides, e.g. `{ care_hub: "Your Health" }`. A hub not listed keeps its own title.
 - **`theme`**: overridden colours only, `{ light: {…}, dark: {…} }`. Only brand, surface and text tokens can be changed.
-- **`settings`**: `{ maintenance: { enabled, title, message }, update: { minVersion, latestVersion, title, message, androidUrl, iosUrl } }`.
+- **`settings`**: `{ maintenance: { enabled, title, message }, update: { minVersion, latestVersion, title, message, androidUrl, iosUrl, highlights, ctaLabel, dismissible, forceShowAll, promptId } }`.
   - Maintenance blocks the app.
   - Below `minVersion` the app is blocked until it's updated.
-  - Below `latestVersion` the app shows a dismissible prompt. Store builds only.
+  - Below `latestVersion` the app shows the update prompt (a bottom sheet with `title`, `message` as "What's new", the `highlights` bullets, a `ctaLabel` button to the store and "Later"). Store builds only.
+  - `highlights` (default `[]`): up to 5 "What's new" points, 80 characters each; blank entries are dropped.
+  - `ctaLabel` (default `"Update now"`, ≤24 characters): the store button's label.
+  - `dismissible` (default `true`): `false` hides "Later" for people below `latestVersion`. It never blocks people who are already up to date (the hard block is `minVersion`).
+  - `forceShowAll` (default `false`): `true` shows the prompt to every store-app user, whatever version they run (`latestVersion` not needed). Needs a store link.
+  - `promptId` (default `null`, ≤40 of `A–Z a–z 0–9 . _ -`): the prompt shows once per `promptId`, or once per `latestVersion` when it's null. Set a new id to show it again to people who closed it.
+  - Saving `forceShowAll`, `minVersion` or `latestVersion` without `androidUrl` or `iosUrl` is a `400`.
 - **`banners[]`**: live ones only, highest priority first. `placement` is `home_top` | `home_middle` | `popup` (shown once per device over Home) | a hub | `profile`. Each banner also carries `action` and `audience`.
 
 ### Beacons (public)
@@ -1691,3 +1836,32 @@ Private friend groups of up to 8 (max 5 circles per user) that share a status em
 
 Account deletion leaves every circle (`utils/circleMembership.js#leaveAllCircles`, called from `accountLifecycle.js`).
 
+---
+
+## Help & support tickets
+
+The app's Profile → Help & support opens a form that creates a ticket; "My tickets" lists them with the reply thread. Pure rules are in `src/utils/supportTicket.js` (unit-tested), the controller is `supportController.js`, the model `SupportTicket` (subject, message and reply text are encrypted at rest, so admin search covers the ticket number and the person's name/email only). Ticket numbers are `NURA-000123` (sequence in `SupportCounter`). Categories: `account`, `period_tracking`, `payments`, `consultation`, `bug`, `other`. Statuses: `open` → `in_progress` → `resolved` / `closed`. Priorities: `low`, `normal` (default), `high`, `urgent`.
+
+On create the support inbox gets an email (`SUPPORT_EMAIL`, else `CONTACT_RECEIVER_EMAIL`, else `hello@thenura.care`; reply-to is the person) and the person gets a confirmation email. A user reply also emails the inbox. Emails never fail the request. Creating and replying are rate-limited (`supportTicketLimiter`, per user, `SUPPORT_RATE_LIMIT_*`), and new tickets are also capped at `SUPPORT_TICKET_HOURLY_MAX` (5) per user per hour in the database (`429`).
+
+### App (private)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/support/categories` | `{ categories: [{ id, label }] }` |
+| POST | `/api/support/tickets` | `{ category, subject (3–140), message (10–4000), attachAppInfo?, meta?: { platform, osVersion, appVersion, deviceModel, buildNumber, locale, timezoneOffset } }` → `201 { ticket }`. `meta` is kept only when `attachAppInfo` is true |
+| GET | `/api/support/tickets` | `?status=open\|in_progress\|resolved\|closed\|active&page=&limit=` → `{ tickets, unreadCount, pagination }`. Rows carry `preview`, `unread`, `replyCount`, `lastReplyFrom` |
+| GET | `/api/support/tickets/:id` | `{ ticket }` with `message`, `meta`, `canReply` and `replies: [{ from: 'user'\|'admin', message, at }]`. Clears `unread` |
+| POST | `/api/support/tickets/:id/reply` | `{ message }` → `201 { ticket }`. Re-opens a `resolved` ticket; `409` when `closed` |
+
+### Admin Workspace (`support.read` to view, `support.manage` to change; Super Admin, App Super Admin, App Admin)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/admin/support/tickets` | `?status=` (one, comma list or `active`) `&priority=&category=&assignee=<id\|me\|none>&search=&page=&limit=` → `{ tickets, statusCounts, pagination }`. Rows have `user`, `assignee`, `awaitingStaff` (person replied last), `preview` |
+| GET | `/api/admin/support/assignees` | Active staff holding `support.read` |
+| GET | `/api/admin/support/tickets/:id` | Full ticket: `user` (name, email, phone), `meta`, `replies` (admin replies carry `authorId` populated) |
+| PATCH | `/api/admin/support/tickets/:id` | `{ status?, priority?, assignee? (staff id or null) }`. Moving to `resolved`/`closed` sends the person an in-app notification + push |
+| POST | `/api/admin/support/tickets/:id/reply` | `{ message, status? }` → `201 { ticket }`. Without `status`, `open` becomes `in_progress`. Assigns the ticket to the replier if unassigned, and sends the person a `system` notification + push with `data: { kind: 'support_ticket', ticketId, route: '/support-tickets?id=<id>' }` |
+
+Account deletion (`purgeAccount`) deletes the person's tickets, and "Download my data" includes them (`supportTickets`, without staff ids).

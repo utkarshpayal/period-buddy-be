@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { invalidateMemoOnWrite } from '../utils/memoCache.js';
 import {
   SCHEME_CATEGORIES,
   GOVERNMENT_LEVELS,
@@ -86,5 +87,8 @@ const governmentBenefitSchema = new mongoose.Schema(
 // Text search across the fields the search box targets.
 governmentBenefitSchema.index({ name: 'text', shortName: 'text', description: 'text' });
 governmentBenefitSchema.index({ governmentLevel: 1, state: 1, isActive: 1, order: 1 });
+
+// Any write drops the cached app-facing list (utils/memoCache.js).
+governmentBenefitSchema.plugin(invalidateMemoOnWrite, { prefix: 'schemes:' });
 
 export default mongoose.model('GovernmentBenefit', governmentBenefitSchema);

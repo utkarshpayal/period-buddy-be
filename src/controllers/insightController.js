@@ -5,6 +5,7 @@ import { sendResponse } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from '../utils/logger.js';
 import { computeCyclePredictions } from '../utils/cycle.js';
+import { loadPredictionLogs } from '../utils/predictionLogs.js';
 
 /* ──────────────────────────────────────────────
    Rule-based template maps (no AI call)
@@ -191,7 +192,7 @@ export const getDailyInsights = async (req, res, next) => {
       // can drift out of sync with the tracker screen (getPredictions,
       // which does pass logs) whenever a real logged period postdates the
       // originally configured date.
-      const logs = await CycleLog.find({ userId: req.userId }).sort({ dateKey: 1 });
+      const logs = await loadPredictionLogs(req.userId);
       phase = computeCyclePredictions(settings, logs, { today: clientToday(req) }).currentPhase;
       template = { ...(PHASE_TEMPLATES[phase] || PHASE_TEMPLATES.follicular) };
       template.moodInsight = latestLog?.mood

@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import CommunityPost from '../models/Community.js';
 import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
@@ -10,8 +11,8 @@ import {
   getPagination,
   isValidObjectId,
   normalizeBoolean,
-  normalizeStringArray,
 } from '../utils/apiHelpers.js';
+import { normalizeCommunityTags, sanitizeCommunityTag } from '../utils/communityTags.js';
 
 const ANONYMOUS_USER = { firstName: 'Anonymous', lastName: '', profilePicture: null };
 
@@ -59,9 +60,17 @@ const serializePoll = (object, requestingUserId) => {
   };
 };
 
-const serializePost = (post, user, requestingUserId, { includeComments = true } = {}) => {
+const serializePost = (
+  post,
+  user,
+  requestingUserId,
+  { includeComments = true, viewerState } = {},
+) => {
   const object = post.toObject ? post.toObject() : post;
-  const likedBy = object.likedBy || [];
+  // The feed doesn't load likedBy/pollVotes (they grow with every like and
+  // vote); it passes the viewer's own state, looked up per page, instead.
+  if (viewerState) object.pollVotes = viewerState.pollVotes;
+  const likedBy = viewerState ? (viewerState.liked ? [user?._id] : []) : object.likedBy || [];
   const savedPosts = user?.savedCommunityPosts || [];
   // Prefer the denormalized commentCount (maintained on add/delete) so the feed
   // can drop the comments array entirely; fall back to the embedded length when
@@ -121,6 +130,41 @@ const serializePost = (post, user, requestingUserId, { includeComments = true } 
   };
 };
 
+/**
+ * The viewer's like and poll vote for one feed page: one query each over the
+ * page's ids, instead of loading every post's likedBy/pollVotes arrays.
+ * Returns Map(postId → { liked, pollVotes }) where pollVotes holds at most
+ * the viewer's own entry, which is all serializePoll reads.
+ */
+const loadFeedViewerStates = async (posts, user, requestingUserId) => {
+  const states = new Map(posts.map((post) => [String(post._id), { liked: false, pollVotes: [] }]));
+  const ids = posts.map((post) => post._id);
+  const pollIds = posts.filter((post) => post.poll?.options?.length).map((post) => post._id);
+  const voterId = isValidObjectId(requestingUserId)
+    ? new mongoose.Types.ObjectId(String(requestingUserId))
+    : null;
+
+  const [likedIds, votes] = await Promise.all([
+    user?._id && ids.length
+      ? CommunityPost.find({ _id: { $in: ids }, likedBy: user._id }).distinct('_id')
+      : [],
+    voterId && pollIds.length
+      ? CommunityPost.find({ _id: { $in: pollIds }, 'pollVotes.userId': voterId })
+          .select({ pollVotes: { $elemMatch: { userId: voterId } } })
+          .lean()
+      : [],
+  ]);
+  likedIds.forEach((id) => {
+    const state = states.get(String(id));
+    if (state) state.liked = true;
+  });
+  votes.forEach((post) => {
+    const state = states.get(String(post._id));
+    if (state) state.pollVotes = post.pollVotes || [];
+  });
+  return states;
+};
+
 /** GET /api/community?category=&page=1 — Paginated community posts */
 export const getPosts = async (req, res, next) => {
   try {
@@ -128,11 +172,16 @@ export const getPosts = async (req, res, next) => {
     const { page, limit, skip } = getPagination(req.query, { limit: 15, maxLimit: 50 });
 
     const filter = { isActive: true };
-    if (category && category !== 'all') filter.category = category;
-    if (search)
+    if (typeof category === 'string' && category && category !== 'all') filter.category = category;
+    // ?tag= matches a post's tag exactly, ignoring case and a leading '#',
+    // cleaned the same way tags are when a post is created.
+    const tag = typeof req.query.tag === 'string' ? sanitizeCommunityTag(req.query.tag) : '';
+    if (tag) filter.tags = { $regex: `^${escapeRegex(tag)}$`, $options: 'i' };
+    if (typeof search === 'string' && search)
       filter.$or = [
         { title: { $regex: escapeRegex(search), $options: 'i' } },
         { content: { $regex: escapeRegex(search), $options: 'i' } },
+        { tags: { $regex: escapeRegex(search.replace(/^#+/, '')), $options: 'i' } },
       ];
 
     const [posts, total, user] = await Promise.all([
@@ -144,14 +193,21 @@ export const getPosts = async (req, res, next) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(Number(limit))
-        .select('-comments')
+        .select('-comments -likedBy -pollVotes')
         .populate('userId', 'firstName lastName profilePicture'),
       CommunityPost.countDocuments(filter),
       User.findById(req.userId).select('savedCommunityPosts reportedCommunityPosts'),
     ]);
 
+    const viewerStates = await loadFeedViewerStates(posts, user, req.userId);
+
     return sendResponse(res, HTTP_STATUS.OK, 'Posts fetched', {
-      posts: posts.map((post) => serializePost(post, user, req.userId, { includeComments: false })),
+      posts: posts.map((post) =>
+        serializePost(post, user, req.userId, {
+          includeComments: false,
+          viewerState: viewerStates.get(String(post._id)),
+        }),
+      ),
       pagination: buildPagination({ page, limit, total }),
     });
   } catch (error) {
@@ -221,12 +277,17 @@ export const createPost = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, pollError);
     }
 
+    const { tags: normalizedTags, error: tagError } = normalizeCommunityTags(tags);
+    if (tagError) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, tagError);
+    }
+
     const created = await CommunityPost.create({
       userId: req.userId,
       title,
       content: content.trim(),
       category,
-      tags: normalizeStringArray(tags),
+      tags: normalizedTags,
       isAnonymous: normalizeBoolean(isAnonymous, true),
       attachments: normalizeAttachments(attachments),
       ...(normalizedPoll ? { poll: normalizedPoll } : {}),
@@ -294,16 +355,19 @@ export const toggleLike = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid post id');
     }
 
-    const post = await CommunityPost.findOne({ _id: req.params.id, isActive: true }).select(
-      'userId likedBy likeCount',
-    );
+    // Membership is checked with its own query so the (unbounded) likedBy
+    // array is never loaded.
+    const [post, likedRow] = await Promise.all([
+      CommunityPost.findOne({ _id: req.params.id, isActive: true }).select('userId likeCount'),
+      CommunityPost.exists({ _id: req.params.id, isActive: true, likedBy: req.userId }),
+    ]);
     if (!post) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Post not found');
 
     if (String(post.userId) === String(req.userId)) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, "You can't like your own post");
     }
 
-    const alreadyLiked = post.likedBy.some((id) => String(id) === String(req.userId));
+    const alreadyLiked = Boolean(likedRow);
 
     // Atomic $addToSet/$pull + $inc, filtered on the current membership —
     // the previous read-`likedBy`-then-mutate-in-JS-then-`.save()` pattern
@@ -317,12 +381,12 @@ export const toggleLike = async (req, res, next) => {
       ? await CommunityPost.findOneAndUpdate(
           { _id: post._id, likedBy: req.userId },
           { $pull: { likedBy: req.userId }, $inc: { likeCount: -1 } },
-          { new: true },
+          { new: true, projection: { likeCount: 1 } },
         )
       : await CommunityPost.findOneAndUpdate(
           { _id: post._id, likedBy: { $ne: req.userId } },
           { $addToSet: { likedBy: req.userId }, $inc: { likeCount: 1 } },
-          { new: true },
+          { new: true, projection: { likeCount: 1 } },
         );
 
     // `updated` is null only if a concurrent request already applied the

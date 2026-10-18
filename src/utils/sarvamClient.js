@@ -25,6 +25,45 @@ export const SUPPORTED_LANGUAGES = [
 
 const LANGUAGE_LABELS = Object.fromEntries(SUPPORTED_LANGUAGES.map((l) => [l.code, l.label]));
 
+// Every spoken reply uses a female voice. Speaker names are per model
+// (bulbul:v2's "anushka" is rejected by bulbul:v3 and vice versa), so the
+// allowlist and default follow SARVAM_TTS_MODEL. SARVAM_TTS_SPEAKER
+// overrides the default but must be a female voice valid for the model.
+const FEMALE_TTS_SPEAKERS = {
+  'bulbul:v2': ['anushka', 'manisha', 'vidya', 'arya'],
+  'bulbul:v3': [
+    'priya',
+    'ritu',
+    'neha',
+    'pooja',
+    'simran',
+    'kavya',
+    'ishita',
+    'shreya',
+    'roopa',
+    'tanya',
+    'shruti',
+    'suhani',
+    'kavitha',
+    'rupali',
+  ],
+};
+
+/** Picks the TTS speaker: the requested one if it's a female voice for the
+ * model, else SARVAM_TTS_SPEAKER (same check), else the model's first
+ * female voice. Never returns a male voice. */
+export const resolveTtsSpeaker = (
+  requested,
+  { model = TTS_MODEL, envSpeaker = process.env.SARVAM_TTS_SPEAKER } = {},
+) => {
+  const allowed = FEMALE_TTS_SPEAKERS[model] || FEMALE_TTS_SPEAKERS['bulbul:v3'];
+  for (const candidate of [requested, envSpeaker]) {
+    const name = typeof candidate === 'string' ? candidate.trim().toLowerCase() : '';
+    if (name && allowed.includes(name)) return name;
+  }
+  return allowed[0];
+};
+
 export const isAiConfigured = () => Boolean(process.env.SARVAM_API_KEY);
 
 const authHeaders = () => {
@@ -84,7 +123,7 @@ export const createChatCompletion = async ({ messages, maxTokens = 2000, tempera
 export const textToSpeech = async ({
   text,
   targetLanguageCode = 'en-IN',
-  speaker = 'anand',
+  speaker,
   pace = 1.0,
   outputAudioCodec = 'mp3',
 }) => {
@@ -103,7 +142,7 @@ export const textToSpeech = async ({
       text: trimmedText,
       target_language_code: targetLanguageCode,
       model: TTS_MODEL,
-      speaker,
+      speaker: resolveTtsSpeaker(speaker),
       pace,
       output_audio_codec: outputAudioCodec,
     }),
@@ -120,6 +159,22 @@ export const textToSpeech = async ({
 /** Transcribes spoken audio to text, optionally translating it to English
  * (mode: 'translate') instead of transcribing in the spoken language
  * (mode: 'transcribe', the default). */
+/**
+ * Sarvam rejects non-standard labels like "audio/m4a" (a 500 for the app).
+ * Map the common aliases recorders and browsers send to real media types,
+ * and drop parameters such as ";codecs=opus".
+ */
+export const normalizeAudioMime = (mimeType) => {
+  const base = String(mimeType || '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase();
+  if (['audio/m4a', 'audio/x-m4a', 'video/mp4', 'audio/aac-mp4'].includes(base)) return 'audio/mp4';
+  if (base === 'audio/mp3' || base === 'audio/x-mp3') return 'audio/mpeg';
+  if (base === 'audio/x-wav' || base === 'audio/wave') return 'audio/wav';
+  return base || 'application/octet-stream';
+};
+
 export const speechToText = async ({
   buffer,
   mimeType,
@@ -128,7 +183,7 @@ export const speechToText = async ({
   mode = 'transcribe',
 }) => {
   const form = new FormData();
-  form.append('file', new Blob([buffer], { type: mimeType }), filename);
+  form.append('file', new Blob([buffer], { type: normalizeAudioMime(mimeType) }), filename);
   form.append('model', STT_MODEL);
   form.append('mode', mode);
   if (languageCode) form.append('language_code', languageCode);

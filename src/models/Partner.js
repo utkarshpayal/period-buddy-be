@@ -57,7 +57,6 @@ const partnerSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-partnerSchema.index({ inviteCode: 1 });
 partnerSchema.index({ partnerId: 1 });
 
 export default mongoose.model('Partner', partnerSchema);

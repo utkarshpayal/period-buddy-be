@@ -378,3 +378,48 @@ test('settings and version comparison', async () => {
   assert.ok(parseSettings({ update: { minVersion: '1.0' } }).error); // no store link
   assert.ok(parseSettings({ maintenance: { enabled: true, message: '' } }).error);
 });
+
+test('update prompt: defaults, forceShowAll, promptId, highlights, button, dismissible', async () => {
+  const { parseSettings, mergeSettings } = await import('../appConfig.js');
+  const merged = mergeSettings({});
+  assert.equal(merged.update.forceShowAll, false);
+  assert.equal(merged.update.dismissible, true);
+  assert.equal(merged.update.promptId, null);
+  assert.deepEqual(merged.update.highlights, []);
+  assert.equal(merged.update.ctaLabel, 'Update now');
+
+  const store = { androidUrl: 'https://play.google.com/store/apps/details?id=x' };
+  const ok = parseSettings({
+    update: {
+      ...store,
+      forceShowAll: true,
+      dismissible: false,
+      promptId: 'diwali-2026.v2',
+      ctaLabel: ' Get it ',
+      highlights: [' Faster tracker ', '', 'New badges'],
+    },
+  });
+  assert.equal(ok.error, undefined);
+  assert.equal(ok.settings.update.forceShowAll, true);
+  assert.equal(ok.settings.update.dismissible, false);
+  assert.equal(ok.settings.update.promptId, 'diwali-2026.v2');
+  assert.equal(ok.settings.update.ctaLabel, 'Get it');
+  assert.deepEqual(ok.settings.update.highlights, ['Faster tracker', 'New badges']);
+
+  // Unset fields come back as the defaults.
+  const plain = parseSettings({ update: {} }).settings.update;
+  assert.equal(plain.forceShowAll, false);
+  assert.equal(plain.dismissible, true);
+  assert.equal(plain.ctaLabel, 'Update now');
+
+  assert.ok(parseSettings({ update: { forceShowAll: true } }).error); // needs a store link
+  assert.ok(parseSettings({ update: { ...store, forceShowAll: 'yes' } }).error);
+  assert.ok(parseSettings({ update: { ...store, promptId: 'has space' } }).error);
+  assert.ok(parseSettings({ update: { ...store, promptId: 'x'.repeat(41) } }).error);
+  assert.ok(parseSettings({ update: { ...store, ctaLabel: 'x'.repeat(25) } }).error);
+  assert.ok(parseSettings({ update: { ...store, highlights: 'one' } }).error);
+  assert.ok(
+    parseSettings({ update: { ...store, highlights: ['a', 'b', 'c', 'd', 'e', 'f'] } }).error,
+  );
+  assert.ok(parseSettings({ update: { ...store, highlights: ['x'.repeat(81)] } }).error);
+});

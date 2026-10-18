@@ -9,6 +9,7 @@ import CycleSettings from '../models/CycleSettings.js';
 import CycleLog from '../models/CycleLog.js';
 import { escapeRegex } from './apiHelpers.js';
 import { computeCyclePredictions } from './cycle.js';
+import { loadPredictionLogs } from './predictionLogs.js';
 import { createChatCompletion, getLanguageLabel, isAiConfigured } from './sarvamClient.js';
 import logger from './logger.js';
 
@@ -244,7 +245,7 @@ export const buildPersonalizationContext = async (userId) => {
   if (user?.gender) lines.push(`Gender: ${user.gender}.`);
 
   if (settings?.lastPeriodStartDate) {
-    const historyLogs = await CycleLog.find({ userId }).sort({ dateKey: 1 });
+    const historyLogs = await loadPredictionLogs(userId);
     const predictions = computeCyclePredictions(settings, historyLogs);
     lines.push(
       `Currently on cycle day ${predictions.currentCycleDay} of a ~${predictions.cycleLength}-day cycle, in the ${predictions.currentPhase} phase. Next period expected in ${predictions.nextPeriodDaysAway} day(s).`,

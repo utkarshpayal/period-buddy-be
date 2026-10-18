@@ -128,6 +128,39 @@ export const referralLimiter = rateLimit({
 });
 
 /**
+ * Help & support: opening tickets and replying to them (each emails the
+ * support inbox), keyed by the signed-in user. Mount after `authenticate`.
+ * supportController also caps new tickets per hour in the database.
+ */
+export const supportTicketLimiter = rateLimit({
+  windowMs: toInt(process.env.SUPPORT_RATE_LIMIT_WINDOW_MS, 60 * 60 * 1000),
+  max: toInt(process.env.SUPPORT_RATE_LIMIT_MAX, 20),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.userId ? `user:${req.userId}` : ipKeyGenerator(req.ip)),
+  message: {
+    success: false,
+    message: "You've sent a lot of messages to support. Please try again in a little while.",
+  },
+});
+
+/**
+ * Reel comments (POST /api/reels/:id/comments) and comment reports, keyed by
+ * the signed-in user. Mount after `authenticate`.
+ */
+export const reelCommentLimiter = rateLimit({
+  windowMs: toInt(process.env.REEL_COMMENT_RATE_LIMIT_WINDOW_MS, 10 * 60 * 1000),
+  max: toInt(process.env.REEL_COMMENT_RATE_LIMIT_MAX, 20),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.userId ? `user:${req.userId}` : ipKeyGenerator(req.ip)),
+  message: {
+    success: false,
+    message: "You're commenting very fast. Please wait a few minutes and try again.",
+  },
+});
+
+/**
  * No-op passthrough used when rate limiting is disabled (e.g. local dev), so
  * call sites can mount a limiter unconditionally without branching.
  */

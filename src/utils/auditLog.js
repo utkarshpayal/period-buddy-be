@@ -43,6 +43,15 @@ export const AUDIT_ACTIONS = {
   CONTENT_UPDATED: 'content.updated',
   CONTENT_VISIBILITY_CHANGED: 'content.visibility_changed',
   CONTENT_DELETED: 'content.deleted',
+  // A moderator removed someone's reel comment (controllers/reelController.js).
+  REEL_COMMENT_DELETED: 'reel_comment.deleted',
+  // Medical review (controllers/contentController.js, utils/medicalReview.js)
+  CONTENT_REVIEW_SUBMITTED: 'content.review_submitted',
+  CONTENT_REVIEW_APPROVED: 'content.review_approved',
+  CONTENT_REVIEW_MARKED: 'content.review_marked',
+  CONTENT_REVIEW_SENT_BACK: 'content.review_sent_back',
+  // A non-reviewer's edit took the stamp off (needs re-review).
+  CONTENT_REVIEW_CLEARED: 'content.review_cleared',
   SCHEME_CREATED: 'scheme.created',
   SCHEME_UPDATED: 'scheme.updated',
   SCHEME_DELETED: 'scheme.deleted',

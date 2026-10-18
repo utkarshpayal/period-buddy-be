@@ -359,6 +359,7 @@ function determineTag(r) {
   if (g === 'hr') return 'People & letters';
   if (g === 'sign') return 'Document signing';
   if (g === 'cms') return 'App CMS';
+  if (g === 'support' || g === 'supportAdmin') return 'Help & Support';
   console.warn(`No tag mapping for route group "${g}" (${r.method} ${r.path}) — add one`);
   return 'System & Health';
 }
