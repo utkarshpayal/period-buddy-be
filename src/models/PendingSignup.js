@@ -28,7 +28,6 @@ const pendingSignupSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-pendingSignupSchema.index({ email: 1 });
 // TTL: purge abandoned pending signups a day after the OTP itself expired.
 pendingSignupSchema.index({ otpExpiresAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 });
 

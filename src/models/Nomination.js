@@ -37,6 +37,5 @@ const nominationSchema = new mongoose.Schema(
 );
 
 nominationSchema.index({ nominatorId: 1, nomineeEmail: 1 }, { unique: true });
-nominationSchema.index({ inviteCode: 1 });
 
 export default mongoose.model('Nomination', nominationSchema);

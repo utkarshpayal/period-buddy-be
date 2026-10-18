@@ -48,7 +48,7 @@ router.post('/verify', ...patient, consultationController.verifyConsultationPaym
 
 /**
  * @route   GET /api/consultation/my
- * @desc    Get all consultations for the current user
+ * @desc    Get all consultations for the current user (opt-in ?page=&limit= paging; pagination next to data)
  * @access  Private
  */
 router.get('/my', ...patient, consultationController.getMyConsultations);

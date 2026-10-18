@@ -6,7 +6,7 @@ const router = express.Router();
 
 /**
  * @route   GET /api/community
- * @desc    Get paginated community posts (?category=&search=&page=&limit=)
+ * @desc    Get paginated community posts (?category=&tag=&search=&page=&limit=)
  * @access  Private
  */
 router.get('/', authenticate, communityController.getPosts);

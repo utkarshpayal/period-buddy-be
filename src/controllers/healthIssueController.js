@@ -8,11 +8,18 @@ import {
   pickDefined,
   normalizeStringArray,
 } from '../utils/apiHelpers.js';
+import { memo } from '../utils/memoCache.js';
 
 /** GET /api/health-issues — List all health issues */
 export const getHealthIssues = async (req, res, next) => {
   try {
-    const issues = await HealthIssue.find({ isActive: true }).sort({ order: 1, createdAt: 1 });
+    // Same list for everyone: cached (as its JSON form) for a minute and
+    // dropped on any write (HealthIssue's invalidateMemoOnWrite).
+    const issues = await memo('health-issues:list', async () =>
+      (await HealthIssue.find({ isActive: true }).sort({ order: 1, createdAt: 1 })).map((issue) =>
+        issue.toJSON(),
+      ),
+    );
 
     logger.info('health_issues_fetched', { action: 'health_issues_fetched', count: issues.length });
 

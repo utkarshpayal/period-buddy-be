@@ -37,6 +37,9 @@ export const PERMISSIONS = {
   // App CMS (The-Nura-CMS): features, home layout, banners, theme
   CMS_READ: 'cms.read',
   CMS_MANAGE: 'cms.manage',
+  // Help & support tickets from the app: read the queue / reply, assign, change status
+  SUPPORT_READ: 'support.read',
+  SUPPORT_MANAGE: 'support.manage',
 
   // Clinical
   DOCTORS_READ: 'doctors.read',
@@ -115,6 +118,8 @@ export const STAFF_ROLES = {
       P.APP_APPROVE,
       P.CMS_READ,
       P.CMS_MANAGE,
+      P.SUPPORT_READ,
+      P.SUPPORT_MANAGE,
       P.STAFF_MANAGE,
     ],
   },
@@ -133,6 +138,8 @@ export const STAFF_ROLES = {
       P.SCHEME_APPLICATIONS_REVIEW,
       P.MARKETING_READ,
       P.CMS_READ,
+      P.SUPPORT_READ,
+      P.SUPPORT_MANAGE,
     ],
   },
   [userRoleEnum.CLINICAL_ADMIN]: {

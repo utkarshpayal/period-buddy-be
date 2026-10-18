@@ -1,6 +1,5 @@
 import BestieCircle from '../models/BestieCircle.js';
 import CircleVibe from '../models/CircleVibe.js';
-import CycleLog from '../models/CycleLog.js';
 import CycleSettings from '../models/CycleSettings.js';
 import Notification from '../models/Notification.js';
 import User from '../models/User.js';
@@ -8,6 +7,7 @@ import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { isValidObjectId, clientToday } from '../utils/apiHelpers.js';
 import { computeCyclePredictions } from '../utils/cycle.js';
+import { loadPredictionLogs } from '../utils/predictionLogs.js';
 import {
   CIRCLE_LIMITS,
   CIRCLE_REACTIONS,
@@ -338,7 +338,7 @@ export const removeMember = async (req, res, next) => {
 const currentPhaseOf = async (userId, today) => {
   const settings = await CycleSettings.findOne({ userId }).lean();
   if (!settings) return null;
-  const logs = await CycleLog.find({ userId }).select('dateKey flow').sort({ dateKey: 1 }).lean();
+  const logs = await loadPredictionLogs(userId);
   return computeCyclePredictions(settings, logs, { today }).currentPhase ?? null;
 };
 

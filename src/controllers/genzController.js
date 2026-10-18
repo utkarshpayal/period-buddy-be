@@ -11,6 +11,7 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { isValidObjectId, clientToday } from '../utils/apiHelpers.js';
 import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
 import { computeCyclePredictions, CYCLE_PHASES } from '../utils/cycle.js';
+import { loadPredictionLogs } from '../utils/predictionLogs.js';
 import {
   buildEra,
   buildWrapped,
@@ -28,6 +29,7 @@ import {
   PHASE_ERAS,
 } from '../constants/cycleSync.js';
 import logger from '../utils/logger.js';
+import { memo } from '../utils/memoCache.js';
 
 const LOG_FIELDS = 'dateKey flow mood moods symptoms sleepHours waterIntake stressLevel';
 
@@ -39,13 +41,16 @@ const clientTodayKey = (tz) => {
 };
 
 /** Active tips from the DB, or the built-in defaults while it's empty. */
-const loadTips = async () => {
-  const saved = await CycleSyncTip.find().sort({ order: 1 }).lean();
-  return saved.length ? saved : DEFAULT_CYCLE_SYNC_TIPS;
-};
+// Both are the same for everyone: cached for a minute and dropped on any
+// CMS write (CycleSyncTip/CycleEra's invalidateMemoOnWrite).
+const loadTips = () =>
+  memo('genz:tips', async () => {
+    const saved = await CycleSyncTip.find().sort({ order: 1 }).lean();
+    return saved.length ? saved : DEFAULT_CYCLE_SYNC_TIPS;
+  });
 
 /** Era cards with the CMS overrides applied. */
-const loadEras = async () => mergePhaseEras(await CycleEra.find().lean());
+const loadEras = () => memo('genz:eras', async () => mergePhaseEras(await CycleEra.find().lean()));
 
 /* ---------------------------------- App ---------------------------------- */
 
@@ -91,7 +96,7 @@ export const getEra = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Please set up your cycle settings first');
     }
     const [logs, tips, eras] = await Promise.all([
-      CycleLog.find({ userId: req.userId }).select('dateKey flow').sort({ dateKey: 1 }).lean(),
+      loadPredictionLogs(req.userId),
       loadTips(),
       loadEras(),
     ]);

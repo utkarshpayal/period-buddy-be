@@ -10,6 +10,7 @@ import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants/errorMessages.js'
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { isValidObjectId, pickDefined, clientToday, clientTodayKey } from '../utils/apiHelpers.js';
 import { computeCyclePredictions, calculateTrackingStreak } from '../utils/cycle.js';
+import { loadPredictionLogs } from '../utils/predictionLogs.js';
 import { userRoleEnum } from '../enums/enums.js';
 import {
   generateOtp,
@@ -899,11 +900,12 @@ export const deleteAccount = async (req, res, next) => {
  */
 export const getDashboardSummary = async (req, res, next) => {
   try {
-    const [user, settings, logs, habits] = await Promise.all([
+    const [user, settings, logs, habits, predictionLogs] = await Promise.all([
       User.findById(req.userId),
       CycleSettings.findOne({ userId: req.userId }),
       CycleLog.find({ userId: req.userId }).sort({ dateKey: -1 }).limit(90),
       Habit.find({ userId: req.userId, isActive: true }),
+      loadPredictionLogs(req.userId),
     ]);
 
     if (!user) {
@@ -936,14 +938,7 @@ export const getDashboardSummary = async (req, res, next) => {
     // Same history-aware prediction as GET /api/cycle/predictions, so Home's
     // fallback numbers never disagree with the tracker.
     const predictions = settings
-      ? computeCyclePredictions(
-          settings,
-          await CycleLog.find({ userId: req.userId })
-            .select('dateKey flow')
-            .sort({ dateKey: 1 })
-            .lean(),
-          { today: clientToday(req) },
-        )
+      ? computeCyclePredictions(settings, predictionLogs, { today: clientToday(req) })
       : null;
 
     return sendResponse(res, HTTP_STATUS.OK, 'Dashboard summary fetched', {

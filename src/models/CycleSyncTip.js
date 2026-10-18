@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { invalidateMemoOnWrite } from '../utils/memoCache.js';
 import { CYCLE_PHASES } from '../utils/cycle.js';
 import { CYCLE_SYNC_CATEGORIES } from '../constants/cycleSync.js';
 
@@ -22,5 +23,8 @@ const cycleSyncTipSchema = new mongoose.Schema(
 );
 
 cycleSyncTipSchema.index({ phase: 1, category: 1, order: 1 });
+
+// Any write drops the cached app-facing list (utils/memoCache.js).
+cycleSyncTipSchema.plugin(invalidateMemoOnWrite, { prefix: 'genz:' });
 
 export default mongoose.model('CycleSyncTip', cycleSyncTipSchema);

@@ -5,6 +5,8 @@ import {
   computeCycleLengths,
   analyzeCycleHistory,
   computeCyclePredictions,
+  predictCycleFromHistory,
+  prepareCycleHistory,
 } from '../cycle.js';
 
 /* ── fixtures ─────────────────────────────────────────────
@@ -264,4 +266,97 @@ test('derivePeriodEpisodes: spotting alone is not a period, leading spotting sti
     { startKey: '2026-08-29', endKey: '2026-08-29' },
   ]);
   assert.deepEqual(derivePeriodEpisodes([day('2026-08-15', 'spotting')]), []);
+});
+
+/* ── prepared history (symptom predictions) ──────────────
+   predictCycleFromHistory(settings, prepareCycleHistory(settings, logs), o)
+   must equal computeCyclePredictions(settings, logs, o) for every date, so
+   GET /api/cycle/symptom-predictions can build the history once instead of
+   once per symptom log.
+──────────────────────────────────────────────────────── */
+const seededRandom = (seed) => () => {
+  seed = (seed * 1664525 + 1013904223) % 4294967296;
+  return seed / 4294967296;
+};
+
+const syntheticHistory = (seed) => {
+  const random = seededRandom(seed);
+  const logs = [];
+  let start = '2024-01-03';
+  const cycles = 2 + Math.floor(random() * 10);
+  for (let c = 0; c < cycles; c += 1) {
+    const cycleLength = 21 + Math.floor(random() * 20);
+    const periodLength = 3 + Math.floor(random() * 5);
+    for (let d = 0; d < cycleLength; d += 1) {
+      if (random() < 0.45) continue; // unlogged day
+      const dateKey = shiftKey(start, d);
+      const flows = ['light', 'medium', 'heavy', 'spotting'];
+      logs.push({
+        dateKey,
+        date: new Date(`${dateKey}T${random() < 0.5 ? '00:00' : '13:45'}:00.000Z`),
+        flow:
+          d < periodLength
+            ? flows[Math.floor(random() * 4)]
+            : random() < 0.05
+              ? 'spotting'
+              : 'none',
+        symptoms:
+          random() < 0.4
+            ? ['cramps', 'bloating', 'headache'].slice(0, 1 + Math.floor(random() * 3))
+            : [],
+      });
+    }
+    start = shiftKey(start, cycleLength);
+  }
+  return logs;
+};
+
+const symptomBuckets = (logs, predict) => {
+  const buckets = {};
+  logs
+    .filter((log) => log.symptoms.length > 0)
+    .forEach((log) => {
+      const { currentPeriodStartDateISO, currentPhase } = predict(log.date);
+      log.symptoms.forEach((symptom) => {
+        const key = `${symptom}::${currentPhase}`;
+        buckets[key] = [...new Set([...(buckets[key] || []), currentPeriodStartDateISO])];
+      });
+    });
+  return buckets;
+};
+
+test('prepared history predicts exactly like computeCyclePredictions on every date', () => {
+  for (let seed = 1; seed <= 40; seed += 1) {
+    const logs = syntheticHistory(seed);
+    const settings = {
+      cycleLength: 24 + (seed % 10),
+      periodLength: 3 + (seed % 5),
+      lastPeriodStartDate: new Date(seed % 3 === 0 ? '2030-01-01' : '2024-01-01'),
+    };
+    const history = prepareCycleHistory(settings, logs);
+    for (const log of logs) {
+      assert.deepEqual(
+        predictCycleFromHistory(settings, history, { today: log.date }),
+        computeCyclePredictions(settings, logs, { today: log.date }),
+      );
+    }
+    // The symptom-prediction bucketing, old (quadratic) vs new.
+    assert.deepEqual(
+      symptomBuckets(logs, (today) => predictCycleFromHistory(settings, history, { today })),
+      symptomBuckets(logs, (today) => computeCyclePredictions(settings, logs, { today })),
+    );
+  }
+});
+
+test('prepared history with no logs matches the configured-only prediction', () => {
+  const settings = {
+    cycleLength: 30,
+    periodLength: 4,
+    lastPeriodStartDate: new Date('2026-01-10'),
+  };
+  const today = new Date('2026-03-01T00:00:00Z');
+  assert.deepEqual(
+    predictCycleFromHistory(settings, prepareCycleHistory(settings, []), { today }),
+    computeCyclePredictions(settings, { today }),
+  );
 });

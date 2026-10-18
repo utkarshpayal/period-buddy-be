@@ -26,7 +26,14 @@ import {
   publicConsultation,
   publicDoctor,
 } from '../utils/consultationLifecycle.js';
-import { escapeRegex, isValidObjectId } from '../utils/apiHelpers.js';
+import {
+  buildPagination,
+  escapeRegex,
+  getPagination,
+  isPaginatedRequest,
+  isValidObjectId,
+  sendPaginatedList,
+} from '../utils/apiHelpers.js';
 import { broadcastToRoom } from '../config/websocket.js';
 import { buildPrescriptionDocument } from '../utils/prescriptionDocument.js';
 import { handleRefundWebhook } from '../utils/consultationRefunds.js';
@@ -203,20 +210,33 @@ export const getDoctorAvailability = async (req, res, next) => {
 };
 
 /** Re-check a pending order with Cashfree and book it if it was paid. */
-const repairPendingOrder = async (consultation) => {
-  if (!consultation?.cashfreeOrderId) return { outcome: 'none' };
+/** Cashfree's order for `consultation`, or null (logged) when the check failed. */
+const fetchOrderStatus = async (consultation) => {
   try {
-    const cfOrder = await getOrderStatus(consultation.cashfreeOrderId);
-    if (cfOrder.order_status === 'PAID') return finalizePaidConsultation(consultation);
-    return { outcome: cfOrder.order_status === 'ACTIVE' ? 'open' : 'closed', cfOrder };
+    return await getOrderStatus(consultation.cashfreeOrderId);
   } catch (error) {
     logger.warn('consultation_order_recheck_failed', {
       action: 'consultation_order_recheck_failed',
       consultationId: String(consultation._id),
       error: error.message,
     });
-    return { outcome: 'unknown' };
+    return null;
   }
+};
+
+/**
+ * Act on an order status from fetchOrderStatus (null = the check failed).
+ * A booking failure propagates (the webhook answers 500 so Cashfree retries).
+ */
+const applyOrderStatus = async (consultation, cfOrder) => {
+  if (!cfOrder) return { outcome: 'unknown' };
+  if (cfOrder.order_status === 'PAID') return finalizePaidConsultation(consultation);
+  return { outcome: cfOrder.order_status === 'ACTIVE' ? 'open' : 'closed', cfOrder };
+};
+
+const repairPendingOrder = async (consultation) => {
+  if (!consultation?.cashfreeOrderId) return { outcome: 'none' };
+  return applyOrderStatus(consultation, await fetchOrderStatus(consultation));
 };
 
 /** POST /api/consultation/order — Create a Cashfree order + a pending
@@ -561,12 +581,37 @@ export const getMyConsultations = async (req, res, next) => {
     })
       .sort({ createdAt: -1 })
       .limit(3);
-    for (const pending of recentPending) await repairPendingOrder(pending);
+    // The Cashfree checks run in parallel; booking a paid one stays
+    // sequential, so two paid checkouts for the same slot still resolve as
+    // "first booked, second refunded" (slotTakenBy), as before.
+    const orderStatuses = await Promise.all(recentPending.map(fetchOrderStatus));
+    for (const [index, pending] of recentPending.entries()) {
+      await applyOrderStatus(pending, orderStatuses[index]);
+    }
 
-    const consultations = await Consultation.find({ userId: req.userId })
-      .populate('doctorId')
-      .sort({ createdAt: -1 });
+    const filter = { userId: req.userId };
+    const query = Consultation.find(filter)
+      // Fields publicDoctor strips anyway (avatarKey/commissionBps are
+      // select: false already), so the response is unchanged.
+      .populate('doctorId', '-email -userId -deletedAt -__v')
+      .sort({ createdAt: -1, _id: -1 });
 
+    // Opt-in paging (?page= / ?limit=); without it, the full list as before.
+    if (isPaginatedRequest(req.query)) {
+      const { page, limit, skip } = getPagination(req.query, { limit: 20, maxLimit: 100 });
+      const [consultations, total] = await Promise.all([
+        query.skip(skip).limit(limit),
+        Consultation.countDocuments(filter),
+      ]);
+      return sendPaginatedList(
+        res,
+        'Consultations fetched',
+        consultations.map(publicConsultation),
+        buildPagination({ page, limit, total }),
+      );
+    }
+
+    const consultations = await query;
     return sendResponse(
       res,
       HTTP_STATUS.OK,

@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { invalidateMemoOnWrite } from '../utils/memoCache.js';
 
 // An admin-defined bundle of SubscriptionFeature keys sold at one price —
 // the alternative to buying features one at a time. `features` intentionally
@@ -30,5 +31,8 @@ const subscriptionPlanSchema = new mongoose.Schema(
 );
 
 subscriptionPlanSchema.index({ isActive: 1, sortOrder: 1 });
+
+// Any write drops the cached app-facing list (utils/memoCache.js).
+subscriptionPlanSchema.plugin(invalidateMemoOnWrite, { prefix: 'subscriptions:' });
 
 export default mongoose.model('SubscriptionPlan', subscriptionPlanSchema);

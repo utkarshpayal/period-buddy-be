@@ -214,6 +214,18 @@ const isInFlight = (call, now) =>
   now - new Date(call.createdAt) < CALL_LIMITS.inFlightMinutes * MINUTE_MS;
 
 /**
+ * Is `clock` inside the day's first-call window (chosen time up to
+ * catchUpMinutes later)? With no automatic attempt yet today, this is the
+ * only time planScheduledAttempt can return due, so the scheduler uses it
+ * to skip everyone else before loading their logs and calls.
+ */
+export const inFirstCallWindow = ({ clock, scheduledMinutes }) => {
+  if (scheduledMinutes === null || scheduledMinutes === undefined) return false;
+  const late = clock.minutes - scheduledMinutes;
+  return late >= 0 && late < CALL_LIMITS.catchUpMinutes;
+};
+
+/**
  * Should the scheduler place an automatic call for this user right now?
  * `calls` are all of the user's CheckinCalls for `clock.dateKey` (manual
  * ones included: a "call me now" the user already answered today means the

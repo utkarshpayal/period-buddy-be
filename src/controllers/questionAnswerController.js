@@ -99,8 +99,8 @@ export const createQuestionAnswer = async (req, res, next) => {
       isPublished: req.body.isPublished,
       isFeatured: req.body.isFeatured,
       sourceLinks: normalizeStringArray(req.body.sourceLinks),
-      reviewedBy: req.body.reviewedBy,
-      medicallyReviewed: req.body.medicallyReviewed,
+      // reviewedBy/medicallyReviewed are server-written by the review flow
+      // (POST /api/content/:type/:id/review), never taken from a body.
       seoTitle: req.body.seoTitle,
       seoDescription: req.body.seoDescription,
       slug,
@@ -247,8 +247,6 @@ export const updateQuestionAnswer = async (req, res, next) => {
       'seoTitle',
       'seoDescription',
       'sourceLinks',
-      'reviewedBy',
-      'medicallyReviewed',
     ]);
 
     if (updates.question) {

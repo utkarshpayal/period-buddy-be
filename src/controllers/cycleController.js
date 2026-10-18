@@ -18,7 +18,10 @@ import {
   buildCycleAnalytics,
   calculateTrackingStreak,
   computeCyclePredictions,
+  predictCycleFromHistory,
+  prepareCycleHistory,
 } from '../utils/cycle.js';
+import { loadPredictionLogs } from '../utils/predictionLogs.js';
 
 /* ──────────────────────────────────────────────
    Controllers
@@ -341,10 +344,19 @@ export const saveCycleLog = async (req, res, next) => {
   }
 };
 
-/** GET /api/cycle/logs?month=2026-06 — All logs for a month */
+const YEAR_KEY_REGEX = /^\d{4}$/;
+
+/**
+ * GET /api/cycle/logs?month=2026-06 | ?year=2026 — All logs for a month, or a
+ * whole year in one request (`month` wins if both are sent).
+ *
+ * Not lean on purpose: hydrated docs fill schema defaults (moods: [],
+ * note: '', flow: 'none', ...) for older logs that lack a field, and the app
+ * reads them as present.
+ */
 export const getMonthLogs = async (req, res, next) => {
   try {
-    const { month } = req.query; // 'YYYY-MM'
+    const { month, year } = req.query; // 'YYYY-MM' / 'YYYY'
 
     const filter = { userId: req.userId };
     if (month) {
@@ -352,6 +364,11 @@ export const getMonthLogs = async (req, res, next) => {
         return sendError(res, HTTP_STATUS.BAD_REQUEST, 'month must be in YYYY-MM format');
       }
       filter.dateKey = { $regex: `^${month}` };
+    } else if (year) {
+      if (!YEAR_KEY_REGEX.test(String(year))) {
+        return sendError(res, HTTP_STATUS.BAD_REQUEST, 'year must be in YYYY format');
+      }
+      filter.dateKey = { $regex: `^${year}-` };
     }
 
     const logs = await CycleLog.find(filter).sort({ dateKey: 1 });
@@ -360,6 +377,7 @@ export const getMonthLogs = async (req, res, next) => {
       action: 'cycle_logs_fetched',
       userId: req.userId,
       month,
+      year: month ? undefined : year,
       count: logs.length,
     });
 
@@ -552,7 +570,8 @@ export const getPredictions = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Please set up your cycle settings first');
     }
 
-    const logs = await CycleLog.find({ userId: req.userId }).sort({ dateKey: 1 });
+    // dateKey/flow for the prediction, symptoms for buildCycleAnalytics.
+    const logs = await loadPredictionLogs(req.userId, { extraFields: 'symptoms' });
     // Pass the full log history so the prediction is anchored on the user's
     // actual logged periods (and their real cycle-length variability), not a
     // fixed configured cycle length.
@@ -582,7 +601,11 @@ export const getPredictions = async (req, res, next) => {
 /** GET /api/cycle/stats — Aggregated user cycle statistics */
 export const getCycleStats = async (req, res, next) => {
   try {
-    const logs = await CycleLog.find({ userId: req.userId });
+    // Only the fields the stats read. tokensEarned isn't a schema path, so it
+    // was always undefined on the hydrated docs and stays so here.
+    const logs = await CycleLog.find({ userId: req.userId })
+      .select('dateKey flow symptoms rewardPoints')
+      .lean();
 
     const totalDaysLogged = logs.length;
     const totalTokens = logs.reduce((sum, l) => sum + (l.rewardPoints || l.tokensEarned || 0), 0);
@@ -635,8 +658,14 @@ export const getSymptomPredictions = async (req, res, next) => {
     // query to `symptoms`-bearing logs only would silently exclude period-
     // flow logs from episode detection, corrupting the very anchor this fix
     // exists to use.
-    const allLogs = await CycleLog.find({ userId: req.userId }).sort({ dateKey: 1 });
-    const nextCycleStart = computeCyclePredictions(settings, allLogs, {
+    // Only the fields read below: dateKey/flow (predictions), date, symptoms.
+    const allLogs = await loadPredictionLogs(req.userId, { extraFields: 'date symptoms' });
+    // The episode/cycle-length analysis depends only on the history, so it is
+    // built once instead of once per symptom log; predictCycleFromHistory
+    // returns exactly what computeCyclePredictions(settings, allLogs, ...)
+    // would (utils/__tests__/cyclePrediction.test.js checks this).
+    const history = prepareCycleHistory(settings, allLogs);
+    const nextCycleStart = predictCycleFromHistory(settings, history, {
       today: clientToday(req),
     }).nextPeriodDateKey;
 
@@ -654,9 +683,9 @@ export const getSymptomPredictions = async (req, res, next) => {
     const allCycleIndexes = new Set();
 
     logs.forEach((log) => {
-      const { currentPeriodStartDateISO, currentPhase } = computeCyclePredictions(
+      const { currentPeriodStartDateISO, currentPhase } = predictCycleFromHistory(
         settings,
-        allLogs,
+        history,
         { today: log.date },
       );
       const cycleIndex = currentPeriodStartDateISO;

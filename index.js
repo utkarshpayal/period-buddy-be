@@ -62,6 +62,8 @@ import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
 import adminSubscriptionRoutes from './src/routes/adminSubscriptionRoutes.js';
 import clinicalFinanceRoutes from './src/routes/clinicalFinanceRoutes.js';
 import referralRoutes from './src/routes/referralRoutes.js';
+import supportRoutes from './src/routes/supportRoutes.js';
+import supportAdminRoutes from './src/routes/supportAdminRoutes.js';
 import { cashfreePayoutWebhook } from './src/controllers/payoutWebhookController.js';
 import { cashfreeConsultationWebhook } from './src/controllers/consultationController.js';
 import { startPayoutRunner, stopPayoutRunner } from './src/utils/payoutRunner.js';
@@ -256,12 +258,14 @@ app.use('/api/admin/subscriptions', adminSubscriptionRoutes);
 app.use('/api/admin/clinical-finance', clinicalFinanceRoutes);
 app.use('/api/admin/referrals', referralRoutes);
 app.use('/api/admin/hr', hrRoutes);
+app.use('/api/admin/support', supportAdminRoutes);
 app.use('/api/sign', signRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/app-config', appConfigRoutes);
 app.use('/api/cms', cmsRoutes);
 app.use('/api/genz', genzRoutes);
 app.use('/api/circles', circleRoutes);
+app.use('/api/support', supportRoutes);
 
 /* ──────────────────────────────────────────────────────────
    Error Handling

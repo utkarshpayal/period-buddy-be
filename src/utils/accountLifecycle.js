@@ -35,6 +35,9 @@ import CommunityPost from '../models/Community.js';
 import CommunityLike from '../models/CommunityLike.js';
 import Comment from '../models/Comment.js';
 import Reel from '../models/Reel.js';
+import ReelLike from '../models/ReelLike.js';
+import ReelSave from '../models/ReelSave.js';
+import ReelComment from '../models/ReelComment.js';
 import Doctor from '../models/Doctor.js';
 import DoctorAvailability from '../models/DoctorAvailability.js';
 import Consultation from '../models/Consultation.js';
@@ -56,6 +59,8 @@ import QaChatSession from '../models/QaChatSession.js';
 import SchemeApplication from '../models/SchemeApplication.js';
 import Newsletter from '../models/Newsletter.js';
 import ContactMessage from '../models/ContactMessage.js';
+import SupportTicket from '../models/SupportTicket.js';
+import BlogReader from '../models/BlogReader.js';
 import PendingSignup from '../models/PendingSignup.js';
 import { broadcastToRoom, disconnectUser } from '../config/websocket.js';
 import { deleteFromS3, deleteS3Prefix } from './s3.js';
@@ -158,6 +163,39 @@ export const removeNominations = (userId) =>
   Nomination.deleteMany({ $or: [{ nominatorId: userId }, { nomineeId: userId }] });
 
 /**
+ * Take a person's likes, saves and comments off reels, moving each reel's
+ * counters by exactly the rows removed. Re-running finds nothing left.
+ */
+const scrubReelFootprint = async (uid) => {
+  // Row by row, so a counter only moves for a row this run really deleted.
+  const removeEach = async (Model, rows, counterFor) => {
+    for (const row of rows) {
+      // The deleted document as it was at delete time (isHidden can change).
+      const deleted = await Model.findOneAndDelete({ _id: row._id }).lean();
+      const counter = deleted ? counterFor(deleted) : null;
+      if (counter) {
+        await Reel.updateOne(
+          { _id: deleted.reelId, [counter]: { $gt: 0 } },
+          { $inc: { [counter]: -1 } },
+        );
+      }
+    }
+  };
+
+  const [likes, saves, comments] = await Promise.all([
+    ReelLike.find({ userId: uid }).select('_id').lean(),
+    ReelSave.find({ userId: uid }).select('_id').lean(),
+    ReelComment.find({ userId: uid }).select('_id').lean(),
+  ]);
+  await removeEach(ReelLike, likes, () => 'likeCount');
+  await removeEach(ReelSave, saves, () => 'saveCount');
+  // Hidden comments were already taken off commentCount when they were hidden.
+  await removeEach(ReelComment, comments, (row) => (row.isHidden ? null : 'commentCount'));
+  // Their reports on other people's comments (the count stays: it only ever hides).
+  await ReelComment.updateMany({ reportedBy: uid }, { $pull: { reportedBy: uid } });
+};
+
+/**
  * Hide the user's own posts and take their footprint off everyone else's
  * content: embedded comments, likes, poll votes, reel poll votes and follows,
  * keeping every denormalized counter in step.
@@ -212,6 +250,7 @@ export const scrubCommunityFootprint = async (userId, { dropReports = false } = 
     );
   }
   await Reel.updateMany({ followedBy: uid }, { $pull: { followedBy: uid } });
+  await scrubReelFootprint(uid);
 
   if (dropReports) {
     const user = await User.findById(uid).select('reportedCommunityPosts').lean();
@@ -498,6 +537,10 @@ export const purgeAccount = async (userId) => {
     CommunityPost.deleteMany({ userId }),
     CommunityLike.deleteMany({ userId }),
     Comment.deleteMany({ userId }),
+    // Normally already gone (scrubReelFootprint above moves the counters too).
+    ReelLike.deleteMany({ userId }),
+    ReelSave.deleteMany({ userId }),
+    ReelComment.deleteMany({ userId }),
     Document.deleteMany({ userId }),
     DocumentChatMessage.deleteMany({ userId }),
     Notification.deleteMany({ userId }),
@@ -506,6 +549,8 @@ export const purgeAccount = async (userId) => {
     UserSession.deleteMany({ userId }),
     LaunchInterest.deleteMany({ user: userId }),
     QaChatSession.deleteMany({ userId }),
+    SupportTicket.deleteMany({ userId }),
+    BlogReader.deleteMany({ userId }),
     SchemeApplication.deleteMany({ userId }),
     PartnerMessage.deleteMany({ partnerId: { $in: partnerRows.map((row) => row._id) } }),
     Partner.deleteMany({ userId }),

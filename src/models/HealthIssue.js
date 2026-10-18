@@ -1,4 +1,6 @@
 import mongoose from 'mongoose';
+import { invalidateMemoOnWrite } from '../utils/memoCache.js';
+import { medicalReviewFields } from '../utils/medicalReview.js';
 
 const healthIssueSchema = new mongoose.Schema(
   {
@@ -18,11 +20,16 @@ const healthIssueSchema = new mongoose.Schema(
     whenToSeeDoctor: { type: String, trim: true },
 
     isActive: { type: Boolean, default: true },
+    // Medical review stamp + workflow (utils/medicalReview.js)
+    ...medicalReviewFields(),
     order: { type: Number, default: 0 },
   },
   { timestamps: true },
 );
 
 healthIssueSchema.index({ isActive: 1, order: 1 });
+
+// Any write drops the cached app-facing list (utils/memoCache.js).
+healthIssueSchema.plugin(invalidateMemoOnWrite, { prefix: 'health-issues:' });
 
 export default mongoose.model('HealthIssue', healthIssueSchema);

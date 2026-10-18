@@ -20,6 +20,7 @@ in the app hard-depends on AI being up.
 SARVAM_API_KEY=              # api.sarvam.ai — chat/STT/TTS/translate/doc-extraction
 SARVAM_CHAT_MODEL=sarvam-105b
 SARVAM_TTS_MODEL=bulbul:v3
+SARVAM_TTS_SPEAKER=priya      # female voice; must be valid for the model (see .env.example)
 SARVAM_STT_MODEL=saaras:v3
 
 SARVAM_OUTBOUND_API_KEY=     # apps.sarvam.ai — the separate outbound-call product
@@ -250,7 +251,12 @@ AI is entirely inside Sarvam's hosted agent during the call itself.
 `POST /api/speech/transcribe` (STT, `saaras:v3`) turns the user's recorded
 voice into text, which then feeds into either the Nura AI chat or the voice
 agent's `/converse` endpoint above. `POST /api/speech/tts` (TTS, `bulbul:v3`)
-turns a reply back into audio for the "voice mode" overlay to play. Neither
+turns a reply back into audio for the "voice mode" overlay to play. The voice
+is always female: `resolveTtsSpeaker` in `sarvamClient.js` accepts a
+requested `speaker` (or `SARVAM_TTS_SPEAKER`) only if it's a female voice for
+the configured model, else uses the model's default (`priya` on `bulbul:v3`,
+`anushka` on `bulbul:v2`). The outbound check-in call agent's voice is set in
+the Sarvam dashboard, not in code; keep it female too. Neither
 endpoint does any reasoning itself — they're the ears/mouth around the chat
 and voice-agent brains described above.
 

@@ -484,3 +484,59 @@ export const getDoctorPayoutTemplate = ({
   `;
   return emailLayout(heading, content);
 };
+
+/**
+ * Support ticket raised from the app (controllers/supportController.js) or a
+ * new reply on one — sent to the support inbox (SUPPORT_EMAIL). Every value
+ * is user input, so all of it is escaped.
+ */
+export const getSupportTicketAdminTemplate = ({
+  ticketNumber,
+  isReply = false,
+  name,
+  email,
+  category,
+  subject,
+  message,
+  meta,
+}) => {
+  const rows = [
+    ['Ticket', ticketNumber],
+    ['From', [name, email].filter(Boolean).join(' · ')],
+    ['Category', category],
+    ['Subject', subject],
+    ...(meta ? Object.entries(meta).map(([key, value]) => [key, String(value)]) : []),
+  ];
+  const content = `
+    <span class="badge" style="background-color: ${BRAND.dangerLight}; color: ${BRAND.danger};">${isReply ? 'Ticket reply' : 'New support ticket'}</span>
+    <h2 style="margin-top: 0; color: ${BRAND.foreground}; font-size: 22px; font-weight: 600;">${escapeHtml(ticketNumber)}</h2>
+    <table class="grid-table">
+      ${rows
+        .map(
+          ([label, value]) =>
+            `<tr><td class="grid-td-label">${escapeHtml(label)}</td><td class="grid-td-value">${escapeHtml(value)}</td></tr>`,
+        )
+        .join('')}
+      <tr class="grid-tr-last">
+        <td class="grid-td-label">${isReply ? 'Reply' : 'Message'}</td>
+        <td class="grid-td-value" style="line-height: 1.5; color: ${BRAND.mutedText};">${escapeHtml(message).replace(/\n/g, '<br/>')}</td>
+      </tr>
+    </table>
+    <p style="margin-top: 20px;">Answer from the Admin Workspace (Support) so the reply stays on the ticket and reaches the person in the app.</p>
+  `;
+  return emailLayout(`${isReply ? 'Reply on' : 'New'} ${ticketNumber}`, content);
+};
+
+/** Confirmation to the person who raised a ticket. */
+export const getSupportTicketConfirmationTemplate = ({ firstName, ticketNumber, subject }) => {
+  const content = `
+    <span class="badge">We got your message</span>
+    <h2 style="margin-top: 0; color: ${BRAND.foreground}; font-size: 24px; font-weight: 600;">Hi ${escapeHtml(firstName) || 'there'},</h2>
+    <p>Thanks for reaching out. Your request <strong>${escapeHtml(ticketNumber)}</strong> (“${escapeHtml(subject)}”) is with our team.</p>
+    <p>We usually reply within a working day. You'll get a notification in the Nura app when we do, and you can follow it under <strong>Profile → Help &amp; support → My tickets</strong>.</p>
+    <div class="divider"></div>
+    <p style="margin-bottom: 0;">Warmly,</p>
+    <p style="font-weight: 600; margin-top: 4px; color: ${BRAND.primary};">The Nura Team</p>
+  `;
+  return emailLayout(`Your Nura request ${ticketNumber}`, content);
+};

@@ -10,6 +10,7 @@ import CycleLog from '../models/CycleLog.js';
 import logger from '../utils/logger.js';
 import crypto from 'crypto';
 import { computeCyclePredictions } from '../utils/cycle.js';
+import { loadPredictionLogs } from '../utils/predictionLogs.js';
 import { broadcastToRoom } from '../config/websocket.js';
 import {
   buildPagination,
@@ -277,7 +278,7 @@ export const getPartnerSharedData = async (req, res, next) => {
         // Anchor on the owner's actual logged period history, not just the
         // configured lastPeriodStartDate, so the phase shown to the partner
         // matches what the owner's own tracker screen shows.
-        const logs = await CycleLog.find({ userId: myProfile.partnerId }).sort({ dateKey: 1 });
+        const logs = await loadPredictionLogs(myProfile.partnerId);
         predictions = computeCyclePredictions(settings, logs, { today: clientToday(req) });
       }
     }

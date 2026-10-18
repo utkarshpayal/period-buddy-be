@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { invalidateMemoOnWrite } from '../utils/memoCache.js';
 
 // Catalog of gate-able app capabilities. Admins flip `isPremium`/`price` from
 // the Content Studio (period-buddy-content) — this collection is the single
@@ -44,5 +45,8 @@ const subscriptionFeatureSchema = new mongoose.Schema(
 );
 
 subscriptionFeatureSchema.index({ isActive: 1, sortOrder: 1 });
+
+// Any write drops the cached app-facing list (utils/memoCache.js).
+subscriptionFeatureSchema.plugin(invalidateMemoOnWrite, { prefix: 'subscriptions:' });
 
 export default mongoose.model('SubscriptionFeature', subscriptionFeatureSchema);

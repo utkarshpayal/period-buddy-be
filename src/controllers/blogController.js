@@ -1,4 +1,5 @@
 import Blog from '../models/Blog.js';
+import BlogReader from '../models/BlogReader.js';
 import Reel from '../models/Reel.js';
 import User from '../models/User.js';
 import slugify from 'slugify';
@@ -15,23 +16,78 @@ import {
   pickDefined,
 } from '../utils/apiHelpers.js';
 import { SUPPORTED_LANGUAGES, translateText, TRANSLATE_MAX_CHARS } from '../utils/sarvamClient.js';
+import { readingMinutes } from '../utils/blogReadTime.js';
+import { parseReadReport, readIncrement, readStats } from '../utils/blogReadStats.js';
 
-// A session shorter than this is treated as a bounce (accidental open, back
-// button, etc.) rather than a genuine read — it doesn't count toward
-// viewCount or the real read-time average.
-const MIN_VIEW_SECONDS = 5;
-// Sanity cap — protects the average from a client that reports a bogus
-// duration (e.g. a tab left open overnight).
-const MAX_VIEW_SECONDS = 60 * 60;
+export { readingMinutes };
 
-/** Effective read time: once enough real reader sessions have been tracked,
- * that data replaces the admin's static estimate. */
-const withEffectiveReadTime = (blog) => {
+/** Reading time for a post: from its content when we have it, else the
+ * stored value (computed from content on every write, see models/Blog.js). */
+export const readTimeFor = (obj) =>
+  typeof obj.content === 'string'
+    ? readingMinutes(obj.content, obj.readTimeMinutes)
+    : Math.max(1, Math.round(Number(obj.readTimeMinutes) || 0) || 1);
+
+/**
+ * App shape of a blog. `readTimeMinutes` is the article's length (~200 wpm).
+ * It used to be replaced by the average time readers kept the article open,
+ * which a single tab left open for an hour (or a few quick bounces) skewed
+ * into "60 min read"/"0 min read"; that average is now its own field.
+ */
+const withReadTime = (blog) => {
   const obj = blog.toObject ? blog.toObject() : blog;
-  if (obj.readSessionCount > 0) {
-    obj.readTimeMinutes = Math.max(1, Math.round(obj.totalReadSeconds / obj.readSessionCount / 60));
-  }
+  obj.readTimeMinutes = readTimeFor(obj);
+  Object.assign(obj, readStats(obj));
   return obj;
+};
+
+/**
+ * Posts saved before reading time was computed server-side have none (or a
+ * hand-typed 0). Fill those in, store them, and return the docs as plain
+ * objects with `readTimeMinutes` set — needed for lists, which don't load
+ * `content`.
+ */
+export const ensureReadTimes = async (blogs) => {
+  const objects = blogs.map((blog) => (blog.toObject ? blog.toObject() : blog));
+  const missing = objects.filter(
+    (obj) => typeof obj.content !== 'string' && !(obj.readTimeMinutes > 0),
+  );
+  if (missing.length) {
+    try {
+      const minutes = await Blog.backfillReadTimes({ _id: { $in: missing.map((o) => o._id) } });
+      for (const obj of missing) {
+        const value = minutes.get(String(obj._id));
+        if (value) obj.readTimeMinutes = value;
+      }
+    } catch (error) {
+      // A failed backfill must never fail the read; readTimeFor falls back to 1.
+      logger.warn('blog_read_time_backfill_failed', {
+        action: 'blog_read_time_backfill_failed',
+        error: error.message,
+      });
+    }
+  }
+  return objects;
+};
+
+const BLOG_STATUS_ALIASES = {
+  publish: blogStatusEnum.PUBLISHED,
+  published: blogStatusEnum.PUBLISHED,
+  live: blogStatusEnum.PUBLISHED,
+  active: blogStatusEnum.PUBLISHED,
+  draft: blogStatusEnum.DRAFT,
+  unpublish: blogStatusEnum.DRAFT,
+  unpublished: blogStatusEnum.DRAFT,
+  inactive: blogStatusEnum.DRAFT,
+  archive: blogStatusEnum.ARCHIVED,
+  archived: blogStatusEnum.ARCHIVED,
+};
+
+/** Status from a request: a `blogStatusEnum` value, undefined when absent,
+ * or null when it isn't one we understand. */
+export const normalizeBlogStatus = (value) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  return BLOG_STATUS_ALIASES[String(value).trim().toLowerCase()] ?? null;
 };
 
 const chunkTextForTranslation = (text, maxChars) => {
@@ -72,7 +128,7 @@ export const getBlogs = async (req, res, next) => {
     const { category, tag, search } = req.query;
     const { page, limit, skip } = getPagination(req.query, { limit: 10, maxLimit: 50 });
 
-    const filter = { status: blogStatusEnum.PUBLISHED, isPublished: true };
+    const filter = publishedFilter();
     if (category) filter.category = category;
     if (tag) filter.tags = tag;
     if (search)
@@ -95,7 +151,7 @@ export const getBlogs = async (req, res, next) => {
     });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Blogs fetched', {
-      blogs: blogs.map(withEffectiveReadTime),
+      blogs: (await ensureReadTimes(blogs)).map(withReadTime),
       pagination: buildPagination({ page, limit, total }),
     });
   } catch (error) {
@@ -109,48 +165,66 @@ export const getBlogs = async (req, res, next) => {
  * as a genuine read. */
 export const getBlogBySlug = async (req, res, next) => {
   try {
-    const blog = await Blog.findOne({ slug: req.params.slug, status: blogStatusEnum.PUBLISHED });
+    const blog = await Blog.findOne({ ...publishedFilter(), slug: req.params.slug });
 
     if (!blog) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Blog not found');
 
-    return sendResponse(res, HTTP_STATUS.OK, 'Blog post', withEffectiveReadTime(blog));
+    return sendResponse(res, HTTP_STATUS.OK, 'Blog post', withReadTime(blog));
   } catch (error) {
     next(error);
   }
 };
 
-/** POST /api/blogs/:id/track-view — Reports how long the reader actually
- * had the article open. Only sessions clearing MIN_VIEW_SECONDS count
- * toward viewCount and the real read-time average, so a bounce (opened by
- * mistake, closed in under a second) doesn't inflate either. */
+/** POST /api/blogs/:id/track-view — Reports *active* reading time (on
+ * screen, app in front, reader not idle; see utils/blogReadStats.js). A
+ * session may arrive in parts (`continued: true` adds time without counting
+ * another read); `completed: true` marks that the reader reached the end.
+ * Bounces under MIN_READ_SECONDS don't count as views. */
 export const trackBlogView = async (req, res, next) => {
   try {
     if (!isValidObjectId(req.params.id)) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid blog id');
     }
 
-    const durationSeconds = Number(req.body.durationSeconds);
-    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'A valid durationSeconds is required');
-    }
+    const report = parseReadReport(req.body);
+    if (report.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, report.error);
 
-    if (durationSeconds < MIN_VIEW_SECONDS) {
+    const existing = await Blog.findById(req.params.id).select('readTimeMinutes').lean();
+    if (!existing) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Blog not found');
+
+    const readerKey = { blogId: existing._id, userId: req.userId };
+    const reader = await BlogReader.findOne(readerKey).select('completed').lean();
+    const inc = readIncrement(report, existing.readTimeMinutes, reader);
+    if (!inc)
       return sendResponse(res, HTTP_STATUS.OK, 'Session too short to count', { counted: false });
+
+    // The unique (blog, user) index decides who is new: if two first reports
+    // race, only one upsert inserts, and only that one adds the view.
+    let blogInc = inc.blog;
+    const readerSet = { lastReadAt: new Date(), ...(inc.completed ? { completed: true } : {}) };
+    try {
+      await BlogReader.updateOne(
+        readerKey,
+        { $inc: inc.reader, $set: readerSet },
+        { upsert: true },
+      );
+    } catch (error) {
+      if (error?.code !== 11000) throw error;
+      const { viewCount: _counted, ...rest } = blogInc;
+      blogInc = rest;
+      await BlogReader.updateOne(readerKey, { $inc: inc.reader, $set: readerSet });
     }
 
-    const clampedSeconds = Math.min(durationSeconds, MAX_VIEW_SECONDS);
-
-    const blog = await Blog.findByIdAndUpdate(
-      req.params.id,
-      { $inc: { viewCount: 1, totalReadSeconds: clampedSeconds, readSessionCount: 1 } },
-      { new: true },
-    );
+    const blog = await Blog.findByIdAndUpdate(req.params.id, { $inc: blogInc }, { new: true })
+      .select('viewCount readTimeMinutes totalReadSeconds readSessionCount completedReadCount')
+      .lean();
     if (!blog) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Blog not found');
 
     return sendResponse(res, HTTP_STATUS.OK, 'View recorded', {
       counted: true,
       viewCount: blog.viewCount,
-      readTimeMinutes: withEffectiveReadTime(blog).readTimeMinutes,
+      readTimeMinutes: readTimeFor(blog),
+      ...readStats(blog),
     });
   } catch (error) {
     next(error);
@@ -168,7 +242,7 @@ export const translateBlog = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'A supported language is required');
     }
 
-    const blog = await Blog.findOne({ slug: req.params.slug, status: blogStatusEnum.PUBLISHED });
+    const blog = await Blog.findOne({ ...publishedFilter(), slug: req.params.slug });
     if (!blog) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Blog not found');
 
     if (language === 'en-IN') {
@@ -212,7 +286,7 @@ export const toggleBookmark = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid blog id');
     }
 
-    const blog = await Blog.findOne({ _id: req.params.id, status: blogStatusEnum.PUBLISHED });
+    const blog = await Blog.findOne({ ...publishedFilter(), _id: req.params.id });
     if (!blog) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Blog not found');
 
     const user = await User.findById(req.userId).select('savedBlogs');
@@ -242,19 +316,47 @@ export const toggleBookmark = async (req, res, next) => {
 export const getBookmarkedBlogs = async (req, res, next) => {
   try {
     const user = await User.findById(req.userId).select('savedBlogs');
-    const blogs = await Blog.find({
-      _id: { $in: user.savedBlogs },
-      status: blogStatusEnum.PUBLISHED,
-    })
+    const blogs = await Blog.find({ ...publishedFilter(), _id: { $in: user.savedBlogs } })
       .select('-content')
       .sort({ publishedAt: -1 });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Bookmarked blogs fetched', {
-      blogs: blogs.map(withEffectiveReadTime),
+      blogs: (await ensureReadTimes(blogs)).map(withReadTime),
     });
   } catch (error) {
     next(error);
   }
+};
+
+// The combined feed only ever considered each source's newest 100 items.
+const FEED_SOURCE_CAP = 100;
+// Only what the feed items, ensureReadTimes and readStats read. Hydrated
+// (not lean) so selected paths keep their schema defaults (tags: [], ...).
+const FEED_BLOG_FIELDS =
+  'title author coverImageUrl excerpt slug category tags readTimeMinutes totalReadSeconds ' +
+  'readSessionCount completedReadCount viewCount likeCount publishedAt createdAt';
+const FEED_REEL_FIELDS =
+  'title creatorName duration thumbnailUrl verified pollQuestion category publishedAt createdAt';
+
+/**
+ * The first `wanted` items of `Model.find(filter).sort({ publishedAt: -1 })
+ * .limit(FEED_SOURCE_CAP)`, plus how many items that capped query returns.
+ * Items with no publishedAt sort last there but are merged by createdAt, so
+ * any of them inside the cap are always loaded (there are few or none).
+ */
+const loadFeedSource = async (Model, filter, fields, wanted) => {
+  const datedFilter = { ...filter, publishedAt: { $ne: null } };
+  const [dated, datedTotal] = await Promise.all([
+    Model.find(datedFilter).select(fields).sort({ publishedAt: -1 }).limit(wanted),
+    Model.countDocuments(datedFilter, { limit: FEED_SOURCE_CAP }),
+  ]);
+  const undated =
+    datedTotal < FEED_SOURCE_CAP
+      ? await Model.find({ ...filter, publishedAt: null })
+          .select(fields)
+          .limit(FEED_SOURCE_CAP - datedTotal)
+      : [];
+  return { items: [...dated, ...undated], total: datedTotal + undated.length };
 };
 
 /** GET /api/blogs/feed?type=all|blog|reel — Combined insight feed */
@@ -263,7 +365,10 @@ export const getContentFeed = async (req, res, next) => {
     const { type = 'all', search, category, tag } = req.query;
     const { page, limit } = getPagination(req.query, { limit: 10, maxLimit: 50 });
 
-    const blogFilter = { isPublished: true };
+    // Same published test as every other read; `isPublished` alone let a
+    // post whose status said draft/archived show in the feed and then 404
+    // when opened by slug.
+    const blogFilter = publishedFilter();
     const reelFilter = { isActive: true };
 
     if (category) blogFilter.category = category;
@@ -280,19 +385,29 @@ export const getContentFeed = async (req, res, next) => {
       ];
     }
 
-    const [blogs, reels] = await Promise.all([
-      type === 'reel' ? [] : Blog.find(blogFilter).sort({ publishedAt: -1 }).limit(100),
-      type === 'blog' ? [] : Reel.find(reelFilter).sort({ publishedAt: -1 }).limit(100),
+    // Each source still counts its newest FEED_SOURCE_CAP items (that's what
+    // `total` and the last page have always been), but only the first
+    // page * limit of each can reach this page, so only those are loaded.
+    const wanted = Math.min(page * limit, FEED_SOURCE_CAP);
+    const [blogSource, reelSource] = await Promise.all([
+      type === 'reel'
+        ? { items: [], total: 0 }
+        : loadFeedSource(Blog, blogFilter, FEED_BLOG_FIELDS, wanted),
+      type === 'blog'
+        ? { items: [], total: 0 }
+        : loadFeedSource(Reel, reelFilter, FEED_REEL_FIELDS, wanted),
     ]);
+    const blogs = await ensureReadTimes(blogSource.items);
+    const reels = reelSource.items;
 
     const items = [
-      ...blogs.map(withEffectiveReadTime).map((blog) => ({
+      ...blogs.map(withReadTime).map((blog) => ({
         id: String(blog._id),
         sourceId: String(blog._id),
         title: blog.title,
         author: blog.author,
         type: 'blog',
-        time: `${blog.readTimeMinutes || 0} min read`,
+        time: `${blog.readTimeMinutes} min read`,
         imageUrl: blog.coverImageUrl,
         verified: true,
         summary: blog.excerpt,
@@ -300,6 +415,7 @@ export const getContentFeed = async (req, res, next) => {
         category: blog.category,
         tags: blog.tags,
         readTimeMinutes: blog.readTimeMinutes,
+        averageReadSeconds: blog.averageReadSeconds,
         viewCount: blog.viewCount,
         likeCount: blog.likeCount,
         publishedAt: blog.publishedAt || blog.createdAt,
@@ -323,7 +439,7 @@ export const getContentFeed = async (req, res, next) => {
 
     return sendResponse(res, HTTP_STATUS.OK, 'Content feed fetched', {
       items: pagedItems,
-      pagination: buildPagination({ page, limit, total: items.length }),
+      pagination: buildPagination({ page, limit, total: blogSource.total + reelSource.total }),
     });
   } catch (error) {
     next(error);
@@ -339,6 +455,8 @@ export const createBlog = async (req, res, next) => {
     if (!title || !content) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'title and content are required');
     }
+    const normalizedStatus = normalizeBlogStatus(status);
+    if (normalizedStatus === null) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid status');
 
     const slug = slugify(title, { lower: true, strict: true });
     const blog = await Blog.create({
@@ -350,9 +468,10 @@ export const createBlog = async (req, res, next) => {
       category,
       tags: normalizeStringArray(req.body.tags),
       author,
-      isPublished: !!isPublished,
-      publishedAt: isPublished ? new Date() : null,
-      status: status || blogStatusEnum.DRAFT,
+      // The model's save hook reconciles these two and fills publishedAt.
+      isPublished:
+        isPublished === undefined ? undefined : isPublished === true || isPublished === 'true',
+      status: normalizedStatus || blogStatusEnum.DRAFT,
     });
 
     logger.info('blog_created', { action: 'blog_created', id: blog._id, title, slug });
@@ -404,11 +523,21 @@ export const updateBlog = async (req, res, next) => {
       'status',
     ]);
 
-    if (updates.title) {
+    if (updates.status !== undefined) {
+      updates.status = normalizeBlogStatus(updates.status);
+      if (updates.status === null) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid status');
+      if (updates.status === undefined) delete updates.status;
+    }
+
+    const current = await Blog.findById(req.params.id).select('title isPublished');
+    if (!current) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Blog not found');
+    // Only a real title change on a post that isn't live moves its URL; a
+    // published post keeps its slug so links and bookmarks keep working.
+    if (updates.title && updates.title.trim() !== current.title && !current.isPublished) {
       updates.slug = slugify(updates.title, { lower: true, strict: true });
     }
     if (updates.tags !== undefined) updates.tags = normalizeStringArray(updates.tags);
-    if (updates.isPublished === true) updates.publishedAt = new Date();
+    // publishedAt and readTimeMinutes are filled by the Blog model's hooks.
 
     const blog = await Blog.findByIdAndUpdate(req.params.id, updates, {
       new: true,
@@ -449,13 +578,12 @@ export const deleteBlog = async (req, res, next) => {
    never leave the API.
 ────────────────────────────────────────────────────────── */
 
-// `content` is selected for lists too, only to compute reading time; it's
-// dropped again in toPublicBlog unless the caller asks for it.
+// Lists use the stored reading time (kept in step with the content by the
+// Blog model), so they no longer load every article body.
 const PUBLIC_LIST_FIELDS =
-  'title slug excerpt content coverImageUrl category tags author readTimeMinutes ' +
-  'viewCount publishedAt updatedAt';
-const PUBLIC_DETAIL_FIELDS = `${PUBLIC_LIST_FIELDS} seoTitle seoDescription canonicalUrl`;
-const WORDS_PER_MINUTE = 200;
+  'title slug excerpt coverImageUrl category tags author readTimeMinutes ' +
+  'viewCount publishedAt createdAt updatedAt medicallyReviewed reviewedBy reviewedAt';
+const PUBLIC_DETAIL_FIELDS = `${PUBLIC_LIST_FIELDS} content seoTitle seoDescription canonicalUrl`;
 const PUBLIC_SORTS = {
   latest: { publishedAt: -1 },
   popular: { viewCount: -1, publishedAt: -1 },
@@ -465,15 +593,6 @@ const PUBLIC_SORTS = {
 const PUBLIC_CACHE_HEADER = 'public, max-age=300, stale-while-revalidate=600';
 
 const publishedFilter = () => ({ status: blogStatusEnum.PUBLISHED, isPublished: true });
-
-/** Reading time from the article's length. The app's dwell-time average
- * (withEffectiveReadTime) measures how long people kept it open, which is
- * not what a reader deciding whether to start an article wants to know. */
-export const readingMinutes = (content = '', fallback = 0) => {
-  const words = String(content).trim().split(/\s+/).filter(Boolean).length;
-  if (!words) return Math.max(1, fallback || 1);
-  return Math.max(1, Math.round(words / WORDS_PER_MINUTE));
-};
 
 /** Shapes a blog for the public API: only the fields a public reader
  * should see. */
@@ -488,9 +607,13 @@ export const toPublicBlog = (blog, { includeContent = false } = {}) => {
     category: obj.category,
     tags: obj.tags || [],
     author: obj.author,
-    readTimeMinutes: readingMinutes(obj.content, obj.readTimeMinutes),
+    readTimeMinutes: readTimeFor(obj),
     publishedAt: obj.publishedAt || obj.createdAt,
     updatedAt: obj.updatedAt,
+    // Medical review stamp (published posts only reach this function).
+    medicallyReviewed: Boolean(obj.medicallyReviewed),
+    reviewedBy: obj.medicallyReviewed ? obj.reviewedBy || null : null,
+    reviewedAt: obj.medicallyReviewed ? obj.reviewedAt || null : null,
     ...(includeContent
       ? {
           content: obj.content,
@@ -526,7 +649,7 @@ export const getPublicBlogs = async (req, res, next) => {
 
     res.set('Cache-Control', PUBLIC_CACHE_HEADER);
     return sendResponse(res, HTTP_STATUS.OK, 'Blogs fetched', {
-      blogs: blogs.map((blog) => toPublicBlog(blog)),
+      blogs: (await ensureReadTimes(blogs)).map((blog) => toPublicBlog(blog)),
       pagination: buildPagination({ page, limit, total }),
     });
   } catch (error) {
@@ -600,7 +723,7 @@ export const getPublicBlogBySlug = async (req, res, next) => {
     res.set('Cache-Control', PUBLIC_CACHE_HEADER);
     return sendResponse(res, HTTP_STATUS.OK, 'Blog post', {
       blog: toPublicBlog(blog, { includeContent: true }),
-      related: related.map((r) => toPublicBlog(r)),
+      related: (await ensureReadTimes(related)).map((r) => toPublicBlog(r)),
     });
   } catch (error) {
     next(error);

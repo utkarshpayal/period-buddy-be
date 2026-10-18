@@ -1,8 +1,12 @@
 import mongoose from 'mongoose';
+import { medicalReviewFields } from '../utils/medicalReview.js';
 
 const reelSchema = new mongoose.Schema(
   {
     title: { type: String, required: true, trim: true, maxlength: 180 },
+    // Caption under the video in the app (admin "summary"); tags show as #chips.
+    description: { type: String, trim: true, maxlength: 2200 },
+    tags: [{ type: String, trim: true, lowercase: true, maxlength: 40 }],
 
     // creatorId is the only creator reference; creatorName/creatorAvatar are deprecated
     creatorId: { type: String, required: true, trim: true, index: true },
@@ -42,10 +46,14 @@ const reelSchema = new mongoose.Schema(
     likeCount: { type: Number, default: 0, min: 0 },
     shareCount: { type: Number, default: 0, min: 0 },
     saveCount: { type: Number, default: 0, min: 0 },
+    // Likes/saves/comments live in ReelLike/ReelSave/ReelComment; these are
+    // kept in step by reelController (commentCount = visible comments only).
     commentCount: { type: Number, default: 0, min: 0 },
     watchTime: { type: Number, default: 0, min: 0 }, // total seconds
 
     isActive: { type: Boolean, default: true, index: true },
+    // Medical review stamp + workflow (utils/medicalReview.js)
+    ...medicalReviewFields(),
     publishedAt: { type: Date, default: Date.now },
   },
   {
@@ -56,6 +64,9 @@ const reelSchema = new mongoose.Schema(
 );
 
 reelSchema.index({ isActive: 1, publishedAt: -1 });
+// GET /api/reels: isActive (+ category) filter, sorted publishedAt then createdAt.
+reelSchema.index({ isActive: 1, publishedAt: -1, createdAt: -1 });
+reelSchema.index({ isActive: 1, category: 1, publishedAt: -1, createdAt: -1 });
 reelSchema.index({ title: 'text', category: 'text' });
 
 reelSchema.virtual('views').get(function () {

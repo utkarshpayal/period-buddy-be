@@ -144,6 +144,18 @@ router.patch(
   ),
 );
 
+/**
+ * @route   POST /api/content/:type/:id/review
+ * @desc    Medical review: { action: 'submit' | 'approve' | 'mark_reviewed' | 'send_back',
+ *          note? }. submit (content.write) moves a draft into review; approve
+ *          (publish + stamp), mark_reviewed (stamp only) and send_back (back to
+ *          draft, note required) need content.approve. Not approval-gated:
+ *          submitting is itself the request, and deciding needs the approver's
+ *          own permission.
+ * @access  Private (content.write; decisions need content.approve)
+ */
+router.post('/:type/:id/review', canWrite, contentController.reviewContent);
+
 router.delete(
   '/:type/:id',
   canWrite,

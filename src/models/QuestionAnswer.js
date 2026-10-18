@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { medicalReviewFields } from '../utils/medicalReview.js';
 
 const questionAnswerSchema = new mongoose.Schema(
   {
@@ -86,8 +87,8 @@ const questionAnswerSchema = new mongoose.Schema(
     likeCount: { type: Number, default: 0 },
 
     sourceLinks: [{ type: String }],
-    reviewedBy: { type: String },
-    medicallyReviewed: { type: Boolean, default: false },
+    // Medical review stamp + workflow (utils/medicalReview.js); server-written only.
+    ...medicalReviewFields(),
 
     // SEO (carried over from current schema)
     seoTitle: String,

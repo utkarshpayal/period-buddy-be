@@ -20,6 +20,7 @@ import {
   APPLICATION_STATUSES,
 } from '../constants/schemeCategories.js';
 import { evaluateEligibility } from '../utils/schemeEligibility.js';
+import { memo } from '../utils/memoCache.js';
 
 /**
  * Build the Mongo filter shared by list + recommended from the query params.
@@ -60,16 +61,28 @@ const buildSchemeFilter = (query) => {
   return filter;
 };
 
+/** Cache key for a (search-free) scheme filter: plain values only, no RegExp. */
+const schemeListKey = (filter, page, limit) => JSON.stringify({ filter, page, limit });
+
 /** GET /api/schemes — paginated, searchable, filterable list */
 export const getSchemes = async (req, res, next) => {
   try {
     const { page, limit, skip } = getPagination(req.query, { limit: 20, maxLimit: 50 });
     const filter = buildSchemeFilter(req.query);
 
-    const [schemes, total] = await Promise.all([
-      GovernmentBenefit.find(filter).sort({ order: 1, createdAt: -1 }).skip(skip).limit(limit),
-      GovernmentBenefit.countDocuments(filter),
-    ]);
+    const load = async () => {
+      const [docs, count] = await Promise.all([
+        GovernmentBenefit.find(filter).sort({ order: 1, createdAt: -1 }).skip(skip).limit(limit),
+        GovernmentBenefit.countDocuments(filter),
+      ]);
+      return { schemes: docs.map((doc) => doc.toJSON()), total: count };
+    };
+    // Browsing (no free-text search) is the same for everyone, so it's
+    // cached for a minute and dropped on any write (GovernmentBenefit's
+    // invalidateMemoOnWrite). The key is the normalized filter + page.
+    const { schemes, total } = req.query.search
+      ? await load()
+      : await memo(`schemes:list:${schemeListKey(filter, page, limit)}`, load);
 
     return sendResponse(res, HTTP_STATUS.OK, 'Schemes fetched', {
       schemes,

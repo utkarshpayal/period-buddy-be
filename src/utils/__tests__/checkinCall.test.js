@@ -8,6 +8,7 @@ import {
   classifyCallOutcome,
   describeCycleContext,
   describePeriodTiming,
+  inFirstCallWindow,
   localClock,
   planRetry,
   planScheduledAttempt,
@@ -262,4 +263,16 @@ test('cycle context and recent log lines', () => {
     'Yesterday: medium flow; cramps; mood tired.',
   );
   assert.equal(summarizeRecentLog({ dateKey: '2026-09-01', flow: 'light' }, '2026-09-26'), '');
+});
+
+test('inFirstCallWindow matches planScheduledAttempt for a day with no automatic attempt', () => {
+  const now = new Date('2026-03-02T12:00:00Z');
+  for (const scheduledMinutes of [0, 9 * 60, 22 * 60 + 30, 23 * 60 + 59]) {
+    for (let minutes = 0; minutes < 24 * 60; minutes += 1) {
+      const clock = { dateKey: '2026-03-02', minutes, tzOffset: -330 };
+      const plan = planScheduledAttempt({ calls: [], scheduledMinutes, now, clock });
+      assert.equal(inFirstCallWindow({ clock, scheduledMinutes }), plan.due);
+    }
+  }
+  assert.equal(inFirstCallWindow({ clock: { minutes: 10 }, scheduledMinutes: null }), false);
 });

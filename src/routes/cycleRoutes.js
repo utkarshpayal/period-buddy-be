@@ -34,7 +34,7 @@ router.post('/log', authenticate, cycleController.saveCycleLog);
 
 /**
  * @route   GET /api/cycle/logs
- * @desc    Get all logs optionally filtered by ?month=YYYY-MM
+ * @desc    Get all logs optionally filtered by ?month=YYYY-MM or ?year=YYYY (month wins)
  * @access  Private
  */
 router.get('/logs', authenticate, cycleController.getMonthLogs);

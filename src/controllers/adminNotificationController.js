@@ -21,10 +21,27 @@ import {
   enqueueBroadcast,
   laneFor,
 } from '../utils/pushBroadcastWorker.js';
-import { parseNotificationData } from '../utils/notificationRoute.js';
+import { parseNotificationData, wantsStoreDefaults } from '../utils/notificationRoute.js';
+import AppConfig from '../models/AppConfig.js';
+import { CONFIG_KEY } from '../utils/appConfigStore.js';
+import { mergeSettings } from '../utils/appConfig.js';
 import { hidesNotificationDetails, pushFor } from '../utils/privacy.js';
 import PushSchedule from '../models/PushSchedule.js';
 import { describeSchedule, nextOccurrence, parseScheduleInput } from '../utils/pushSchedule.js';
+
+/**
+ * Route / store link / icon / image of an admin send. An app-update push
+ * (`kind: 'app_update'`) without its own link uses the App settings' store
+ * links (the CMS's Update prompt), so admins don't paste them each time.
+ */
+const parsePushData = async (body) => {
+  let storeDefaults = {};
+  if (wantsStoreDefaults(body)) {
+    const config = await AppConfig.findOne({ key: CONFIG_KEY }).select('settings').lean();
+    storeDefaults = mergeSettings(config?.settings).update;
+  }
+  return parseNotificationData(body, storeDefaults);
+};
 
 const TITLE_MAX = 100;
 const BODY_MAX = 500;
@@ -168,7 +185,7 @@ export const sendTestNotification = async (req, res, next) => {
       );
     }
 
-    const pushData = parseNotificationData(req.body);
+    const pushData = await parsePushData(req.body);
     if (pushData.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, pushData.error);
 
     const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
@@ -237,9 +254,12 @@ export const sendTestNotification = async (req, res, next) => {
  * POST /api/admin/notifications/broadcasts — queue a push to every user in
  * the audience. Returns 202 immediately; the worker sends in batches in the
  * background and the admin polls GET /broadcasts/:id for progress.
- * Body: { title, body, audience?, userIds?, saveToInbox?, route?, icon?, image? } —
- * `route` is an optional in-app path (e.g. "/tracker") the notification opens
- * when tapped; `icon` one of NOTIFICATION_ICONS; `image` an https big picture.
+ * Body: { title, body, audience?, userIds?, saveToInbox?, route?, kind?, storeUrl?,
+ * iosStoreUrl?, icon?, image? } — `route` is an optional in-app path (e.g.
+ * "/tracker") the notification opens when tapped; `storeUrl`/`iosStoreUrl` a
+ * store link it opens instead (allowlisted, see utils/notificationRoute.js);
+ * `kind: 'app_update'` fills missing store links from App settings; `icon` one
+ * of NOTIFICATION_ICONS; `image` an https big picture.
  */
 export const createBroadcast = async (req, res, next) => {
   try {
@@ -256,7 +276,7 @@ export const createBroadcast = async (req, res, next) => {
     const audience = parseAudience(req.body.audience);
 
     // Optional in-app screen the tap opens, icon and big-picture image.
-    const pushData = parseNotificationData(req.body);
+    const pushData = await parsePushData(req.body);
     if (pushData.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, pushData.error);
 
     let userIds;
@@ -471,7 +491,7 @@ const buildScheduleFields = async (body, { allowPastStart }) => {
   const timing = parseScheduleInput(body, new Date(), { allowPastStart });
   if (timing.error) return { status: HTTP_STATUS.BAD_REQUEST, error: timing.error };
 
-  const pushData = parseNotificationData(body);
+  const pushData = await parsePushData(body);
   if (pushData.error) return { status: HTTP_STATUS.BAD_REQUEST, error: pushData.error };
 
   const audience = parseAudience(body.audience);

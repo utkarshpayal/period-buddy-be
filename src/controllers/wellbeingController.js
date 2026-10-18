@@ -9,6 +9,7 @@ import {
   normalizeStringArray,
   pickDefined,
 } from '../utils/apiHelpers.js';
+import { memo } from '../utils/memoCache.js';
 
 // A session shorter than this is treated as a bounce (accidental open, back
 // button, etc.) rather than a genuine read — it doesn't count toward the
@@ -64,7 +65,11 @@ export const getResources = async (req, res, next) => {
     const filter = { isActive: true };
     if (type) filter.type = type;
 
-    const resources = await WellbeingResource.find(filter).sort({ order: 1 });
+    // Same list for everyone: cached for a minute, dropped on any CMS write
+    // (WellbeingResource's invalidateMemoOnWrite).
+    const resources = await memo(`wellbeing:list:${JSON.stringify(type ?? null)}`, async () =>
+      (await WellbeingResource.find(filter).sort({ order: 1 })).map(withEffectiveReadTime),
+    );
 
     logger.info('wellbeing_resources_fetched', {
       action: 'wellbeing_resources_fetched',
@@ -72,12 +77,7 @@ export const getResources = async (req, res, next) => {
       count: resources.length,
     });
 
-    return sendResponse(
-      res,
-      HTTP_STATUS.OK,
-      'Resources fetched',
-      resources.map(withEffectiveReadTime),
-    );
+    return sendResponse(res, HTTP_STATUS.OK, 'Resources fetched', resources);
   } catch (error) {
     next(error);
   }
@@ -122,7 +122,9 @@ export const trackResourceView = async (req, res, next) => {
     const resource = await WellbeingResource.findByIdAndUpdate(
       req.params.id,
       { $inc: { totalReadSeconds: clampedSeconds, readSessionCount: 1 } },
-      { new: true },
+      // A read-stat bump: the cached list's estimatedReadTime may lag by up
+      // to the cache TTL rather than dropping the cache on every read.
+      { new: true, skipMemoInvalidation: true },
     );
     if (!resource) return sendError(res, HTTP_STATUS.NOT_FOUND, 'Resource not found');
 

@@ -1,4 +1,6 @@
 import mongoose from 'mongoose';
+import { invalidateMemoOnWrite } from '../utils/memoCache.js';
+import { medicalReviewFields } from '../utils/medicalReview.js';
 
 const wellbeingResourceSchema = new mongoose.Schema(
   {
@@ -29,10 +31,17 @@ const wellbeingResourceSchema = new mongoose.Schema(
 
     order: { type: Number, default: 0 },
     isActive: { type: Boolean, default: true },
+    // Medical review stamp + workflow (utils/medicalReview.js)
+    ...medicalReviewFields(),
   },
   { timestamps: true },
 );
 
 wellbeingResourceSchema.index({ type: 1, isActive: 1, order: 1 });
+// GET /api/wellbeing without ?type=.
+wellbeingResourceSchema.index({ isActive: 1, order: 1 });
+
+// Any write drops the cached app-facing list (utils/memoCache.js).
+wellbeingResourceSchema.plugin(invalidateMemoOnWrite, { prefix: 'wellbeing:' });
 
 export default mongoose.model('WellbeingResource', wellbeingResourceSchema);
