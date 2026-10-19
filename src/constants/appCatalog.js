@@ -157,7 +157,7 @@ export const FEATURE_CATALOG = [
   },
   {
     key: 'blogs',
-    title: 'Blogs',
+    title: 'Articles',
     description: 'Articles on cycle health',
     icon: 'book-outline',
     route: '/(app)/blogs',

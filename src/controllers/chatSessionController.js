@@ -15,6 +15,7 @@ import {
   MAX_QUESTION_LENGTH,
   SUGGESTED_QUESTIONS,
   generateCompanionAnswer,
+  getAgeBand,
   isKnownTopicId,
   isTopicAgeRestricted,
 } from '../utils/companionChat.js';
@@ -183,6 +184,8 @@ export const sendChatSessionMessage = async (req, res, next) => {
       userId: req.userId,
       topicId: session.topicId,
       history,
+      // Every topic, not just the 18+ one, gets an age-appropriate answer.
+      ageBand: getAgeBand(req.user?.dateOfBirth),
     });
 
     session.messages.push({ role: 'user', text: query });

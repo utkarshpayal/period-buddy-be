@@ -46,7 +46,7 @@ test('mergeFeatures applies overrides and ignores keys the catalog dropped', () 
   assert.equal(blogs.enabled, false);
   assert.equal(blogs.placement, 'care_hub');
   assert.equal(blogs.title, 'Read');
-  assert.equal(blogs.defaults.title, 'Blogs');
+  assert.equal(blogs.defaults.title, 'Articles');
   assert.equal(blogs.badge, 'NEW');
   assert.equal(
     merged.some((f) => f.key === 'retiredFeature'),
