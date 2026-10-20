@@ -166,7 +166,7 @@ app.get('/health', (req, res) => {
     message: 'Period Buddy API is running',
     version: '2.0.0',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
+    environment: process.env.APP_ENV || process.env.NODE_ENV || 'development',
   });
 });
 
@@ -284,7 +284,7 @@ server.listen(PORT, () => {
   logger.info('server_started', {
     action: 'server_started',
     port: PORT,
-    environment: process.env.NODE_ENV || 'development',
+    environment: process.env.APP_ENV || process.env.NODE_ENV || 'development',
     pid: process.pid,
   });
 });
