@@ -1,4 +1,5 @@
 import { isStaffRole } from '../config/permissions.js';
+import { isOriginAllowed } from './allowedOrigins.js';
 import { decodeToken } from './jwt.js';
 
 /**
@@ -69,11 +70,7 @@ export const cookieRequestAllowed = (req) => {
   const origin = req.get('Origin');
   if (!origin) return false;
   if (process.env.NODE_ENV !== 'production') return true;
-  const allowed = (process.env.ALLOWED_ORIGINS || '')
-    .split(',')
-    .map((o) => o.trim())
-    .filter(Boolean);
-  return allowed.includes(origin);
+  return isOriginAllowed(origin, undefined, { allowAny: false });
 };
 
 /**

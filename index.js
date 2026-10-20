@@ -70,6 +70,7 @@ import { startPayoutRunner, stopPayoutRunner } from './src/utils/payoutRunner.js
 import { startAccountPurgeRunner, stopAccountPurgeRunner } from './src/utils/accountPurgeRunner.js';
 import { startRetentionRunner, stopRetentionRunner } from './src/utils/retentionRunner.js';
 import { setupSwagger } from './src/docs/swagger.js';
+import { isOriginAllowed, parseAllowedOrigins } from './src/utils/allowedOrigins.js';
 
 const app = express();
 
@@ -99,14 +100,10 @@ connectDB().then(() => {
 app.use(helmet());
 
 // CORS: in production, restrict to an explicit allowlist (ALLOWED_ORIGINS,
-// comma-separated). Elsewhere (dev), reflect the request origin so Expo dev
-// clients / localhost tooling work without configuration.
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
-  .split(',')
-  .map((o) => o.trim())
-  .filter(Boolean);
-
-const allowAllOrigins = allowedOrigins.includes('*');
+// comma-separated; "https://*.thenura.care" allows every subdomain, see
+// utils/allowedOrigins.js). Elsewhere (dev), reflect the request origin so
+// Expo dev clients / localhost tooling work without configuration.
+const allowedOrigins = parseAllowedOrigins();
 
 const corsOptions = {
   origin(origin, callback) {
@@ -116,8 +113,7 @@ const corsOptions = {
     // ALLOWED_ORIGINS=* opts into reflecting any origin (note: with
     // credentials:true, browsers require the actual origin echoed back,
     // not a literal "*" header — the `cors` package handles that).
-    if (allowAllOrigins) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
+    if (isOriginAllowed(origin, allowedOrigins)) return callback(null, true);
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
