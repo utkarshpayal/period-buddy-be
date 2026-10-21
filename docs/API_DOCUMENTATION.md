@@ -234,6 +234,8 @@ Every sign-in is a revocable session (`utils/sessions.js`). App sessions last `J
 
 Medical documents are private. `fileUrl` in document responses is a signed link valid for 10 minutes; ask for the document again (`GET /api/documents/:id`) to get a fresh one.
 
+Prescriptions written by a Nura doctor are saved into the patient's documents automatically (a PDF with `docType: "prescription"`, `source: "consultation"` and its `consultationId`; uploads have `source: "upload"`). The list's first page, `POST /api/documents/summarize`, document chat and `GET /api/reports/health-report` first save any that are missing. `DELETE /api/documents/:id` answers `403` for these.
+
 ### DELETE `/api/auth/delete-account`
 
 Payload:

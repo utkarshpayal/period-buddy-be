@@ -4,6 +4,7 @@ import { encryptFields } from '../utils/fieldEncryption.js';
 export const DOCUMENT_TYPES = ['prescription', 'lab_report', 'bill', 'scan', 'other'];
 // 'skipped': not read because the owner turned AI features off (utils/privacy.js).
 export const EXTRACTION_STATUSES = ['pending', 'done', 'limited', 'failed', 'skipped'];
+export const DOCUMENT_SOURCES = ['upload', 'consultation'];
 
 const documentSchema = new mongoose.Schema(
   {
@@ -23,12 +24,22 @@ const documentSchema = new mongoose.Schema(
 
     extractedText: { type: String, default: '' },
     extractionStatus: { type: String, enum: EXTRACTION_STATUSES, default: 'pending' },
+
+    // 'consultation': a Nura doctor's prescription saved here automatically
+    // (utils/prescriptionDocumentStore.js), one per consultation; the person
+    // can't delete it (it would come straight back).
+    source: { type: String, enum: DOCUMENT_SOURCES, default: 'upload' },
+    consultationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Consultation' },
   },
   { timestamps: true },
 );
 
 documentSchema.index({ userId: 1, documentDate: -1 });
 documentSchema.index({ userId: 1, docType: 1 });
+documentSchema.index(
+  { consultationId: 1 },
+  { unique: true, partialFilterExpression: { consultationId: { $exists: true } } },
+);
 
 // Free text is encrypted at rest (utils/fieldEncryption.js).
 documentSchema.plugin(encryptFields, { fields: ['extractedText'] });
