@@ -10,6 +10,7 @@ import {
   pickDefined,
 } from '../utils/apiHelpers.js';
 import { memo } from '../utils/memoCache.js';
+import { wellbeingDecks } from '../constants/wellbeingDecks.js';
 
 // A session shorter than this is treated as a bounce (accidental open, back
 // button, etc.) rather than a genuine read — it doesn't count toward the
@@ -30,32 +31,6 @@ const withEffectiveReadTime = (resource) => {
     );
   }
   return obj;
-};
-
-const wellbeingDecks = {
-  spark: [
-    'What is one small, non-physical gesture that makes you feel loved or secure?',
-    'What couple habit would feel supportive during your next cycle?',
-    'What boundary do you want to discuss around intimacy during heavy flow days?',
-    'What helps you feel emotionally safe when your body is uncomfortable?',
-  ],
-  positions: [
-    {
-      name: 'Mission Comfort',
-      focus: 'Comfort, closeness, and lower pressure',
-      tip: 'Use a soft pillow under the hips if it reduces pelvic pressure. Pause or change position if anything feels uncomfortable.',
-    },
-    {
-      name: 'Lotus Variant',
-      focus: 'Closeness and easy pacing',
-      tip: 'A relaxed seated posture can make pacing easier and lets either partner slow down whenever needed.',
-    },
-    {
-      name: 'Side Spoon Wrap',
-      focus: 'Low pressure and low effort',
-      tip: 'Side-lying can feel easier on crampy or tired days because it reduces pressure and body weight.',
-    },
-  ],
 };
 
 /** GET /api/wellbeing?type=sexual_wellbeing|hygiene — List resources */

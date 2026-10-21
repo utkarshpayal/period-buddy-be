@@ -1,5 +1,6 @@
 import CycleLog from '../models/CycleLog.js';
 import Document from '../models/Document.js';
+import { syncPrescriptionDocuments } from '../utils/prescriptionDocumentStore.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { createChatCompletion, isAiConfigured, getLanguageLabel } from '../utils/sarvamClient.js';
@@ -64,6 +65,8 @@ export const getHealthReport = async (req, res, next) => {
     const startKey = String(startDate).slice(0, 10);
     const endKey = String(endDate).slice(0, 10);
 
+    // Doctors' prescriptions are documents too: make sure they're saved first.
+    await syncPrescriptionDocuments(req.userId);
     const [documents, logs] = await Promise.all([
       Document.find({ userId: req.userId, documentDate: { $gte: start, $lte: end } })
         .sort({ documentDate: 1 })
@@ -116,7 +119,9 @@ export const getHealthReport = async (req, res, next) => {
       try {
         const sections = [];
         if (documents.length)
-          sections.push(`Uploaded documents:\n\n${buildDocumentContext(documents)}`);
+          sections.push(
+            `Medical documents (uploads and doctors' prescriptions):\n\n${buildDocumentContext(documents)}`,
+          );
         const cycleContext = buildCycleContext(cycle);
         if (cycleContext) sections.push(`Cycle tracker summary:\n\n${cycleContext}`);
 

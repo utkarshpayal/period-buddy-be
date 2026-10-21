@@ -59,6 +59,7 @@ import {
   notifyUserLive,
 } from '../utils/consultationLifecycle.js';
 import { buildPrescriptionDocument } from '../utils/prescriptionDocument.js';
+import { savePrescriptionDocument } from '../utils/prescriptionDocumentStore.js';
 import { cleanRx, rxToText } from '../utils/prescriptionRx.js';
 import { assertAllowedUpload } from '../utils/fileValidation.js';
 import {
@@ -1349,6 +1350,17 @@ export const setPrescription = async (req, res, next) => {
     consultation.prescribedAt = new Date();
     await consultation.save();
     await consultation.populate(patientPopulate('firstName lastName email profilePicture'));
+    // Straight into the patient's Documents. Never fails the save: a miss is
+    // caught up the next time they open Documents (syncPrescriptionDocuments).
+    try {
+      await savePrescriptionDocument(consultation._id);
+    } catch (docError) {
+      logger.error('prescription_document_save_failed', {
+        action: 'prescription_document_save_failed',
+        consultationId: String(consultation._id),
+        error: docError.message,
+      });
+    }
     broadcastToRoom(`consultation_${consultation._id}`, {
       event: 'prescription_updated',
       consultationId: String(consultation._id),
