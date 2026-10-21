@@ -52,7 +52,9 @@ export async function generateCareSuggestions({
   const sections = [];
   if (permissions.shareCyclePhase && cycle) {
     sections.push(
-      `Current cycle phase: ${cycle.currentPhase}, day ${cycle.currentCycleDay}, next period in ${cycle.nextPeriodDaysAway} day(s).`,
+      cycle.isLate
+        ? `Cycle day ${cycle.currentCycleDay}: the period is ${cycle.daysLate} day(s) late (no bleeding logged since it was due).`
+        : `Current cycle phase: ${cycle.currentPhase}, day ${cycle.currentCycleDay}, next period in ${cycle.nextPeriodDaysAway} day(s).`,
     );
   }
   const logContext = permissions.shareSymptoms ? buildLogContext(recentLogs) : null;

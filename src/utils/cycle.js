@@ -11,8 +11,11 @@ export const getCyclePhase = (cycleDay, periodLength = 5, cycleLength = 28) => {
   // Keeping these in sync ensures the "ovulation" phase bucket lines up with the
   // actual fertile window (ovulationDate -5 .. ovulationDate +1) computed there.
   const ovulationDay = Math.max(periodLength + 1, cycleLength - 13);
+  // The fertile window: the 5 days before ovulation plus ovulation day
+  // (Wilcox et al., NEJM 1995). The egg lives 12–24 h, so the day after
+  // ovulation is not counted.
   if (cycleDay < ovulationDay - 5) return 'follicular';
-  if (cycleDay <= ovulationDay + 1) return 'ovulation';
+  if (cycleDay <= ovulationDay) return 'ovulation';
 
   return 'luteal';
 };
@@ -46,19 +49,47 @@ export const formatDisplayDate = (date, options = {}) =>
 ──────────────────────────────────────────────── */
 
 // A day counts as menstruation for episode-grouping when it has any recorded
-// flow other than 'none'. Spotting is included — a period that opens with a
-// spotting day still starts on that day. But spotting on its own (mid-cycle
-// ovulation spotting, breakthrough bleeding) is not a period: an episode
-// needs at least one day of real flow, see derivePeriodEpisodes.
+// flow other than 'none'. Spotting joins an episode, but the period starts on
+// its first day of real flow, and spotting on its own (mid-cycle ovulation
+// spotting, breakthrough bleeding) is not a period at all: see
+// derivePeriodEpisodes.
 const isBleedingLog = (log) => Boolean(log?.dateKey && log.flow && log.flow !== 'none');
 const isFlowLog = (log) => isBleedingLog(log) && log.flow !== 'spotting';
 
 // Sort thresholds — tuned to be robust rather than clever.
 export const RECENT_CYCLE_WINDOW = 6; // only the last N cycles drive the estimate
-export const REGULAR_VARIABILITY_RANGE = 3; // max-min <= this ⇒ "regular"
-export const HIGH_VARIABILITY_RANGE = 8; // max-min > this ⇒ irregular / window
+export const STEADY_VARIABILITY_RANGE = 3; // max-min <= this ⇒ very steady (tight window)
+// FIGO 2018: cycles are regular when the shortest and longest differ by
+// ≤ 7 days (ages 26–41) or ≤ 9 days (under 26 / over 41).
+export const REGULAR_RANGE_ADULT = 7;
+export const REGULAR_RANGE_YOUNG_OR_OLDER = 9;
+// Bounds for the configured cycle length (onboarding / Cycle Settings).
 export const MIN_CYCLE_LENGTH = 20;
 export const MAX_CYCLE_LENGTH = 45;
+// A measured gap outside these isn't a plausible single cycle (a missed or
+// extra log), so it never enters the statistics.
+export const MIN_PLAUSIBLE_CYCLE = 15;
+export const MAX_PLAUSIBLE_CYCLE = 60;
+// Normal cycle length: 24–38 days for adults (FIGO 2018); 21–45 days in the
+// first years after periods start (ACOG Committee Opinion 651).
+export const NORMAL_CYCLE_ADULT = { min: 24, max: 38 };
+export const NORMAL_CYCLE_ADOLESCENT = { min: 21, max: 45 };
+// Normal bleeding lasts up to 8 days (FIGO 2018).
+export const MAX_NORMAL_PERIOD_DAYS = 8;
+// A period is called late from the day after it was due; after this many days
+// late a pregnancy test is worth suggesting, and after ~90 days without a
+// period (amenorrhoea) a doctor's visit.
+export const NO_PERIOD_DOCTOR_DAYS = 90;
+// Still logging = something was logged within this many days of "today".
+const STILL_LOGGING_DAYS = 7;
+
+/** FIGO regularity limit for an age (unknown age → the adult limit). */
+export const regularRangeForAge = (age) =>
+  typeof age === 'number' && (age < 26 || age > 41)
+    ? REGULAR_RANGE_YOUNG_OR_OLDER
+    : REGULAR_RANGE_ADULT;
+export const normalCycleRangeForAge = (age) =>
+  typeof age === 'number' && age < 18 ? NORMAL_CYCLE_ADOLESCENT : NORMAL_CYCLE_ADULT;
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
@@ -97,7 +128,9 @@ const medianAbsoluteDeviation = (values, center) => {
 // discard more than 40% of the window (past that the spread is real, not an
 // artefact), and never filter with fewer than 3 data points.
 export const OUTLIER_HIGH_RATIO = 1.75;
-export const OUTLIER_LOW_RATIO = 0.5;
+// A bleed less than 60% of the usual cycle after the last one (16 days into a
+// 28–30 day pattern) is far more often spotting between periods than a cycle.
+export const OUTLIER_LOW_RATIO = 0.6;
 
 const rejectOutliers = (values) => {
   if (values.length < 3) return { kept: values, removed: 0 };
@@ -112,13 +145,13 @@ const rejectOutliers = (values) => {
 /**
  * Group a user's logs into distinct period episodes.
  *
- * Consecutive bleeding days (tolerating up to `maxGap` skipped/unlogged days)
- * form one episode. Returns episodes in chronological order, each as
+ * Consecutive bleeding days (tolerating up to `maxGap` skipped/unlogged days,
+ * since light days often go unlogged) form one episode. Returns episodes in chronological order, each as
  * `{ startKey, endKey }` where `startKey` is the *actual* period start.
  * Episodes made only of spotting days are dropped, so a day of mid-cycle
  * spotting can't restart the cycle and move every prediction.
  */
-export const derivePeriodEpisodes = (logs = [], { maxGap = 1 } = {}) => {
+export const derivePeriodEpisodes = (logs = [], { maxGap = 2 } = {}) => {
   const bleedingKeys = [...new Set(logs.filter(isBleedingLog).map((log) => log.dateKey))].sort();
 
   const episodes = [];
@@ -141,11 +174,16 @@ export const derivePeriodEpisodes = (logs = [], { maxGap = 1 } = {}) => {
   if (current) episodes.push(current);
 
   const flowKeys = new Set(logs.filter(isFlowLog).map((log) => log.dateKey));
-  return episodes.filter((episode) =>
-    bleedingKeys.some(
-      (key) => key >= episode.startKey && key <= episode.endKey && flowKeys.has(key),
-    ),
-  );
+  // Cycle day 1 is the first day of real flow: spotting in the days before it
+  // is pre-menstrual, so the period starts on the first non-spotting day.
+  return episodes
+    .map((episode) => {
+      const firstFlow = bleedingKeys.find(
+        (key) => key >= episode.startKey && key <= episode.endKey && flowKeys.has(key),
+      );
+      return firstFlow ? { startKey: firstFlow, endKey: episode.endKey } : null;
+    })
+    .filter(Boolean);
 };
 
 /**
@@ -174,11 +212,21 @@ export const computeCycleLengths = (episodes = []) => {
  * Irregular (high-variability) cycles never claim high confidence and always
  * report a window rather than an exact date.
  */
-export const analyzeCycleHistory = (cycleLengths = [], configuredCycleLength = 28) => {
+export const analyzeCycleHistory = (
+  cycleLengths = [],
+  configuredCycleLength = 28,
+  { age } = {},
+) => {
   const configured = clamp(configuredCycleLength || 28, MIN_CYCLE_LENGTH, MAX_CYCLE_LENGTH);
+  const regularRange = regularRangeForAge(age);
+  const normalRange = normalCycleRangeForAge(age);
+  // Gaps that can't be one cycle (a missed or stray log) are left out.
+  const plausible = cycleLengths.filter(
+    (n) => n >= MIN_PLAUSIBLE_CYCLE && n <= MAX_PLAUSIBLE_CYCLE,
+  );
   // Confidence tiering is based on how many cycles we actually observed…
-  const observed = cycleLengths.length;
-  const recentRaw = cycleLengths.slice(-RECENT_CYCLE_WINDOW);
+  const observed = plausible.length;
+  const recentRaw = plausible.slice(-RECENT_CYCLE_WINDOW);
   // …but the statistics are computed on an outlier-cleaned window so a single
   // missed-log "double cycle" can't skew them.
   const { kept: recent, removed: outliersRemoved } = rejectOutliers(recentRaw);
@@ -192,15 +240,17 @@ export const analyzeCycleHistory = (cycleLengths = [], configuredCycleLength = 2
   // variability and to size the medium-variability prediction window.
   const robustSpread = madValue != null ? Math.round(1.4826 * madValue) : null;
 
+  // FIGO: irregular when shortest-to-longest differs by more than the age
+  // limit (7 or 9 days). Implausible gaps and outliers are already removed.
   const classifyVariability = () => {
     if (range == null) return 'unknown';
-    // Genuinely irregular only when BOTH the range is wide and the robust
-    // spread agrees — this stops one atypical (but non-outlier) cycle from
-    // flipping an otherwise steady user to "irregular".
-    if (range > HIGH_VARIABILITY_RANGE && (robustSpread ?? 0) >= 4) return 'high';
-    if (range <= REGULAR_VARIABILITY_RANGE) return 'low';
+    if (range > regularRange) return 'high';
+    if (range <= STEADY_VARIABILITY_RANGE) return 'low';
     return 'medium';
   };
+  // Typical length outside the normal range (24–38 adults, 21–45 teens).
+  const outsideNormalRange =
+    med != null && observed >= 2 ? med < normalRange.min || med > normalRange.max : false;
 
   const base = {
     cyclesAnalyzed: observed,
@@ -211,6 +261,9 @@ export const analyzeCycleHistory = (cycleLengths = [], configuredCycleLength = 2
     rangeCycleLength: range,
     robustSpread,
     outliersRemoved,
+    regularRange,
+    normalRange,
+    outsideNormalRange,
   };
 
   // Not enough real cycles yet — lean on the configured length, flag low
@@ -233,7 +286,7 @@ export const analyzeCycleHistory = (cycleLengths = [], configuredCycleLength = 2
   if (variability === 'high') {
     return {
       ...base,
-      predictedCycleLength: clamp(Math.round(med), MIN_CYCLE_LENGTH, MAX_CYCLE_LENGTH),
+      predictedCycleLength: clamp(Math.round(med), MIN_PLAUSIBLE_CYCLE, MAX_PLAUSIBLE_CYCLE),
       method: 'irregular_range',
       confidence: observed >= RECENT_CYCLE_WINDOW ? 'medium' : 'low',
       variability,
@@ -248,11 +301,11 @@ export const analyzeCycleHistory = (cycleLengths = [], configuredCycleLength = 2
       ...base,
       predictedCycleLength: clamp(
         Math.round(weightedRecentMean(recent)),
-        MIN_CYCLE_LENGTH,
-        MAX_CYCLE_LENGTH,
+        MIN_PLAUSIBLE_CYCLE,
+        MAX_PLAUSIBLE_CYCLE,
       ),
       method: 'historical_weighted',
-      confidence: variability === 'low' ? 'high' : 'medium',
+      confidence: variability === 'low' && !outsideNormalRange ? 'high' : 'medium',
       variability,
       isRegular: true,
     };
@@ -260,7 +313,7 @@ export const analyzeCycleHistory = (cycleLengths = [], configuredCycleLength = 2
 
   return {
     ...base,
-    predictedCycleLength: clamp(Math.round(med), MIN_CYCLE_LENGTH, MAX_CYCLE_LENGTH),
+    predictedCycleLength: clamp(Math.round(med), MIN_PLAUSIBLE_CYCLE, MAX_PLAUSIBLE_CYCLE),
     method: 'historical_median',
     confidence: 'medium',
     variability,
@@ -310,7 +363,7 @@ export const computeCyclePredictions = (settings, logs = [], options = {}) => {
     options = logs;
     logs = [];
   }
-  return predictCycleFromHistory(settings, prepareCycleHistory(settings, logs), options);
+  return predictCycleFromHistory(settings, prepareCycleHistory(settings, logs, options), options);
 };
 
 /**
@@ -320,15 +373,74 @@ export const computeCyclePredictions = (settings, logs = [], options = {}) => {
  * it once and call predictCycleFromHistory per date; the result is exactly
  * computeCyclePredictions(settings, logs, options).
  */
-export const prepareCycleHistory = (settings, logs = []) => {
+export const prepareCycleHistory = (settings, logs = [], { age } = {}) => {
   const episodes = derivePeriodEpisodes(logs);
   const cycleLengths = computeCycleLengths(episodes);
-  const analysis = analyzeCycleHistory(cycleLengths, settings.cycleLength || 28);
-  return { episodes, analysis };
+  const analysis = analyzeCycleHistory(cycleLengths, settings.cycleLength || 28, { age });
+  // Newest day with any log: tells "period is late" (still logging) apart
+  // from "stopped using the app" (stale).
+  const lastLogKey = logs.reduce(
+    (max, log) => (log?.dateKey && log.dateKey > max ? log.dateKey : max),
+    '',
+  );
+  return { episodes, analysis, lastLogKey: lastLogKey || null };
+};
+
+/**
+ * The cycle (keyed by its start dateKey) and phase a *past* day belonged to,
+ * for per-log analysis like symptom predictions. predictCycleFromHistory
+ * always counts from the latest logged period, so a day before it clamps to
+ * cycle day 1 and every older log lands in one "period" bucket. Here a day
+ * inside the logged history belongs to the last period that started on or
+ * before it, with its phase measured against that cycle's real length (to the
+ * next logged start). A gap far longer than the usual cycle means periods
+ * went unlogged, so it is split into usual-length cycles. Days after the last
+ * logged period use the projected current cycle; days before the first one
+ * return null (there's no cycle to place them in).
+ */
+export const cycleForDate = (settings, history, dateKey) => {
+  const { episodes, analysis } = history;
+  const periodLength = settings.periodLength || 5;
+  let index = -1;
+  for (let i = episodes.length - 1; i >= 0; i -= 1) {
+    if (episodes[i].startKey <= dateKey) {
+      index = i;
+      break;
+    }
+  }
+  if (index === -1 && episodes.length > 0) return null;
+  if (index === -1 || index === episodes.length - 1) {
+    const projected = predictCycleFromHistory(settings, history, {
+      today: dateFromDateKey(dateKey),
+    });
+    return {
+      cycleKey: dateToDateKey(new Date(projected.currentPeriodStartDateISO)),
+      phase: projected.currentPhase,
+    };
+  }
+
+  const usual = analysis.predictedCycleLength;
+  let start = dateFromDateKey(episodes[index].startKey);
+  let cycleLength = diffDays(dateFromDateKey(episodes[index + 1].startKey), start);
+  let cycleDay = diffDays(dateFromDateKey(dateKey), start) + 1;
+  if (cycleLength > usual * 1.6) {
+    const skipped = Math.floor((cycleDay - 1) / usual);
+    start = addDays(start, skipped * usual);
+    cycleDay -= skipped * usual;
+    cycleLength = usual;
+  }
+  return {
+    cycleKey: dateToDateKey(start),
+    phase: getCyclePhase(cycleDay, periodLength, cycleLength),
+  };
 };
 
 /** computeCyclePredictions for a prepared history (see prepareCycleHistory). */
-export const predictCycleFromHistory = (settings, { episodes, analysis }, options = {}) => {
+export const predictCycleFromHistory = (
+  settings,
+  { episodes, analysis, lastLogKey = null },
+  options = {},
+) => {
   const periodLength = settings.periodLength || 5;
   // Callers answering a request pass the person's local today (clientToday).
   const today = options.today ? new Date(options.today) : new Date();
@@ -354,38 +466,61 @@ export const predictCycleFromHistory = (settings, { episodes, analysis }, option
     daysSinceLastActualPeriod != null
       ? Math.max(0, Math.floor(daysSinceLastActualPeriod / cycleLength))
       : 0;
-  const isStale = skippedCycles >= 2;
+  // Late, not a new cycle: once the expected day has passed with no period
+  // logged, the cycle keeps counting (day 31 of a 30-day cycle) and the
+  // period is reported as late. Rolling forward to a fresh cycle would show
+  // a period nobody logged and move every date. Only when the person has
+  // clearly stopped logging (nothing for a week) and a whole extra cycle
+  // has gone by do we project forward again, flagged as stale.
+  const expectedStart = addDays(anchor, cycleLength);
+  const overdueDays = diffDays(today, expectedStart);
+  const stillLogging =
+    lastLogKey != null && diffDays(today, dateFromDateKey(lastLogKey)) <= STILL_LOGGING_DAYS;
+  const holdAsLate = overdueDays >= 0 && (stillLogging || overdueDays < cycleLength);
+  const isStale = !holdAsLate && skippedCycles >= 2;
 
   let nextStart = new Date(anchor);
-  while (diffDays(nextStart, today) <= 0) {
-    nextStart = addDays(nextStart, cycleLength);
+  if (holdAsLate) {
+    nextStart = expectedStart;
+  } else {
+    while (diffDays(nextStart, today) <= 0) {
+      nextStart = addDays(nextStart, cycleLength);
+    }
   }
+  const daysLate = holdAsLate ? overdueDays : 0;
+  const isLate = daysLate >= 1;
 
   const previousStart = addDays(nextStart, -cycleLength);
   const cycleDay = Math.max(1, diffDays(today, previousStart) + 1);
   const phase = getCyclePhase(cycleDay, periodLength, cycleLength);
+  // Ovulation ≈ 14 days before the next period (the luteal phase is the
+  // steady part of the cycle): cycle day L−13, i.e. start + L − 14.
   const ovulationDate = addDays(previousStart, cycleLength - 14);
+  // Fertile window: the 5 days before ovulation and ovulation day itself.
   const fertileStart = addDays(ovulationDate, -5);
-  const fertileEnd = addDays(ovulationDate, 1);
+  const fertileEnd = ovulationDate;
   // periodLength is inclusive of the start day: a 6-day period is start + 5.
   const periodEnd = addDays(previousStart, periodLength - 1);
   const nextPeriodEnd = addDays(nextStart, periodLength - 1);
 
   // Prediction window, sized to how variable the user's cycles are:
-  //   high   → the real spread between the shortest and longest recent cycle
+  //   high   → ±1.5 × the robust spread (min ±3), capped at the real span
   //   medium → predicted ± robust spread (MAD-based), min ±2 days
-  //   low    → a tight ±1-day "estimate" band
+  //   low    → ±2 days (even steady cycles move by a couple of days)
   // A stale anchor widens the window too, since a many-cycles-forward
   // projection is inherently less precise.
   let windowRadius;
   if (analysis.variability === 'high') {
+    // ~±1.5 SD of the typical spread (robust SD from the MAD), at least ±3
+    // and never wider than the real shortest–longest span.
     const spanMin = analysis.minCycleLength ?? cycleLength;
     const spanMax = analysis.maxCycleLength ?? cycleLength;
-    windowRadius = Math.max(cycleLength - spanMin, spanMax - cycleLength, 2);
+    const span = Math.max(cycleLength - spanMin, spanMax - cycleLength, 3);
+    windowRadius = Math.min(span, Math.max(3, Math.round(1.5 * (analysis.robustSpread ?? 0))));
   } else if (analysis.variability === 'medium') {
     windowRadius = Math.max(2, analysis.robustSpread ?? 2);
   } else {
-    windowRadius = 1;
+    windowRadius = 2;
   }
   if (isStale) windowRadius += Math.min(skippedCycles, 4);
 
@@ -422,6 +557,9 @@ export const predictCycleFromHistory = (settings, { episodes, analysis }, option
     fertileWindowEndISO: fertileEnd.toISOString(),
     fertileWindowRange: `${formatDisplayDate(fertileStart, { month: 'short' })}-${formatDisplayDate(fertileEnd, { month: 'short' })}`,
     fertileWindowDuration: '6 day window',
+    // Peak fertility: the 2 days before ovulation (Wilcox 1995).
+    peakFertileStartISO: addDays(ovulationDate, -2).toISOString(),
+    peakFertileEndISO: addDays(ovulationDate, -1).toISOString(),
     fertileWindowReliable: ovulationReliable,
     periodLength,
     cycleLength,
@@ -448,10 +586,29 @@ export const predictCycleFromHistory = (settings, { episodes, analysis }, option
     maxCycleLength: analysis.maxCycleLength,
     outliersRemoved: analysis.outliersRemoved,
 
+    // ── Late period (no period logged since it was due) ──
+    isLate,
+    daysLate,
     // ── Staleness (user stopped logging) ──
     daysSinceLastActualPeriod,
     skippedCycles,
     isStale,
+
+    // ── Things worth a doctor's look (ACOG / FIGO) ──
+    regularRange: analysis.regularRange,
+    normalCycleRange: analysis.normalRange,
+    outsideNormalRange: analysis.outsideNormalRange,
+    lastPeriodDays: lastEpisode
+      ? diffDays(dateFromDateKey(lastEpisode.endKey), dateFromDateKey(lastEpisode.startKey)) + 1
+      : null,
+    longPeriod: lastEpisode
+      ? diffDays(dateFromDateKey(lastEpisode.endKey), dateFromDateKey(lastEpisode.startKey)) + 1 >
+        MAX_NORMAL_PERIOD_DAYS
+      : false,
+    noPeriodTooLong:
+      isLate &&
+      daysSinceLastActualPeriod != null &&
+      daysSinceLastActualPeriod >= NO_PERIOD_DOCTOR_DAYS,
 
     isDataHighlyAccurate: confidence === 'high',
   };

@@ -4,7 +4,13 @@
  * __tests__/genz.test.js; the controllers only load data and call these.
  */
 import { randomInt } from 'node:crypto';
-import { getCyclePhase, derivePeriodEpisodes, computeCycleLengths } from './cycle.js';
+import {
+  getCyclePhase,
+  derivePeriodEpisodes,
+  computeCycleLengths,
+  MIN_PLAUSIBLE_CYCLE,
+  MAX_PLAUSIBLE_CYCLE,
+} from './cycle.js';
 import { dateFromDateKey } from './apiHelpers.js';
 import { CYCLE_SYNC_CATEGORIES, PHASE_ERAS } from '../constants/cycleSync.js';
 
@@ -271,9 +277,11 @@ export const buildWrapped = (allLogs = [], { fromKey, toKey, label, period }, to
   const episodes = derivePeriodEpisodes(allLogs);
   const lengths = computeCycleLengths(episodes);
   // Cycle lengths whose *ending* period start falls in the range.
-  const inRangeLengths = lengths.filter((_, i) => {
+  const inRangeLengths = lengths.filter((length, i) => {
     const endStart = episodes[i + 1]?.startKey;
-    return endStart && endStart >= fromKey && endStart <= toKey;
+    // A gap that can't be one cycle is a missed log, not a cycle length.
+    const plausible = length >= MIN_PLAUSIBLE_CYCLE && length <= MAX_PLAUSIBLE_CYCLE;
+    return plausible && endStart && endStart >= fromKey && endStart <= toKey;
   });
   const periodsStarted = episodes.filter((e) => e.startKey >= fromKey && e.startKey <= toKey);
 

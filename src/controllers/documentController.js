@@ -13,6 +13,9 @@ import {
 import { broadcastToRoom } from '../config/websocket.js';
 import logger from '../utils/logger.js';
 import { aiAllowed } from '../utils/privacy.js';
+import { withAiSafety } from '../utils/aiSafety.js';
+import { URGENT_COMPANION_REPLY, hasUrgentPattern } from '../utils/companionChat.js';
+import { syncPrescriptionDocuments } from '../utils/prescriptionDocumentStore.js';
 
 /**
  * A document as clients see it: `fileUrl` is a fresh 10-minute signed link
@@ -183,6 +186,8 @@ export const listDocuments = async (req, res, next) => {
     }
 
     const sortOrder = sort === 'asc' ? 1 : -1;
+    // Doctors' prescriptions are saved in as documents; catch up any missing.
+    if (page === 1) await syncPrescriptionDocuments(req.userId);
 
     const [documents, total] = await Promise.all([
       Document.find(filter)
@@ -231,6 +236,20 @@ export const deleteDocument = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Invalid document id');
     }
 
+    const existing = await Document.findOne({ _id: id, userId: req.userId })
+      .select('source')
+      .lean();
+    if (!existing) {
+      return sendError(res, HTTP_STATUS.NOT_FOUND, 'Document not found');
+    }
+    // A doctor's prescription is part of the consultation record.
+    if (existing.source === 'consultation') {
+      return sendError(
+        res,
+        HTTP_STATUS.FORBIDDEN,
+        "Prescriptions from your Nura doctor can't be deleted",
+      );
+    }
     const document = await Document.findOneAndDelete({ _id: id, userId: req.userId });
     if (!document) {
       return sendError(res, HTTP_STATUS.NOT_FOUND, 'Document not found');
@@ -262,6 +281,8 @@ export const summarizeDocuments = async (req, res, next) => {
     }
     end.setHours(23, 59, 59, 999);
 
+    // Doctors' prescriptions are documents too: make sure they're saved first.
+    await syncPrescriptionDocuments(req.userId);
     const documents = await Document.find({
       userId: req.userId,
       documentDate: { $gte: start, $lte: end },
@@ -278,8 +299,9 @@ export const summarizeDocuments = async (req, res, next) => {
         {
           role: 'system',
           content:
-            "You are a careful medical-records assistant summarizing a patient's own uploaded reports, prescriptions, and bills for their personal reference. Summarize clearly in plain language, grouped by date. Call out abnormal lab values, medication changes, and any follow-up actions mentioned. Never invent facts that are not present in the documents. End with a short note that this is not medical advice." +
-            languageInstruction(language),
+            withAiSafety(
+              "You are a careful medical-records assistant summarizing a patient's own reports, prescriptions (uploaded, or written by their Nura doctor), and bills for their personal reference. Summarize clearly in plain language, grouped by date. Call out abnormal lab values, medication changes, and any follow-up actions mentioned. Put any clearly abnormal or critical value first, marked as needing prompt review with a doctor. Never invent facts that are not present in the documents. End with a short note that this is not medical advice.",
+            ) + languageInstruction(language),
         },
         {
           role: 'user',
@@ -339,6 +361,7 @@ export const sendChatMessage = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'A message is required');
     }
 
+    await syncPrescriptionDocuments(req.userId);
     const [documents, recentHistory] = await Promise.all([
       Document.find({ userId: req.userId }).sort({ documentDate: -1 }).limit(MAX_CONTEXT_DOCS),
       DocumentChatMessage.find({ userId: req.userId }).sort({ createdAt: -1 }).limit(20),
@@ -350,9 +373,12 @@ export const sendChatMessage = async (req, res, next) => {
       text: message.trim(),
     });
 
+    // Deterministic urgent check (same patterns as Nura Companion): the urgent
+    // guidance is always put first, whatever the model says.
+    const urgentPrefix = hasUrgentPattern(message) ? `${URGENT_COMPANION_REPLY}\n\n` : '';
+
     if (!documents.length) {
-      const reply =
-        "I don't see any uploaded documents yet. Add a report, prescription, or bill from the Documents screen and I can help you understand it.";
+      const reply = `${urgentPrefix}I don't see any uploaded documents yet. Add a report, prescription, or bill from the Documents screen and I can help you understand it.`;
       const assistantMessage = await DocumentChatMessage.create({
         userId: req.userId,
         role: 'assistant',
@@ -366,19 +392,20 @@ export const sendChatMessage = async (req, res, next) => {
 
     const conversation = recentHistory.reverse().map((m) => ({ role: m.role, content: m.text }));
 
-    const reply = await createChatCompletion({
+    const aiReply = await createChatCompletion({
       messages: [
         {
           role: 'system',
-          content: `You are a precise medical-records assistant answering a patient's questions about their own uploaded documents below. Answer exactly what was asked, using only these documents and directly relevant general health knowledge — do not pad the answer with unrelated details, background, or repeated caveats. Be concise and correct. Only mention that you are not a doctor, or flag something as urgent, when it is directly relevant to the question (e.g. the user is asking for a diagnosis or treatment decision, or a value looks dangerous) — do not add it as a default disclaimer on every reply. If the answer isn't in the documents, say so plainly and stop there. You may use markdown (lists, bold) when it makes the answer clearer.${languageInstruction(
-            language,
-          )}\n\nThe patient's documents:\n\n${buildDocumentContext(documents)}`,
+          content: `${withAiSafety(
+            "You are a precise medical-records assistant answering a patient's questions about their own documents below: files they uploaded and prescriptions written by their Nura doctor. Answer exactly what was asked, using only these documents and directly relevant general health knowledge — do not pad the answer with unrelated details, background, or repeated caveats. Be concise and correct. Only mention that you are not a doctor when it is directly relevant to the question (e.g. the user is asking for a diagnosis or treatment decision) — do not add it as a default disclaimer on every reply. If a value in the documents is clearly abnormal or critical, always say so and advise prompt review with a doctor, even if the question was about something else. If the answer isn't in the documents, say so plainly and stop there. You may use markdown (lists, bold) when it makes the answer clearer.",
+          )}${languageInstruction(language)}\n\nThe patient's documents:\n\n${buildDocumentContext(documents)}`,
         },
         ...conversation,
         { role: 'user', content: message.trim() },
       ],
       maxTokens: 2000,
     });
+    const reply = `${urgentPrefix}${aiReply}`;
 
     const assistantMessage = await DocumentChatMessage.create({
       userId: req.userId,

@@ -3,17 +3,42 @@
  * the patient app turns into a PDF (expo-print) and the doctor portal prints.
  * Pure: everything it shows comes in as arguments, nothing is looked up.
  *
- * Laid out like a clinic prescription pad: the doctor's letterhead
+ * Laid out like a clinic prescription pad, on Nura's letterhead (the real
+ * mark from src/assets/brand, inlined): the doctor's details
  * (qualifications, registration), the patient line, complaints and
  * diagnosis, ℞ with a medicine table, investigations, advice and follow-up,
- * then a signature with a digital seal and the notes a pharmacist expects
+ * then an electronic signature with a digital seal (never a fake handwritten
+ * one) and the notes a pharmacist expects
  * on an online prescription (Telemedicine Practice Guidelines, India, 2020).
  * A prescription without the structured `rx` (older ones) prints its text.
  */
 
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { parseDoseSchedule } from '../utils/prescriptionRx.js';
 
 const BRAND = '#C2416F';
+
+/** The Nura mark, inlined so the page prints with no network fetch (~20 KB). */
+export const NURA_MARK_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'assets',
+  'brand',
+  'nura-mark.png',
+);
+let markDataUri = null;
+const nuraMarkDataUri = () => {
+  if (markDataUri === null) {
+    try {
+      markDataUri = `data:image/png;base64,${fs.readFileSync(NURA_MARK_PATH).toString('base64')}`;
+    } catch {
+      markDataUri = '';
+    }
+  }
+  return markDataUri;
+};
 const DEFAULT_ZONE = 'Asia/Kolkata';
 
 const escapeHtml = (value) =>
@@ -208,6 +233,7 @@ export const renderPrescriptionHtml = ({ consultation, doctor, patient, issuedAt
     color: ${BRAND}; font-family: Georgia, serif; font-size: 260pt; font-weight: 700; left: 50%; line-height: 1;
     opacity: 0.035; pointer-events: none; position: absolute; top: 46%; transform: translate(-50%, -50%);
   }
+  .watermark-img { height: 120mm; left: 50%; opacity: 0.045; pointer-events: none; position: absolute; top: 50%; transform: translate(-50%, -50%); width: auto; }
   .band { background: linear-gradient(90deg, ${BRAND}, #9E2F58); border-radius: 3px; height: 6px; margin-bottom: 14px; }
 
   /* Letterhead */
@@ -219,7 +245,8 @@ export const renderPrescriptionHtml = ({ consultation, doctor, patient, issuedAt
   .clinic { align-items: flex-end; display: flex; flex-direction: column; text-align: right; }
   .logo { align-items: center; display: flex; gap: 8px; }
   .mark { align-items: center; background: ${BRAND}; border-radius: 9px; color: #fff; display: flex; font-family: Georgia, serif; font-size: 16pt; font-weight: 700; height: 34px; justify-content: center; width: 34px; }
-  .logo b { display: block; font-size: 12pt; text-align: left; }
+  .mark-img { height: 46px; width: auto; }
+  .logo b { color: ${BRAND}; display: block; font-size: 17pt; font-weight: 800; letter-spacing: -0.01em; line-height: 1.05; text-align: left; }
   .logo small { color: #736A79; display: block; font-size: 7.5pt; letter-spacing: 0.1em; text-align: left; text-transform: uppercase; }
   .clinic p { color: #5E5566; font-size: 8.5pt; margin: 6px 0 0; }
   .rule { border: 0; border-top: 1.5px solid #1E1823; margin: 12px 0 0; }
@@ -272,10 +299,10 @@ export const renderPrescriptionHtml = ({ consultation, doctor, patient, issuedAt
   .signature { align-items: flex-end; display: flex; gap: 12px; }
   .seal { height: 92px; opacity: 0.9; transform: rotate(-8deg); width: 92px; }
   .who { min-width: 58mm; text-align: center; }
-  .autograph {
-    color: #1F2A5C; font-family: "Snell Roundhand", "Segoe Script", "Brush Script MT", "URW Chancery L", cursive;
-    font-size: 21pt; line-height: 1.1; margin-bottom: 2px; white-space: nowrap;
-  }
+  .esign { background: #FBF4F7; border: 1px solid #F1D6E1; border-radius: 6px; margin-bottom: 6px; padding: 6px 10px; text-align: center; }
+  .esign span { color: #736A79; display: block; font-size: 7pt; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+  .esign b { color: ${BRAND}; display: block; font-size: 11pt; margin-top: 1px; }
+  .esign small { color: #5E5566; display: block; font-size: 7.5pt; }
   .who .line { border-top: 1px solid #1E1823; padding-top: 4px; }
   .who b { display: block; font-size: 10pt; }
   .who small { color: #5E5566; display: block; font-size: 8pt; }
@@ -302,7 +329,7 @@ export const renderPrescriptionHtml = ({ consultation, doctor, patient, issuedAt
 </head>
 <body>
 <main class="sheet">
-  <div class="watermark" aria-hidden="true">&#8478;</div>
+  ${nuraMarkDataUri() ? `<img class="watermark-img" src="${nuraMarkDataUri()}" alt="" aria-hidden="true" />` : '<div class="watermark" aria-hidden="true">&#8478;</div>'}
   <div class="band"></div>
   <header class="head">
     <div class="doctor">
@@ -313,8 +340,8 @@ export const renderPrescriptionHtml = ({ consultation, doctor, patient, issuedAt
     </div>
     <div class="clinic">
       <div class="logo">
-        <div class="mark">N</div>
-        <div><b>The Nura Care</b><small>Online women's health clinic</small></div>
+        ${nuraMarkDataUri() ? `<img class="mark-img" src="${nuraMarkDataUri()}" alt="" />` : '<div class="mark">N</div>'}
+        <div><b>Nura</b><small>The Nura Care · Women's health clinic</small></div>
       </div>
       <p>${doctor?.hospital ? `${escapeHtml(doctor.hospital)}<br />` : ''}thenura.care · hello@thenura.care</p>
     </div>
@@ -342,9 +369,12 @@ export const renderPrescriptionHtml = ({ consultation, doctor, patient, issuedAt
     <div class="signature">
       ${sealSvg(sealDate)}
       <div class="who">
-        <div class="autograph">${escapeHtml(doctorName.replace(/^Dr\.?\s+/i, ''))}</div>
-        <div class="line">
+        <div class="esign">
+          <span>Electronically signed by</span>
           <b>${escapeHtml(doctorName)}</b>
+          <small>${escapeHtml(issuedStamp)}</small>
+        </div>
+        <div class="line">
           ${qualifications ? `<small>${escapeHtml(qualifications)}</small>` : ''}
           ${registration ? `<small>Reg. No. ${escapeHtml(registration)}</small>` : ''}
         </div>

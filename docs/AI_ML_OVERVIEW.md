@@ -206,9 +206,16 @@ Three separate AI-touching steps, each independently gated:
    actually relevant) and to say plainly when the answer isn't in the
    documents.
 
-Neither summarize nor chat happens without at least one uploaded document —
-there's a canned "no documents yet" reply if the vault is empty, no wasted
-AI call.
+Summarize and chat (and the health report below) also read **prescriptions
+from Nura's doctors**, because they're saved as documents:
+`utils/prescriptionDocumentStore.js` writes each one as a private PDF
+`Document` (`source: 'consultation'`, the prescription text as
+`extractedText`) when the doctor saves it, and `syncPrescriptionDocuments`
+catches up any missing ones before each of these runs. No OCR is needed.
+
+Neither summarize nor chat happens without at least one document (upload or
+doctor's prescription) — there's a canned "no documents yet" reply if there
+are none, no wasted AI call.
 
 ---
 
@@ -271,7 +278,8 @@ and voice-agent brains described above.
 
 - **Health Report AI analysis** (`controllers/reportController.js`) — when
   generating the downloadable/viewable health report (`getHealthReport`), if
-  there's anything to analyze (uploaded documents and/or logged cycle data),
+  there's anything to analyze (uploaded documents, prescriptions from Nura's
+  doctors, saved as documents) and/or logged cycle data),
   one `createChatCompletion` call summarizes both into a plain-language
   analysis (abnormal values, medication changes, symptom patterns, follow-up
   actions), always ending with a "not medical advice" note. This is a bonus

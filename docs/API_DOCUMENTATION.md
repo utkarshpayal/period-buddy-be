@@ -234,6 +234,8 @@ Every sign-in is a revocable session (`utils/sessions.js`). App sessions last `J
 
 Medical documents are private. `fileUrl` in document responses is a signed link valid for 10 minutes; ask for the document again (`GET /api/documents/:id`) to get a fresh one.
 
+Prescriptions written by a Nura doctor are saved into the patient's documents automatically (a PDF with `docType: "prescription"`, `source: "consultation"` and its `consultationId`; uploads have `source: "upload"`). The list's first page, `POST /api/documents/summarize`, document chat and `GET /api/reports/health-report` first save any that are missing. `DELETE /api/documents/:id` answers `403` for these.
+
 ### DELETE `/api/auth/delete-account`
 
 Payload:
@@ -545,15 +547,42 @@ Response:
     "ovulationDate": "July 15",
     "ovulationDateISO": "2026-07-15T00:00:00.000Z",
     "ovulationDaysAway": 4,
-    "fertileWindowRange": "Jul 10-Jul 16",
+    "fertileWindowRange": "Jul 10-Jul 15",
     "fertileWindowDuration": "6 day window",
+    "peakFertileStartISO": "2026-07-13T00:00:00.000Z",
+    "peakFertileEndISO": "2026-07-14T00:00:00.000Z",
     "periodLength": 5,
     "cycleLength": 28,
+    "isRegular": true,
+    "isLate": false,
+    "daysLate": 0,
+    "outsideNormalRange": false,
+    "normalCycleRange": { "min": 24, "max": 38 },
+    "lastPeriodDays": 5,
+    "longPeriod": false,
+    "noPeriodTooLong": false,
     "isDataHighlyAccurate": true,
     "analyticsData": [{ "month": "Jul", "length": 28, "daysLogged": 6 }]
   }
 }
 ```
+
+Medical rules behind the numbers (`utils/cycle.js`, tested in `utils/__tests__/cyclePrediction.test.js`):
+
+- **Cycle day 1** is the first day of real flow; spotting before it is pre-menstrual, and spotting alone never starts a period. Up to 2 unlogged days inside a period don't split it.
+- **Ovulation** is 14 days before the next period (cycle day L−13). The **fertile window** is the 5 days before ovulation plus ovulation day (Wilcox 1995); `peakFertile*` is the 2 days before ovulation.
+- **Late periods:** once the expected day passes with no period logged, the cycle keeps counting (`currentCycleDay` > `cycleLength`, phase `luteal`), `nextPeriodDate*` stays on the expected day, and `isLate`/`daysLate` are set. Only when nothing has been logged for a week *and* a whole extra cycle has passed does the prediction roll forward, flagged `isStale`. `noPeriodTooLong` = 90+ days without a period while still logging.
+- **Regularity (FIGO 2018):** `isRegular` when shortest-to-longest recent cycle differ by ≤ 7 days (≤ 9 under 26 / over 41, from the user's birthday). Gaps outside 15–60 days, and gaps under 60% of the usual cycle (spotting between periods), are left out of the statistics.
+- **Normal range:** `outsideNormalRange` when the typical cycle is outside 24–38 days (adults) or 21–45 (under 18). `longPeriod` when the last period lasted over 8 days.
+- **Window:** `predictedPeriodStartEarliestISO`/`LatestISO` is at least ±2 days; for irregular cycles ±1.5× the robust spread (min ±3, capped at the real span).
+
+### GET `/api/cycle/symptom-predictions`
+
+`{ nextCycleStart, predictions: [{ symptom, phase, likelihood, occurrences, cyclesAnalyzed }], cyclesAnalyzed }`. Each log is placed in its own cycle and phase (`cycleForDate`). Per phase, `cyclesAnalyzed` is the number of finished cycles with any log in that phase, and `likelihood` = `occurrences / cyclesAnalyzed`. The cycle in progress isn't counted. Needs 3+ finished cycles overall (else `predictions: []`), and a symptom shows only when logged in that phase in 2+ cycles. The top-level `cyclesAnalyzed` is the total number of finished cycles.
+
+### POST `/api/screening/assess` (symptom checker)
+
+Body `{ condition: "pcos" | "endometriosis" | "fibroid" | "thyroid", answers: { [questionId]: number } }` (yes/no questions: any positive number is yes; scale 0–3). Response adds two fields older clients ignore: `redFlags` (question ids whose answer needs a doctor whatever the score: severe pain, pain outside periods or with sex, very heavy flow, anaemia signs, a neck lump) and `note` (e.g. adult PCOS criteria don't apply to teens). Any red flag, or irregular periods plus a sign of high androgens for PCOS, raises `riskLevel` to at least `moderate` (`utils/screeningScoring.js`). Emergency signs are screened in the app before any questionnaire (`lib/redFlagScreen.ts`).
 
 ### POST `/api/cycle/log`
 

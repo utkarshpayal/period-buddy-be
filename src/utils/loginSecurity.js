@@ -23,8 +23,9 @@ import logger from './logger.js';
  *   code are deployed.
  * - "New sign-in" email when an account signs in on a device it hasn't
  *   used before.
- * - Test account: TEST_LOGIN_EMAIL always gets TEST_LOGIN_CODE instead of an
- *   emailed one. The password is still checked.
+ * - Test accounts: the emails in TEST_LOGIN_EMAILS (default: the shared test
+ *   doctor) always get TEST_LOGIN_CODE instead of an emailed one. The
+ *   password is still checked. Add staff emails only on staging.
  */
 
 export const LOGIN_MAX_FAILURES = Math.max(3, Number(process.env.LOGIN_MAX_FAILURES) || 5);
@@ -110,13 +111,21 @@ const emailCode = async (user, code) => {
   }
 };
 
-// Shared test doctor account: always signs in with this code, no email sent.
-const TEST_LOGIN_EMAIL = 'jenony@forexzig.com';
+// Test accounts: always sign in with this code, no email sent.
+// TEST_LOGIN_EMAILS (comma-separated) replaces the default list.
+const DEFAULT_TEST_LOGIN_EMAILS = 'jenony@forexzig.com';
 const TEST_LOGIN_CODE = '000000';
+export const testLoginEmails = (raw = process.env.TEST_LOGIN_EMAILS ?? DEFAULT_TEST_LOGIN_EMAILS) =>
+  String(raw)
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
 const testCodeFor = (email) =>
-  String(email ?? '')
-    .trim()
-    .toLowerCase() === TEST_LOGIN_EMAIL
+  testLoginEmails().includes(
+    String(email ?? '')
+      .trim()
+      .toLowerCase(),
+  )
     ? TEST_LOGIN_CODE
     : null;
 

@@ -95,3 +95,10 @@ test('scoped call tokens only reach POST /api/cycle/log', async () => {
   assert.equal(scopeAllows('checkin_call', at('GET', '/api/cycle', '/log')), false);
   assert.equal(scopeAllows('checkin_webhook', at('POST', '/api/cycle', '/log')), false);
 });
+
+test('test login emails: default is the test doctor, TEST_LOGIN_EMAILS replaces it', async () => {
+  const { testLoginEmails } = await import('../loginSecurity.js');
+  assert.deepEqual(testLoginEmails('jenony@forexzig.com'), ['jenony@forexzig.com']);
+  assert.deepEqual(testLoginEmails(' A@x.com, ,b@y.com '), ['a@x.com', 'b@y.com']);
+  assert.deepEqual(testLoginEmails(''), []);
+});

@@ -42,7 +42,7 @@ const qaData = [
     question: 'What is PCOS?',
     slug: 'what-is-pcos',
     answer:
-      'Polycystic Ovary Syndrome (PCOS) is a hormonal disorder that causes enlarged ovaries with small cysts. It can cause irregular periods, excess androgen levels, and difficulty conceiving.',
+      'Polycystic Ovary Syndrome (PCOS) is a common hormonal condition. It is usually diagnosed when 2 of these 3 are present: irregular or missed periods, signs of high androgens (extra hair growth, acne, or a blood test), and many small follicles on an ultrasound. These “cysts” are really follicles, and not everyone with PCOS has them. PCOS can also make it harder to get pregnant.',
     category: 'health',
     tags: ['PCOS', 'hormones'],
   },
@@ -50,7 +50,7 @@ const qaData = [
     question: 'How can I track my ovulation?',
     slug: 'how-can-i-track-my-ovulation',
     answer:
-      'You can track ovulation using: 1) Basal Body Temperature (BBT), 2) Ovulation prediction kits, 3) Cervical mucus monitoring, 4) Calendar tracking apps like Period Buddy.',
+      'You can track ovulation using: 1) Basal Body Temperature (BBT), 2) Ovulation prediction kits, 3) Cervical mucus monitoring, 4) Calendar tracking apps like Period Buddy (these give estimates, not a guarantee).',
     category: 'tracking',
     tags: ['ovulation', 'tracking'],
   },
@@ -115,11 +115,11 @@ const blogData = [
     content: [
       'Your menstrual cycle is a monthly rhythm driven by four hormones — oestrogen, progesterone, luteinising hormone (LH) and follicle-stimulating hormone (FSH). It is easiest to understand in four phases.',
       '',
-      '1. Menstrual phase (roughly days 1–5). Hormone levels are at their lowest and the uterine lining sheds. Energy often dips, and rest is genuinely useful here rather than a sign of weakness.',
+      '1. Menstrual phase (roughly days 1–5). Your period starts when oestrogen and progesterone drop and the uterine lining sheds. Some people feel low on energy, and resting is fine — it is not a sign of weakness.',
       '',
-      '2. Follicular phase (roughly days 6–13). Oestrogen climbs as follicles mature. Many people notice rising energy, clearer skin and a brighter mood — a good window for harder workouts and demanding tasks.',
+      '2. Follicular phase (roughly days 6–13). Oestrogen climbs as follicles mature. Some people notice more energy, clearer skin or a brighter mood, but this varies a lot from person to person.',
       '',
-      '3. Ovulation (around day 14 in a 28-day cycle). LH surges and an egg is released. Libido and confidence often peak, and cervical mucus becomes clear and stretchy.',
+      '3. Ovulation (around day 14 in a 28-day cycle). LH surges and an egg is released. Some people notice higher libido, and cervical mucus becomes clear and stretchy.',
       '',
       '4. Luteal phase (roughly days 15–28). Progesterone rises then falls if there is no pregnancy. This is when PMS symptoms — bloating, tender breasts, cravings and mood changes — tend to appear.',
       '',
@@ -193,9 +193,9 @@ const blogData = [
       '',
       'During your period, iron is lost through bleeding, so iron-rich foods — leafy greens, lentils, beans, red meat if you eat it — paired with vitamin C help top you up. Warm, comforting meals are fine; this is not the week for punishing yourself.',
       '',
-      'In the follicular and ovulation phases, energy is usually higher. Protein and fresh produce support that natural momentum, and it is often the easiest time to cook and plan ahead.',
+      'In the follicular and ovulation phases, some people feel more energetic. Protein and fresh produce are good choices any week, and if you have more energy it can be an easy time to cook and plan ahead.',
       '',
-      'In the luteal phase, cravings for carbohydrates and sweet foods are common as progesterone rises and serotonin dips. Complex carbohydrates (oats, whole grains, fruit) and magnesium-rich foods (dark chocolate, nuts, seeds) can steady mood and energy better than highly processed sugar. The goal is not perfection — it is fewer big crashes.',
+      'In the luteal phase, some people feel hungrier and crave carbohydrates or sweet foods before their period. Complex carbohydrates (oats, whole grains, fruit) and foods like nuts and seeds keep you fuller for longer than highly processed sugar. The goal is not perfection — just eating in a way that feels good.',
     ].join('\n'),
     coverImageUrl:
       'https://images.unsplash.com/photo-1490645935967-10de6ba17061?q=80&w=600&auto=format&fit=crop',
@@ -315,9 +315,9 @@ const healthIssueData = [
     icon: 'pulse',
     color: '#f97316',
     summary:
-      'A progressive condition where tissue similar to the uterine lining extends onto pelvic organs, often generating extreme inflammatory cycles.',
+      'A condition where tissue similar to the uterine lining grows outside the uterus, often on pelvic organs. It can cause painful periods, pelvic pain and pain during sex. It can get worse over time for some people, but not always.',
     guide:
-      '1. Quantify pain indexes specifically during and outside menstruation.\n2. Record heavy bleeding logs and pain anchors.\n3. Integrate warm thermal compresses during muscle fatigue stages.\n4. Access advanced imaging pathways via certified gynaecology centers.',
+      '1. Log how bad your pain is, during and outside your period.\n2. Note heavy bleeding and when pain starts.\n3. A heat pad can ease pain when it flares.\n4. See a gynaecologist if pain stops you from doing everyday things.',
     imageUrl:
       'https://images.unsplash.com/photo-1551076805-e1869033e561?q=80&w=600&auto=format&fit=crop',
     order: 2,
@@ -328,9 +328,9 @@ const healthIssueData = [
     icon: 'apps-outline',
     color: '#fbbf24',
     summary:
-      'Benign muscular tissue developments within the uterine layers that can expand, introducing local pressure, heavy discharge parameters, and frequent fatigue.',
+      'Non-cancerous growths of muscle in or on the uterus. Some cause no symptoms; others cause heavy or long periods, pelvic pressure, and tiredness from blood loss.',
     guide:
-      '1. Log abnormal volume fluctuations or sudden unexpected flows.\n2. Track pelvic pressure indicators.\n3. Balance iron mineral tracking if high bleeding occurs.\n4. Confirm alignment using ultrasound diagnostics.',
+      '1. Log very heavy, long or unexpected bleeding.\n2. Track pelvic pressure.\n3. Heavy bleeding can lower your iron, so ask a doctor about a blood test.\n4. A doctor can check for fibroids with an ultrasound.',
     imageUrl:
       'https://images.unsplash.com/photo-1530026405186-ed1ea0ac7a63?q=80&w=600&auto=format&fit=crop',
     order: 3,
@@ -341,9 +341,9 @@ const healthIssueData = [
     icon: 'heart-outline',
     color: '#ec4899',
     summary:
-      'Dedicated structural insight suite tracking preliminary symptoms, embryonic biological intervals, nausea variations, and targeted lifestyle optimization.',
+      'Track early pregnancy symptoms like nausea and tiredness, and get simple tips for looking after yourself.',
     guide:
-      '1. Record accurate missed timeline milestones.\n2. Trace breast sensitivity or sudden sensory fluctuations.\n3. Prioritize clean organic hydration and recommended folate blocks.\n4. Validate baseline growth structures regularly.',
+      '1. Note the date of your missed period.\n2. Track breast tenderness or other new symptoms.\n3. Drink enough water and take folic acid as your doctor advises.\n4. Go to your regular pregnancy check-ups.',
     imageUrl:
       'https://images.unsplash.com/photo-1516627145497-ae6968895b74?q=80&w=600&auto=format&fit=crop',
     order: 4,
@@ -354,9 +354,9 @@ const healthIssueData = [
     icon: 'shuffle-outline',
     color: '#8b5cf6',
     summary:
-      'Persistent deviations from common cycle frequencies, frequently activated by cortisol stress triggers, underlying endocrine transitions, or sudden travel modifications.',
+      'Periods that come at unpredictable times. Common causes include pregnancy, stress, a big weight change or intense exercise, PCOS, thyroid problems, high prolactin, breastfeeding, perimenopause, and the first few years after periods start.',
     guide:
-      '1. Track structural start windows across consecutive 90-day segments.\n2. Correlate periods against sleep metrics and mental workloads.\n3. Reduce systemic inflammatory patterns using mindfulness modules.',
+      '1. Log your period start dates for at least 3 months.\n2. If your period is late and you have had sex, take a pregnancy test.\n3. See a doctor if you have had no period for 3 months, your cycles are often shorter than 21 or longer than 35 days, or bleeding lasts more than 8 days.',
     imageUrl:
       'https://images.unsplash.com/photo-1506126613408-eca07ce68773?q=80&w=600&auto=format&fit=crop',
     order: 5,
@@ -369,7 +369,7 @@ const healthIssueData = [
     summary:
       'The milestone endocrine evolution marking the completion of reproductive cycle intervals, accompanied by thermoregulation adjustments and sleep shifts.',
     guide:
-      '1. Log the spacing frequency of sudden hot flash intervals.\n2. Evaluate midnight wakefulness indices.\n3. Reinforce calcium and trace minerals configuration.\n4. Engage hormone replacement discussion if discomfort increases.',
+      '1. Log how often you get hot flushes.\n2. Note night waking and sleep changes.\n3. Get enough calcium and vitamin D for your bones.\n4. Talk to a doctor about treatment, including HRT, if symptoms bother you.\n5. Any bleeding 12 months or more after your last period needs a prompt check with a doctor.',
     imageUrl:
       'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?q=80&w=600&auto=format&fit=crop',
     order: 6,
@@ -387,7 +387,8 @@ const wellbeingData = [
       'Science-backed guidance on comfort parameters, physical safety maps, and clear boundary setup during active flows.',
     extendedGuide: [
       'Communication Hub: Discuss energy levels and flow intensity before establishing intimate touch.',
-      'Natural Relief: Endorphins released during climax can act as an organic painkiller for heavy tracking cramps.',
+      'Natural Relief: Some people find an orgasm eases cramps.',
+      'Stay Protected: You can still get pregnant or get an STI during your period, so use protection.',
       'Preparation: Place a dark comfort towel down to eliminate staining concerns.',
     ],
     order: 1,
@@ -401,9 +402,9 @@ const wellbeingData = [
     summary:
       'Clear clinical barrier method breakdowns, routine health panel checkpoints, and stigma-free screening data.',
     extendedGuide: [
-      'Barrier Mechanics: Always ensure compatible protective barriers are deployed from the start.',
-      'Routine Testing: Clinical panels are recommended every 6 months for active partners.',
-      'Asymptomatic Spreads: Many micro-bacterial pathways transfer without physical signs.',
+      'Condoms: Use a condom (or dental dam) every time, from start to finish.',
+      'Routine Testing: Get tested at least once a year if you’re sexually active and under 25, and whenever you have a new partner or symptoms.',
+      'No Symptoms: Many STIs have no signs at all, so testing is the only way to know.',
     ],
     order: 2,
   },
@@ -416,9 +417,9 @@ const wellbeingData = [
     summary:
       'Compare hormonal adjustments, physical barriers, effectiveness indices, and what to discuss with an OBGYN.',
     extendedGuide: [
-      'Double Shielding: Combine barrier tracking with hormonal tracking loops for up to 99% accuracy.',
-      'Emergency Window: Pill methods are most active when deployed within 72 hours.',
-      'OBGYN Alignment: Consult our clinical desk before modifying regular hormonal cycles.',
+      'Double Protection: Using condoms with a hormonal method gives strong protection against pregnancy, and condoms also protect against STIs.',
+      'Emergency Contraception: Use emergency contraception as soon as possible. Some pills work up to 3 days, others up to 5 days, and a copper IUD up to 5 days. A pharmacist or doctor can help.',
+      'Talk to a Doctor: Check with a doctor before starting, stopping or switching a hormonal method.',
     ],
     order: 3,
   },
@@ -431,8 +432,8 @@ const wellbeingData = [
     summary:
       'Compare pads, tampons, menstrual cups, discs, and period underwear — pros, cons, and eco-impact.',
     extendedGuide: [
-      'Menstrual Cups: Reusable, holds up to 12 hours, environmentally friendly.',
-      'Organic Cotton: Better for sensitive skin — fewer chemicals and bleaching agents.',
+      'Menstrual Cups: Reusable and eco-friendly. Empty at least every 12 hours.',
+      'Sensitive Skin: Unscented pads and tampons are gentler. Organic cotton is not proven to be safer.',
       'Period Underwear: Great backup option or light-flow primary solution.',
     ],
     order: 1,
@@ -448,7 +449,10 @@ const wellbeingData = [
     extendedGuide: [
       'The vagina is self-cleaning — avoid harsh soaps inside.',
       'Wear breathable cotton underwear to reduce moisture buildup.',
-      'Change period products every 4–8 hours to prevent bacterial growth.',
+      'Pads: Change every 4–6 hours, or sooner if full.',
+      'Tampons: Use the lowest absorbency you need. Change every 4–8 hours and never leave one in more than 8 hours.',
+      'Menstrual Cups: Empty at least every 12 hours.',
+      'TSS Warning: Sudden high fever, rash, vomiting or dizziness while using a tampon or cup? Remove it and get medical help right away.',
     ],
     order: 2,
   },

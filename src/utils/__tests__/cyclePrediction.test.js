@@ -5,6 +5,8 @@ import {
   computeCycleLengths,
   analyzeCycleHistory,
   computeCyclePredictions,
+  cycleForDate,
+  getCyclePhase,
   predictCycleFromHistory,
   prepareCycleHistory,
 } from '../cycle.js';
@@ -195,10 +197,12 @@ test('multiple period records use the most recent as the anchor', () => {
 
 /* ── robustness: outliers & staleness ───────────────────── */
 
-test('a single missed-log "double cycle" is rejected as an outlier', () => {
-  // [28,28,90,28,28,28] — the 90 is a skipped period, not a real cycle.
+test('a single missed-log "double cycle" is left out of the statistics', () => {
+  // [28,28,90,28,28,28] — the 90 is a skipped period, not a real cycle; it's
+  // past the 60-day plausibility bound, so it never reaches the statistics.
   const analysis = analyzeCycleHistory([28, 28, 90, 28, 28, 28], 28);
-  assert.equal(analysis.outliersRemoved, 1);
+  assert.equal(analysis.cyclesAnalyzed, 5);
+  assert.deepEqual(analysis.recentCycleLengths, [28, 28, 28, 28, 28]);
   assert.equal(analysis.predictedCycleLength, 28);
   assert.equal(analysis.variability, 'low');
   assert.equal(analysis.isRegular, true);
@@ -252,7 +256,7 @@ test('legacy (settings, options) call signature still works', () => {
   assert.equal(p.nextPeriodDateKey, '2026-01-29');
 });
 
-test('derivePeriodEpisodes: spotting alone is not a period, leading spotting still starts one', () => {
+test('derivePeriodEpisodes: spotting alone is not a period; day 1 is the first day of real flow', () => {
   const day = (dateKey, flow) => ({ dateKey, flow });
   const logs = [
     day('2026-08-01', 'spotting'),
@@ -261,8 +265,9 @@ test('derivePeriodEpisodes: spotting alone is not a period, leading spotting sti
     day('2026-08-15', 'spotting'), // mid-cycle spotting
     day('2026-08-29', 'heavy'),
   ];
+  // The spotting on 08-01 is pre-menstrual: the period starts 08-02.
   assert.deepEqual(derivePeriodEpisodes(logs), [
-    { startKey: '2026-08-01', endKey: '2026-08-03' },
+    { startKey: '2026-08-02', endKey: '2026-08-03' },
     { startKey: '2026-08-29', endKey: '2026-08-29' },
   ]);
   assert.deepEqual(derivePeriodEpisodes([day('2026-08-15', 'spotting')]), []);
@@ -359,4 +364,182 @@ test('prepared history with no logs matches the configured-only prediction', () 
     predictCycleFromHistory(settings, prepareCycleHistory(settings, []), { today }),
     computeCyclePredictions(settings, { today }),
   );
+});
+
+/* ── cycleForDate (per-log cycle + phase) ───────────────
+   Past logs belong to the period that started on or before them, not to a
+   projection from the latest period (which put every older log in one
+   "period" bucket of the same cycle).
+──────────────────────────────────────────────────────── */
+const bleed = (start, days = 5) =>
+  Array.from({ length: days }, (_, i) => ({ dateKey: shiftKey(start, i), flow: 'medium' }));
+
+test('cycleForDate places past days in their own cycle and phase', () => {
+  const settings = { cycleLength: 28, periodLength: 5, lastPeriodStartDate: null };
+  const starts = ['2026-01-01', '2026-01-29', '2026-02-26', '2026-03-26'];
+  const history = prepareCycleHistory(
+    settings,
+    starts.flatMap((s) => bleed(s)),
+  );
+
+  assert.deepEqual(cycleForDate(settings, history, '2026-01-02'), {
+    cycleKey: '2026-01-01',
+    phase: 'period',
+  });
+  assert.deepEqual(cycleForDate(settings, history, '2026-01-08'), {
+    cycleKey: '2026-01-01',
+    phase: 'follicular',
+  });
+  assert.deepEqual(cycleForDate(settings, history, '2026-02-10'), {
+    cycleKey: '2026-01-29',
+    phase: 'ovulation',
+  });
+  assert.deepEqual(cycleForDate(settings, history, '2026-03-22'), {
+    cycleKey: '2026-02-26',
+    phase: 'luteal',
+  });
+  // Before any logged period: nothing to place it in.
+  assert.equal(cycleForDate(settings, history, '2025-12-20'), null);
+  // After the last logged period: the projected current cycle.
+  assert.equal(cycleForDate(settings, history, '2026-03-30').cycleKey, '2026-03-26');
+});
+
+test('cycleForDate splits a gap with unlogged periods into usual-length cycles', () => {
+  const settings = { cycleLength: 28, periodLength: 5, lastPeriodStartDate: null };
+  // 01-01 and 01-29 logged, then nothing until 03-26 (02-26 went unlogged).
+  const history = prepareCycleHistory(
+    settings,
+    ['2026-01-01', '2026-01-29', '2026-03-26'].flatMap((s) => bleed(s)),
+  );
+  const usual = history.analysis.predictedCycleLength;
+  const placed = cycleForDate(settings, history, shiftKey('2026-01-29', usual + 2));
+  assert.equal(placed.cycleKey, shiftKey('2026-01-29', usual));
+  assert.equal(placed.phase, 'period');
+});
+
+/* ── medical accuracy (ACOG / FIGO / Wilcox) ──────────────
+   Late periods stay late, the fertile window is 6 days ending on ovulation,
+   regularity follows FIGO, and implausible or out-of-range cycles are
+   handled honestly.
+──────────────────────────────────────────────────────── */
+const figoStarts = ['2026-06-01', '2026-06-29', '2026-07-27', '2026-08-24']; // 28-day cycles
+const figoLogs = figoStarts.flatMap((s) => bleed(s));
+const figoSettings = { cycleLength: 28, periodLength: 5, lastPeriodStartDate: null };
+const atDay = (key) => new Date(`${key}T12:00:00.000Z`);
+
+test('a late period stays late instead of starting a phantom cycle', () => {
+  // Due 2026-09-21. Still logging (a symptom log on 09-22), no bleeding.
+  const logs = [...figoLogs, { dateKey: '2026-09-22', flow: 'none' }];
+  const p = computeCyclePredictions(figoSettings, logs, { today: atDay('2026-09-23') });
+  assert.equal(p.isLate, true);
+  assert.equal(p.daysLate, 2);
+  assert.equal(p.nextPeriodDateKey, '2026-09-21');
+  assert.equal(p.currentCycleDay, 31);
+  assert.equal(p.currentPhase, 'luteal');
+  assert.equal(p.currentPeriodStartDateISO.slice(0, 10), '2026-08-24');
+  assert.equal(p.isStale, false);
+});
+
+test('due today is not late; the day before is a normal luteal day', () => {
+  const due = computeCyclePredictions(figoSettings, figoLogs, { today: atDay('2026-09-21') });
+  assert.equal(due.isLate, false);
+  assert.equal(due.nextPeriodDaysAway, 0);
+  assert.equal(due.currentPhase, 'luteal');
+  const before = computeCyclePredictions(figoSettings, figoLogs, { today: atDay('2026-09-20') });
+  assert.equal(before.currentCycleDay, 28);
+  assert.equal(before.nextPeriodDaysAway, 1);
+});
+
+test('90+ days without a period while still logging flags a doctor visit', () => {
+  const logs = [...figoLogs, { dateKey: '2026-11-25', flow: 'none' }];
+  const p = computeCyclePredictions(figoSettings, logs, { today: atDay('2026-11-28') });
+  assert.equal(p.isLate, true);
+  assert.equal(p.noPeriodTooLong, true);
+});
+
+test('someone who stopped logging is projected forward and flagged stale, not late', () => {
+  const p = computeCyclePredictions(figoSettings, figoLogs, { today: atDay('2026-12-30') });
+  assert.equal(p.isLate, false);
+  assert.equal(p.isStale, true);
+});
+
+test('fertile window is the 5 days before ovulation plus ovulation day', () => {
+  const p = computeCyclePredictions(figoSettings, figoLogs, { today: atDay('2026-08-26') });
+  // Cycle from 08-24: ovulation = start + 14 = 09-07 (14 days before 09-21).
+  assert.equal(p.ovulationDateKey, '2026-09-07');
+  assert.equal(p.fertileWindowStartISO.slice(0, 10), '2026-09-02');
+  assert.equal(p.fertileWindowEndISO.slice(0, 10), '2026-09-07');
+  assert.equal(p.peakFertileStartISO.slice(0, 10), '2026-09-05');
+  // getCyclePhase agrees: cycle days 10–15 of 28 are the fertile phase.
+  const phases = Array.from({ length: 28 }, (_, i) => getCyclePhase(i + 1, 5, 28));
+  assert.equal(phases.indexOf('ovulation') + 1, 10);
+  assert.equal(phases.lastIndexOf('ovulation') + 1, 15);
+  assert.equal(phases[15], 'luteal');
+});
+
+test('FIGO regularity: a 10-day spread is irregular; age widens the limit to 9', () => {
+  const wide = analyzeCycleHistory([26, 26, 26, 36, 27], 28);
+  assert.equal(wide.variability, 'high');
+  assert.equal(wide.isRegular, false);
+  const eight = [27, 30, 35, 28, 29];
+  assert.equal(analyzeCycleHistory(eight, 28, { age: 30 }).isRegular, false);
+  assert.notEqual(analyzeCycleHistory(eight, 28, { age: 20 }).isRegular, false);
+});
+
+test('long cycles are predicted as they are and flagged outside the normal range', () => {
+  const a = analyzeCycleHistory([50, 52, 49, 51], 28);
+  assert.equal(a.predictedCycleLength, 51); // median 50.5, not clamped to 45
+  assert.equal(a.outsideNormalRange, true);
+  assert.notEqual(a.confidence, 'high');
+  // 42-day cycles are normal for a 15-year-old (21–45), not for an adult.
+  assert.equal(analyzeCycleHistory([42, 42, 43], 28, { age: 15 }).outsideNormalRange, false);
+  assert.equal(analyzeCycleHistory([42, 42, 43], 28, { age: 30 }).outsideNormalRange, true);
+});
+
+test('a 2-day unlogged gap inside a period does not split it', () => {
+  const logs = [
+    { dateKey: '2026-01-01', flow: 'heavy' },
+    { dateKey: '2026-01-04', flow: 'light' },
+  ];
+  assert.deepEqual(derivePeriodEpisodes(logs), [{ startKey: '2026-01-01', endKey: '2026-01-04' }]);
+});
+
+test('even steady cycles get a ±2-day window', () => {
+  const p = computeCyclePredictions(figoSettings, figoLogs, { today: atDay('2026-09-01') });
+  assert.equal(p.predictedPeriodStartEarliestISO.slice(0, 10), '2026-09-19');
+  assert.equal(p.predictedPeriodStartLatestISO.slice(0, 10), '2026-09-23');
+});
+
+test('a period longer than 8 days is flagged', () => {
+  const logs = [...figoLogs, ...bleed('2026-09-21', 10)];
+  const p = computeCyclePredictions(figoSettings, logs, { today: atDay('2026-10-01') });
+  assert.equal(p.lastPeriodDays, 10);
+  assert.equal(p.longPeriod, true);
+});
+
+test('one short bleed gap in a steady pattern is set aside, not called irregular', () => {
+  // A 16-day gap among 30-day cycles is mid-cycle spotting far more often than a cycle.
+  const a = analyzeCycleHistory([31, 30, 30, 30, 30, 16], 28);
+  assert.equal(a.outliersRemoved, 1);
+  assert.equal(a.isRegular, true);
+  assert.equal(a.predictedCycleLength, 30);
+});
+
+test('irregular cycles get a window from the typical spread, not the single extreme', () => {
+  const starts = ['2026-01-01'];
+  [24, 35, 28, 40, 30, 26].forEach((l) => starts.push(shiftKey(starts.at(-1), l)));
+  const p = computeCyclePredictions(
+    { cycleLength: 28, periodLength: 5 },
+    starts.flatMap((s) => bleed(s)),
+    {
+      today: new Date(`${shiftKey(starts.at(-1), 3)}T12:00:00.000Z`),
+    },
+  );
+  assert.equal(p.isRegular, false);
+  const radius = Math.round(
+    (new Date(p.predictedPeriodStartLatestISO) - new Date(p.predictedPeriodStartEarliestISO)) /
+      86400000 /
+      2,
+  );
+  assert.ok(radius >= 3 && radius <= 11, `radius ${radius}`);
 });

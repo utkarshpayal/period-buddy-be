@@ -95,7 +95,7 @@ export const describeReferral = (r) => ({
 
 /** The referral as its referrer sees it (no admin-only fields). */
 export const describeReferralForReferrer = (r) => {
-  const { referrer, referredDoctor, ...rest } = describeReferral(r);
+  const { referrer: _referrer, referredDoctor, ...rest } = describeReferral(r);
   return { ...rest, joined: Boolean(referredDoctor) && r.status === 'onboarded' };
 };
 

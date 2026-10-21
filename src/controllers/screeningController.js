@@ -6,8 +6,8 @@ import {
   SCREENING_CONDITIONS,
   SCREENING_QUESTIONS,
   SCREENING_DISCLAIMER,
-  getRiskLevel,
 } from '../constants/screeningQuestions.js';
+import { assessScreening } from '../utils/screeningScoring.js';
 
 const CONDITION_LABELS = {
   pcos: 'PCOS',
@@ -39,52 +39,28 @@ export const getQuestions = async (req, res, next) => {
   }
 };
 
-/**
- * Deterministic weighted-sum scoring — no AI call. Each question's `weight`
- * is fully scored for a truthy boolean answer, or proportionally scored
- * (answer / 3) for a 0-3 scale answer.
- */
-const scoreAnswers = (questions, answers) => {
-  let earned = 0;
-  let possible = 0;
-  const drivers = [];
+const RED_FLAG_SUMMARY =
+  ' Some of your answers are worth getting checked by a doctor soon, whatever the overall score.';
 
-  questions.forEach((question) => {
-    possible += question.weight;
-    const raw = answers?.[question.id];
-
-    if (question.type === 'boolean') {
-      const value = raw === true || raw === 'true' || raw === 1;
-      if (value) {
-        earned += question.weight;
-        drivers.push({ text: question.text, contributed: question.weight });
-      }
-    } else if (question.type === 'scale') {
-      const value = Math.min(3, Math.max(0, Number(raw) || 0));
-      const contributed = (value / 3) * question.weight;
-      earned += contributed;
-      if (value >= 2) {
-        drivers.push({ text: question.text, contributed: Math.round(contributed) });
-      }
-    }
-  });
-
-  const score = possible > 0 ? Math.round((earned / possible) * 100) : 0;
-  return { score, drivers };
-};
-
-const buildSummary = (condition, riskLevel, score) => {
+const buildSummary = (condition, riskLevel, score, { redFlags = [], note = null } = {}) => {
   const label = CONDITION_LABELS[condition] || condition;
   const riskText = {
     low: `Your responses matched few of the signs often linked with ${label} (score: ${score}/100). A low score does not rule it out: if any symptom worries you or keeps coming back, see a doctor.`,
     moderate: `Your responses show a moderate number of indicators sometimes associated with ${label} (score: ${score}/100).`,
     high: `Your responses show several indicators commonly associated with ${label} (score: ${score}/100).`,
   };
-  return riskText[riskLevel];
+  return `${riskText[riskLevel]}${redFlags.length ? RED_FLAG_SUMMARY : ''}${note ? ` ${note}` : ''}`;
 };
 
-const buildDoctorDiscussionSummary = (condition, drivers) => {
+const buildDoctorDiscussionSummary = (condition, drivers, redFlagReasons = []) => {
   const label = CONDITION_LABELS[condition] || condition;
+  if (redFlagReasons.length) {
+    const flagged = redFlagReasons.map((reason) => `- ${reason}`).join('\n');
+    const others = drivers.length
+      ? `\n\nOther points to mention:\n${drivers.map((driver) => `- ${driver.text}`).join('\n')}`
+      : '';
+    return `Please talk to a doctor about these soon:\n${flagged}${others}`;
+  }
   if (drivers.length === 0) {
     return `No major ${label} indicators were flagged from this screening. Discuss any ongoing symptoms with your doctor if they persist.`;
   }
@@ -113,10 +89,18 @@ export const submitAssessment = async (req, res, next) => {
     }
 
     const questions = SCREENING_QUESTIONS[condition];
-    const { score, drivers } = scoreAnswers(questions, answers);
-    const riskLevel = getRiskLevel(score);
-    const summary = buildSummary(condition, riskLevel, score);
-    const doctorDiscussionSummary = buildDoctorDiscussionSummary(condition, drivers);
+    const { score, drivers, riskLevel, redFlags, redFlagReasons, note } = assessScreening(
+      condition,
+      questions,
+      answers,
+      { dateOfBirth: req.user?.dateOfBirth },
+    );
+    const summary = buildSummary(condition, riskLevel, score, { redFlags, note });
+    const doctorDiscussionSummary = buildDoctorDiscussionSummary(
+      condition,
+      drivers,
+      redFlagReasons,
+    );
 
     const assessment = await ScreeningAssessment.create({
       userId: req.userId,
@@ -134,6 +118,7 @@ export const submitAssessment = async (req, res, next) => {
       condition,
       score,
       riskLevel,
+      redFlagCount: redFlags.length,
     });
 
     return sendResponse(res, HTTP_STATUS.CREATED, 'Screening assessment saved', {
@@ -143,6 +128,10 @@ export const submitAssessment = async (req, res, next) => {
       riskLevel,
       summary,
       doctorDiscussionSummary,
+      // Added fields (older clients ignore them): question ids of red-flag
+      // answers, and an optional caveat (PCOS teen criteria).
+      redFlags,
+      note,
       disclaimer: SCREENING_DISCLAIMER,
       createdAt: assessment.createdAt,
     });
