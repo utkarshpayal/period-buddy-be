@@ -107,7 +107,7 @@ curl http://<PublicIp>/health/ready     # {"success":true,"status":"ready",...}
 
 ## 5. Switch `backend.thenura.care` over to the new server
 
-The current API runs on the `Nura-Backend` EC2 instance (`13.233.146.11`), and
+The current API runs on the `Nura-Backend` EC2 instance (`15.252.118.87`), and
 `backend.thenura.care` / `www.backend.thenura.care` point at it. The new stack is
 a **separate** server, so the old one keeps serving until DNS moves — nothing
 changes for users until then, and moving back is just the reverse DNS edit.
@@ -123,7 +123,7 @@ changes for users until then, and moving back is just the reverse DNS edit.
    ```
    Then **Release change**. (Until DNS moves, Caddy can't get a certificate yet — that's expected.)
 3. DNS is at **Spaceship** (`launch1/2.spaceship.net`): change the **A records** for
-   `backend` and `www.backend` from `13.233.146.11` to the stack's `PublicIp`. Lower the
+   `backend` and `www.backend` from `15.252.118.87` to the stack's `PublicIp`. Lower the
    TTL beforehand if you can. Within minutes of propagation Caddy fetches Let's
    Encrypt certificates on its own (HTTP then redirects to HTTPS).
 4. Check `https://backend.thenura.care/health/ready`, sign in on the app, and watch
