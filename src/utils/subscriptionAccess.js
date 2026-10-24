@@ -2,6 +2,7 @@ import SubscriptionSettings from '../models/SubscriptionSettings.js';
 import SubscriptionFeature from '../models/SubscriptionFeature.js';
 import SubscriptionPlan from '../models/SubscriptionPlan.js';
 import Entitlement from '../models/Entitlement.js';
+import { expiryFrom, resolveUnlockedKeys, usageTier } from './pricing.js';
 
 /**
  * The subscription system is a singleton row: read/write it only through
@@ -17,6 +18,14 @@ export const getSettings = async () => {
   return settings;
 };
 
+/** A user's entitlements that are active and unexpired, plans populated. */
+export const getLiveEntitlements = async (userId, now = new Date()) =>
+  Entitlement.find({
+    user: userId,
+    status: 'active',
+    $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
+  }).populate('plan');
+
 /**
  * Feature keys `userId` currently has unrestricted access to: any feature
  * an admin has taken off the paywall (isPremium: false — always free, same
@@ -29,7 +38,8 @@ export const getSettings = async () => {
  * This is also what GET /api/subscriptions/me hands the mobile app to build
  * its cached hasAccess() check — it has to agree with hasFeatureAccess's
  * own free pass for non-premium features, or the app keeps showing a
- * paywall for a feature an admin just made free.
+ * paywall for a feature an admin just made free. The rule itself is
+ * utils/pricing.js#resolveUnlockedKeys (unit-tested).
  *
  * @returns {Promise<'ALL'|Set<string>>}
  */
@@ -41,25 +51,19 @@ export const getUnlockedFeatureKeys = async (userId) => {
     isActive: true,
     isPremium: false,
   }).select('key');
-  const keys = new Set(freeFeatures.map((f) => f.key));
+  const entitlements = userId ? await getLiveEntitlements(userId) : [];
+  return resolveUnlockedKeys({
+    subscriptionEnabled: true,
+    freeKeys: freeFeatures.map((f) => f.key),
+    entitlements,
+  });
+};
 
-  if (!userId) return keys;
-
-  const now = new Date();
-  const entitlements = await Entitlement.find({
-    user: userId,
-    status: 'active',
-    $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
-  }).populate('plan');
-
-  for (const entitlement of entitlements) {
-    if (entitlement.source === 'feature' && entitlement.featureKey) {
-      keys.add(entitlement.featureKey);
-    } else if (entitlement.source === 'plan' && entitlement.plan) {
-      for (const key of entitlement.plan.features || []) keys.add(key);
-    }
-  }
-  return keys;
+/** 'premium' or 'free', for fair-use limits (utils/pricing.js#usageTier). */
+export const getUsageTier = async (userId, settings) => {
+  const resolved = settings || (await getSettings());
+  if (!resolved.subscriptionEnabled) return 'premium';
+  return usageTier({ subscriptionEnabled: true, entitlements: await getLiveEntitlements(userId) });
 };
 
 /**
@@ -85,9 +89,13 @@ export const hasFeatureAccess = async (userId, featureKey) => {
  */
 export const getFeatureLockPayload = async (featureKey) => {
   const feature = await SubscriptionFeature.findOne({ key: featureKey, isActive: true });
-  const plans = await SubscriptionPlan.find({ isActive: true, features: featureKey }).sort({
-    sortOrder: 1,
-  });
+  // Promo plans (the founding offer) are offered only on the pricing screen,
+  // where the buyer's eligibility is checked (GET /api/subscriptions/pricing).
+  const plans = await SubscriptionPlan.find({
+    isActive: true,
+    features: featureKey,
+    'promo.kind': { $in: [null, ''] },
+  }).sort({ sortOrder: 1 });
 
   return {
     code: 'FEATURE_LOCKED',
@@ -112,17 +120,5 @@ export const getFeatureLockPayload = async (featureKey) => {
 };
 
 /** monthly -> +30d, yearly -> +365d, one_time -> never expires. */
-export const computeExpiryFromCycle = (billingCycle, from = new Date()) => {
-  const start = new Date(from);
-  if (billingCycle === 'monthly') {
-    const d = new Date(start);
-    d.setDate(d.getDate() + 30);
-    return d;
-  }
-  if (billingCycle === 'yearly') {
-    const d = new Date(start);
-    d.setDate(d.getDate() + 365);
-    return d;
-  }
-  return null;
-};
+export const computeExpiryFromCycle = (billingCycle, from = new Date()) =>
+  expiryFrom(billingCycle, from);

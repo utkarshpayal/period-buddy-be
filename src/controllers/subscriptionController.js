@@ -1,22 +1,32 @@
 import SubscriptionFeature from '../models/SubscriptionFeature.js';
 import SubscriptionPlan from '../models/SubscriptionPlan.js';
 import Entitlement from '../models/Entitlement.js';
-import Coupon from '../models/Coupon.js';
 import User from '../models/User.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { isValidObjectId } from '../utils/apiHelpers.js';
-import {
-  createOrder,
-  getOrderStatus,
-  isPaymentConfigured,
-  cashfreeMode,
-} from '../utils/cashfreeClient.js';
+import { createOrder, isPaymentConfigured, cashfreeMode } from '../utils/cashfreeClient.js';
 import {
   getSettings,
   getUnlockedFeatureKeys,
-  computeExpiryFromCycle,
+  getLiveEntitlements,
+  getUsageTier,
 } from '../utils/subscriptionAccess.js';
+import {
+  FOUNDING_PROMO_KIND,
+  PREMIUM_FAMILY,
+  annualComparison,
+  foundingEligibility,
+  promoStatus,
+  taxBreakdown,
+} from '../utils/pricing.js';
+import {
+  SUBSCRIPTION_ORDER_PREFIX,
+  activatePaidEntitlement,
+  settleEntitlementOrder,
+  settleRecentPendingOrders,
+} from '../utils/subscriptionPurchase.js';
+import { getUsageSummary } from '../utils/usageQuota.js';
 import {
   resolveCoupon,
   hasRedemptionsLeftForUser,
@@ -26,65 +36,150 @@ import {
 import logger from '../utils/logger.js';
 import { memo } from '../utils/memoCache.js';
 
+const fail = (status, message, extra = {}) =>
+  Object.assign(new Error(message), { status, ...extra });
+
+// Statuses that mean a purchase really happened (not pending or failed).
+const PURCHASED_STATUSES = ['active', 'expired', 'cancelled', 'refunded'];
+
 /**
- * Resolves { source, planId, featureKey } to the item's live base price,
- * billing cycle, and the Entitlement fields that identify it — shared by
- * order creation and the coupon preview endpoint below so a coupon always
- * previews against the exact same price it will actually be redeemed
- * against. Throws { status, message } on any validation failure.
+ * Founding-member offer eligibility for `userId` (utils/pricing.js): the
+ * offer must be live, and the user must never have paid for Premium or used
+ * the offer, nor anyone else with the same phone number.
  */
-const resolvePurchasableItem = async ({ source, planId, featureKey }, settings) => {
+const checkFoundingEligibility = async (plan, userId) => {
+  const status = promoStatus(plan);
+  if (!status.available || !userId) return foundingEligibility({ status });
+  const familyPlanIds = (
+    await SubscriptionPlan.find({ family: plan.family || PREMIUM_FAMILY }).select('_id')
+  ).map((p) => p._id);
+  const user = await User.findById(userId).select('phone');
+  const samePhoneUserIds = user?.phone
+    ? (await User.find({ phone: user.phone, _id: { $ne: userId } }).select('_id')).map((u) => u._id)
+    : [];
+  const [hadPaidPremium, usedFounding, phoneUsedFounding] = await Promise.all([
+    Entitlement.exists({
+      user: userId,
+      source: 'plan',
+      plan: { $in: familyPlanIds },
+      status: { $in: PURCHASED_STATUSES },
+      amount: { $gt: 0 },
+    }),
+    Entitlement.exists({
+      user: userId,
+      isFoundingOffer: true,
+      status: { $in: PURCHASED_STATUSES },
+    }),
+    samePhoneUserIds.length
+      ? Entitlement.exists({
+          user: { $in: samePhoneUserIds },
+          isFoundingOffer: true,
+          status: { $in: PURCHASED_STATUSES },
+        })
+      : null,
+  ]);
+  return foundingEligibility({
+    status,
+    hadPaidPremium: Boolean(hadPaidPremium),
+    usedFounding: Boolean(usedFounding),
+    phoneUsedFounding: Boolean(phoneUsedFounding),
+  });
+};
+
+/**
+ * Resolves { source, planId, featureKey, billingCycle } to the item's live
+ * list price, billing cycle, and the Entitlement fields that identify it —
+ * shared by order creation and the coupon preview endpoint below so a
+ * coupon always previews against the exact same price it will actually be
+ * redeemed against. Refuses what the buyer can't or needn't buy: an
+ * ineligible founding offer, or a feature their live plan already includes
+ * (nobody pays twice for it). Throws { status, message, code } on failure.
+ */
+const resolvePurchasableItem = async (
+  { source, planId, featureKey, billingCycle },
+  settings,
+  userId,
+) => {
   if (!['plan', 'feature'].includes(source)) {
-    throw Object.assign(new Error("source must be 'plan' or 'feature'"), {
-      status: HTTP_STATUS.BAD_REQUEST,
-    });
+    throw fail(HTTP_STATUS.BAD_REQUEST, "source must be 'plan' or 'feature'");
   }
 
   if (source === 'plan') {
-    if (!isValidObjectId(planId)) {
-      throw Object.assign(new Error('A valid planId is required'), {
-        status: HTTP_STATUS.BAD_REQUEST,
-      });
-    }
+    if (!isValidObjectId(planId)) throw fail(HTTP_STATUS.BAD_REQUEST, 'A valid planId is required');
     const plan = await SubscriptionPlan.findOne({ _id: planId, isActive: true });
-    if (!plan) throw Object.assign(new Error('Plan not found'), { status: HTTP_STATUS.NOT_FOUND });
+    if (!plan) throw fail(HTTP_STATUS.NOT_FOUND, 'Plan not found');
+
+    const isFoundingOffer = plan.promo?.kind === FOUNDING_PROMO_KIND;
+    if (plan.promo?.kind) {
+      const eligibility = isFoundingOffer
+        ? await checkFoundingEligibility(plan, userId)
+        : foundingEligibility({ status: promoStatus(plan) });
+      if (!eligibility.eligible) {
+        throw fail(HTTP_STATUS.FORBIDDEN, 'This offer isn’t available for your account', {
+          code: 'OFFER_NOT_ELIGIBLE',
+          reason: eligibility.reason,
+        });
+      }
+    }
 
     return {
       amount: plan.price,
       billingCycle: plan.billingCycle,
-      entitlementFields: { source: 'plan', plan: plan._id },
+      isPromo: Boolean(plan.promo?.kind),
+      entitlementFields: { source: 'plan', plan: plan._id, isFoundingOffer },
       notes: { source, planId: String(plan._id) },
     };
   }
 
   if (!settings.allowFeatureWisePurchase) {
-    throw Object.assign(
-      new Error('Individual feature purchases are disabled — choose a plan instead'),
-      { status: HTTP_STATUS.BAD_REQUEST },
+    throw fail(
+      HTTP_STATUS.BAD_REQUEST,
+      'Individual feature purchases are disabled — choose a plan instead',
     );
   }
-  if (!featureKey) {
-    throw Object.assign(new Error('A featureKey is required'), { status: HTTP_STATUS.BAD_REQUEST });
-  }
+  if (!featureKey) throw fail(HTTP_STATUS.BAD_REQUEST, 'A featureKey is required');
   const feature = await SubscriptionFeature.findOne({
     key: String(featureKey).toLowerCase(),
     isActive: true,
   });
-  if (!feature)
-    throw Object.assign(new Error('Feature not found'), { status: HTTP_STATUS.NOT_FOUND });
-  if (!feature.isPremium) {
-    throw Object.assign(new Error('This feature is already free'), {
-      status: HTTP_STATUS.BAD_REQUEST,
-    });
+  if (!feature) throw fail(HTTP_STATUS.NOT_FOUND, 'Feature not found');
+  if (!feature.isPremium) throw fail(HTTP_STATUS.BAD_REQUEST, 'This feature is already free');
+
+  if (userId) {
+    const live = await getLiveEntitlements(userId);
+    const coveredByPlan = live.some(
+      (e) => e.source === 'plan' && (e.plan?.features || []).includes(feature.key),
+    );
+    if (coveredByPlan) {
+      throw fail(HTTP_STATUS.CONFLICT, 'Your plan already includes this feature', {
+        code: 'ALREADY_INCLUDED',
+      });
+    }
   }
 
+  const yearly = billingCycle === 'yearly';
+  if (yearly && !(feature.yearlyPrice > 0)) {
+    throw fail(HTTP_STATUS.BAD_REQUEST, 'This feature isn’t sold yearly');
+  }
   return {
-    amount: feature.price,
-    billingCycle: feature.billingCycle,
+    amount: yearly ? feature.yearlyPrice : feature.price,
+    billingCycle: yearly ? 'yearly' : feature.billingCycle,
+    isPromo: false,
     entitlementFields: { source: 'feature', featureKey: feature.key },
     notes: { source, featureKey: feature.key },
   };
 };
+
+const sendItemError = (res, error) =>
+  error.code
+    ? res.status(error.status || HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        statusCode: error.status || HTTP_STATUS.BAD_REQUEST,
+        message: error.message,
+        code: error.code,
+        reason: error.reason,
+      })
+    : sendError(res, error.status || HTTP_STATUS.BAD_REQUEST, error.message);
 
 /**
  * Validates `couponCode` (exists, active, unexpired, redemption limits) and
@@ -143,24 +238,152 @@ export const getFeatures = async (req, res, next) => {
   }
 };
 
-/** GET /api/subscriptions/me — the caller's own access summary. */
+/** The caller's live Premium plan, if any: the one that ends last. */
+const premiumSummary = (entitlements) => {
+  const plans = entitlements.filter(
+    (e) => e.source === 'plan' && e.plan?.family === PREMIUM_FAMILY,
+  );
+  if (!plans.length) return { active: false };
+  const latest = plans.reduce((a, b) =>
+    !a.expiresAt || (b.expiresAt && b.expiresAt > a.expiresAt) ? b : a,
+  );
+  return {
+    active: true,
+    until: latest.expiresAt,
+    planSlug: latest.plan.slug,
+    billingCycle: latest.billingCycle,
+    isFoundingOffer: Boolean(latest.isFoundingOffer),
+    // Nothing renews by itself: the member buys again (renewalPlanSlug for a promo).
+    autoRenews: false,
+    renewalPlanSlug: latest.plan.promo?.renewalPlanSlug || latest.plan.slug,
+  };
+};
+
+/** GET /api/subscriptions/me — the caller's own access summary: live
+ * entitlements, unlocked feature keys, Premium status and this period's
+ * fair-use usage. Recent unpaid orders are re-checked with Cashfree first,
+ * so a payment whose confirmation got lost still shows up as active. */
 export const getMySubscription = async (req, res, next) => {
   try {
     const settings = await getSettings();
-    const now = new Date();
-    const entitlements = await Entitlement.find({
-      user: req.userId,
-      status: 'active',
-      $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
-    }).populate('plan');
-
+    await settleRecentPendingOrders(req.userId);
+    const entitlements = await getLiveEntitlements(req.userId);
     const unlocked = await getUnlockedFeatureKeys(req.userId);
+    const tier = await getUsageTier(req.userId, settings);
 
     return sendResponse(res, HTTP_STATUS.OK, 'Subscription summary fetched', {
       subscriptionEnabled: settings.subscriptionEnabled,
       currency: settings.currency,
       entitlements,
       unlockedFeatureKeys: unlocked === 'ALL' ? 'ALL' : Array.from(unlocked),
+      premium: premiumSummary(entitlements),
+      usage: {
+        tier,
+        fairUseEnabled: Boolean(settings.fairUse?.enabled),
+        items: await getUsageSummary({ userId: req.userId, fairUse: settings.fairUse, tier }),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const planCard = (plan) =>
+  plan && {
+    planId: plan._id,
+    slug: plan.slug,
+    name: plan.name,
+    description: plan.description,
+    price: plan.price,
+    billingCycle: plan.billingCycle,
+    badge: plan.badge,
+  };
+
+/**
+ * GET /api/subscriptions/pricing — the one pricing summary the app's
+ * My Subscription screen and the website's /pricing page both draw: Premium
+ * monthly and yearly (with the yearly saving worked out here, not in each
+ * client), the founding offer only while it's live (and, signed in, only if
+ * the caller is eligible), add-ons with their monthly and yearly prices,
+ * tax and fair-use limits. Public; prices come from the live database rows.
+ */
+export const getPricing = async (req, res, next) => {
+  try {
+    const settings = await getSettings();
+    const { plans, features } = await memo('subscriptions:pricing', async () => ({
+      plans: (await SubscriptionPlan.find({ isActive: true }).sort({ sortOrder: 1 })).map((p) =>
+        p.toJSON(),
+      ),
+      features: (
+        await SubscriptionFeature.find({ isActive: true }).sort({ category: 1, sortOrder: 1 })
+      ).map((f) => f.toJSON()),
+    }));
+
+    const premiumPlans = plans.filter((p) => p.family === PREMIUM_FAMILY);
+    const regular = premiumPlans.filter((p) => !p.promo?.kind);
+    const monthly = regular.find((p) => p.billingCycle === 'monthly');
+    const yearly = regular.find((p) => p.billingCycle === 'yearly');
+    const foundingPlan = premiumPlans.find((p) => p.promo?.kind === FOUNDING_PROMO_KIND);
+
+    let founding = null;
+    if (foundingPlan && promoStatus(foundingPlan).available) {
+      const eligibility = req.userId
+        ? await checkFoundingEligibility(foundingPlan, req.userId)
+        : { eligible: true, reason: null };
+      const renewal = plans.find((p) => p.slug === foundingPlan.promo.renewalPlanSlug) || yearly;
+      if (eligibility.eligible) {
+        founding = {
+          ...planCard(foundingPlan),
+          endsAt: foundingPlan.promo.endsAt,
+          maxMembers: foundingPlan.promo.maxRedemptions,
+          renewalPrice: renewal?.price ?? null,
+          renewalBillingCycle: renewal?.billingCycle ?? 'yearly',
+        };
+      }
+    }
+
+    const premiumKeys = new Set(monthly?.features || yearly?.features || []);
+    const featureName = Object.fromEntries(features.map((f) => [f.key, f.name]));
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Pricing fetched', {
+      currency: settings.currency,
+      subscriptionEnabled: settings.subscriptionEnabled,
+      allowFeatureWisePurchase: settings.allowFeatureWisePurchase,
+      tax: {
+        ratePercent: settings.tax?.ratePercent ?? 18,
+        pricesIncludeTax: settings.tax?.pricesIncludeTax !== false,
+      },
+      premium: {
+        features: [...premiumKeys].map((key) => ({ key, name: featureName[key] || key })),
+        monthly: planCard(monthly) || null,
+        yearly: yearly
+          ? {
+              ...planCard(yearly),
+              comparison: monthly ? annualComparison(monthly.price, yearly.price) : null,
+            }
+          : null,
+        founding,
+        autoRenews: false,
+      },
+      addOns: features
+        .filter((f) => f.isPremium && f.price > 0)
+        .map((f) => ({
+          key: f.key,
+          name: f.name,
+          description: f.description,
+          category: f.category,
+          price: f.price,
+          billingCycle: f.billingCycle,
+          yearlyPrice: f.yearlyPrice ?? null,
+          includedInPremium: premiumKeys.has(f.key),
+        })),
+      fairUse: {
+        enabled: Boolean(settings.fairUse?.enabled),
+        aiMessagesPerDay: settings.fairUse?.aiMessagesPerDay,
+        documentsPerMonth: settings.fairUse?.documentsPerMonth,
+        maxPagesPerDocument: settings.fairUse?.maxPagesPerDocument,
+        doctorReportsPerMonth: settings.fairUse?.doctorReportsPerMonth,
+      },
     });
   } catch (error) {
     next(error);
@@ -195,7 +418,7 @@ export const getHistory = async (req, res, next) => {
  * has redeemed it). */
 export const previewCoupon = async (req, res, next) => {
   try {
-    const { code, source, planId, featureKey } = req.body;
+    const { code, source, planId, featureKey, billingCycle } = req.body;
     if (!code || !String(code).trim()) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'A coupon code is required');
     }
@@ -203,9 +426,16 @@ export const previewCoupon = async (req, res, next) => {
     const settings = await getSettings();
     let item;
     try {
-      item = await resolvePurchasableItem({ source, planId, featureKey }, settings);
+      item = await resolvePurchasableItem(
+        { source, planId, featureKey, billingCycle },
+        settings,
+        req.userId,
+      );
     } catch (error) {
-      return sendError(res, error.status || HTTP_STATUS.BAD_REQUEST, error.message);
+      return sendItemError(res, error);
+    }
+    if (item.isPromo) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Coupons can’t be used with this offer');
     }
 
     let applied;
@@ -221,7 +451,8 @@ export const previewCoupon = async (req, res, next) => {
       discountValue: applied.coupon.discountValue,
       originalAmount: item.amount,
       discountAmount: applied.discountAmount,
-      finalAmount: applied.finalAmount,
+      finalAmount: taxBreakdown(applied.finalAmount, settings.tax).total,
+      tax: taxBreakdown(applied.finalAmount, settings.tax),
       currency: settings.currency,
       free: applied.finalAmount <= 0,
     });
@@ -231,11 +462,13 @@ export const previewCoupon = async (req, res, next) => {
 };
 
 /** POST /api/subscriptions/order — create a Cashfree order + a pending
- * Entitlement for either a plan or a single feature, optionally discounted
- * by a coupon. When a coupon brings the price to 0, no Cashfree order is
- * created at all — the Entitlement is activated immediately and the
- * response carries `free: true` so the app skips the checkout sheet
- * entirely (see PaywallModal.tsx). */
+ * Entitlement for either a plan or a single feature (`billingCycle:
+ * 'yearly'` picks a feature's yearly price), optionally discounted by a
+ * coupon. The amount charged is the price after coupon, plus GST only when
+ * prices are set to exclude it. When a coupon brings the price to 0, no
+ * Cashfree order is created at all — the Entitlement is activated
+ * immediately and the response carries `free: true` so the app skips the
+ * checkout sheet entirely (see PaywallModal.tsx). */
 export const createSubscriptionOrder = async (req, res, next) => {
   try {
     const settings = await getSettings();
@@ -243,20 +476,27 @@ export const createSubscriptionOrder = async (req, res, next) => {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Subscriptions are currently disabled');
     }
 
-    const { source, planId, featureKey, couponCode } = req.body;
+    const { source, planId, featureKey, couponCode, billingCycle } = req.body;
 
     let item;
     try {
-      item = await resolvePurchasableItem({ source, planId, featureKey }, settings);
+      item = await resolvePurchasableItem(
+        { source, planId, featureKey, billingCycle },
+        settings,
+        req.userId,
+      );
     } catch (error) {
-      return sendError(res, error.status || HTTP_STATUS.BAD_REQUEST, error.message);
+      return sendItemError(res, error);
     }
 
     if (!item.amount || item.amount <= 0) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'This item has no price configured');
     }
+    if (couponCode && item.isPromo) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Coupons can’t be used with this offer');
+    }
 
-    let amount = item.amount;
+    let listAmount = item.amount;
     let coupon = null;
     let originalAmount;
     if (couponCode) {
@@ -264,11 +504,12 @@ export const createSubscriptionOrder = async (req, res, next) => {
         const applied = await applyCouponToAmount(couponCode, item.amount, req.userId);
         coupon = applied.coupon;
         originalAmount = item.amount;
-        amount = applied.finalAmount;
+        listAmount = applied.finalAmount;
       } catch (error) {
         return sendError(res, error.status || HTTP_STATUS.BAD_REQUEST, error.message);
       }
     }
+    const amount = taxBreakdown(listAmount, settings.tax).total;
 
     const couponFields = coupon
       ? { coupon: coupon._id, couponCode: coupon.code, originalAmount }
@@ -293,29 +534,30 @@ export const createSubscriptionOrder = async (req, res, next) => {
         }
       }
 
-      const now = new Date();
-      const entitlement = await Entitlement.create({
+      const pending = await Entitlement.create({
         user: req.userId,
         ...item.entitlementFields,
-        ...couponFields,
-        status: 'active',
+        status: 'pending',
         amount: 0,
         currency: settings.currency,
         billingCycle: item.billingCycle,
-        startedAt: now,
-        expiresAt: computeExpiryFromCycle(item.billingCycle, now),
       });
+      // The coupon was redeemed above, so activation must not count it again.
+      const entitlement = await activatePaidEntitlement(pending);
+      if (coupon && entitlement) {
+        await Entitlement.updateOne({ _id: entitlement._id }, { $set: couponFields });
+      }
 
       logger.info('subscription_free_redemption', {
         action: 'subscription_free_redemption',
         userId: req.userId,
         source,
-        entitlementId: entitlement._id,
+        entitlementId: pending._id,
         couponCode: coupon?.code,
       });
 
       return sendResponse(res, HTTP_STATUS.CREATED, 'Unlocked for free', {
-        entitlementId: entitlement._id,
+        entitlementId: pending._id,
         free: true,
         amount: 0,
         currency: settings.currency,
@@ -343,8 +585,9 @@ export const createSubscriptionOrder = async (req, res, next) => {
     const user = await User.findById(req.userId);
     // Cashfree order ids must be unique per order — an entitlement can only
     // ever have one pending order at a time in practice, but a random suffix
-    // keeps a retried purchase attempt from colliding with itself.
-    const cashfreeOrderId = `sub_${entitlement._id}_${Date.now().toString(36)}`;
+    // keeps a retried purchase attempt from colliding with itself. The
+    // `sub_` prefix routes Cashfree's webhook here (see subscriptionPurchase.js).
+    const cashfreeOrderId = `${SUBSCRIPTION_ORDER_PREFIX}${entitlement._id}_${Date.now().toString(36)}`;
 
     let order;
     try {
@@ -397,6 +640,7 @@ export const createSubscriptionOrder = async (req, res, next) => {
       free: false,
       orderId: order.order_id,
       amount,
+      tax: taxBreakdown(listAmount, settings.tax),
       currency: settings.currency,
       paymentSessionId: order.payment_session_id,
       cashfreeMode: cashfreeMode(),
@@ -409,7 +653,7 @@ export const createSubscriptionOrder = async (req, res, next) => {
 
 /** POST /api/subscriptions/verify — verify a completed Cashfree checkout
  * and, only once Cashfree confirms the order was actually paid, activate
- * the Entitlement. */
+ * the Entitlement. The webhook does the same if the app never gets here. */
 export const verifySubscriptionPayment = async (req, res, next) => {
   try {
     const { entitlementId, orderId } = req.body;
@@ -430,87 +674,20 @@ export const verifySubscriptionPayment = async (req, res, next) => {
       return sendResponse(res, HTTP_STATUS.OK, 'Already active', entitlement);
     }
 
-    const cfOrder = await getOrderStatus(orderId);
-
-    // 'ACTIVE' means the order is still open — e.g. a UPI collect request
-    // the user hasn't approved in their UPI app yet, which can take up to a
-    // minute. That's "not paid yet", not a failure: a UPI-collect flow
-    // polls this endpoint every few seconds while waiting, and marking the
-    // entitlement 'failed' on the first poll would kill a payment that's
-    // still legitimately in flight. Only a terminal Cashfree status
-    // ('EXPIRED'/'TERMINATED'/'TERMINATION_REQUESTED') is a real failure.
-    if (cfOrder.order_status === 'ACTIVE') {
+    const { outcome, entitlement: settled } = await settleEntitlementOrder(entitlement);
+    if (outcome === 'pending') {
       return sendResponse(res, HTTP_STATUS.ACCEPTED, 'Payment still pending', { pending: true });
     }
-
-    if (cfOrder.order_status !== 'PAID') {
-      entitlement.status = 'failed';
-      await entitlement.save();
-      logger.error('subscription_payment_verify_failed', {
-        action: 'subscription_payment_verify_failed',
-        userId: req.userId,
-        entitlementId,
-        orderStatus: cfOrder.order_status,
-      });
-      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Payment verification failed');
+    if (outcome === 'active') {
+      return sendResponse(res, HTTP_STATUS.CREATED, 'Purchase activated', settled);
     }
-
-    const now = new Date();
-    const expiresAt = computeExpiryFromCycle(entitlement.billingCycle, now);
-
-    // Atomically claim pending -> active, same concurrency guard used by
-    // consultationController.verifyConsultationPayment: only the first of
-    // any concurrent /verify calls for this entitlement matches.
-    const claimed = await Entitlement.findOneAndUpdate(
-      { _id: entitlement._id, status: { $ne: 'active' } },
-      {
-        $set: {
-          status: 'active',
-          startedAt: now,
-          expiresAt,
-        },
-      },
-      { new: true },
-    ).populate('plan');
-
-    // Only counts once — findOneAndUpdate above only matches on the first
-    // of any concurrent /verify calls, so a retried/duplicate call (which
-    // lands on the `entitlement.status === 'active'` early return instead)
-    // never double-increments this. Uses the same atomic redeemCoupon guard
-    // as the free-unlock branch above so two *separate* pending Entitlements
-    // sharing one coupon (each independently passing its own per-entitlement
-    // claim guard) can't jointly over-redeem it. Payment already cleared via
-    // Cashfree by this point, so a `null` here (limit somehow exceeded by
-    // the time verify ran) only means the accounting undercounts — the
-    // entitlement still activates rather than leaving a paid user locked out.
-    if (claimed && entitlement.coupon) {
-      const couponDoc = await Coupon.findById(entitlement.coupon).select('perUserLimit');
-      const redeemed =
-        couponDoc &&
-        (await redeemCoupon(entitlement.coupon, entitlement.user, couponDoc.perUserLimit));
-      if (!redeemed) {
-        logger.warn('subscription_coupon_redeem_limit_race', {
-          action: 'subscription_coupon_redeem_limit_race',
-          userId: req.userId,
-          entitlementId: entitlement._id,
-          couponId: entitlement.coupon,
-        });
-      }
-    }
-
-    logger.info('subscription_purchased', {
-      action: 'subscription_purchased',
+    logger.error('subscription_payment_verify_failed', {
+      action: 'subscription_payment_verify_failed',
       userId: req.userId,
-      entitlementId: entitlement._id,
-      source: entitlement.source,
-      featureKey: entitlement.featureKey,
-      planId: entitlement.plan,
-      amount: entitlement.amount,
-      couponCode: entitlement.couponCode,
-      orderId,
+      entitlementId,
+      outcome,
     });
-
-    return sendResponse(res, HTTP_STATUS.CREATED, 'Purchase activated', claimed || entitlement);
+    return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Payment verification failed');
   } catch (error) {
     logger.error('subscription_verify_error', { userId: req.userId, error: error.message });
     next(error);

@@ -5,6 +5,9 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { buildPagination, getPagination, isValidObjectId } from '../utils/apiHelpers.js';
 import { uploadBufferToS3, deleteFromS3, getSignedViewUrl } from '../utils/s3.js';
 import { assertAllowedUpload } from '../utils/fileValidation.js';
+import { countPages, withinPageLimit } from '../utils/documentPages.js';
+import { getSettings, getUsageTier } from '../utils/subscriptionAccess.js';
+import { maxPagesFor } from '../utils/pricing.js';
 import {
   createChatCompletion,
   extractDocumentText,
@@ -81,6 +84,26 @@ export const uploadDocument = async (req, res, next) => {
       assertAllowedUpload(req.file.buffer, ['image', 'pdf']);
     } catch (validationError) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, validationError.message);
+    }
+
+    // Fair use: a document is read page by page by our AI provider, so long
+    // ones are refused while the page limit is on (utils/pricing.js).
+    const subscriptionSettings = await getSettings();
+    const maxPages = maxPagesFor(
+      subscriptionSettings.fairUse,
+      await getUsageTier(req.userId, subscriptionSettings),
+    );
+    if (maxPages != null) {
+      const pages = await countPages(req.file.buffer, req.file.mimetype);
+      if (!withinPageLimit(pages, maxPages)) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          success: false,
+          statusCode: HTTP_STATUS.BAD_REQUEST,
+          code: 'DOCUMENT_TOO_LONG',
+          message: `Documents can be up to ${maxPages} pages. This one has ${pages}.`,
+          details: { pages, maxPages },
+        });
+      }
     }
 
     const { key } = await uploadBufferToS3({

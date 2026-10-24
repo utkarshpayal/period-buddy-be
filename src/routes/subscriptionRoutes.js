@@ -19,6 +19,16 @@ router.get('/plans', optionalAuth, subscriptionController.getPlans);
 router.get('/features', optionalAuth, subscriptionController.getFeatures);
 
 /**
+ * @route   GET /api/subscriptions/pricing
+ * @desc    Premium monthly/yearly with the yearly saving, the founding offer
+ *          (only while live, and only if a signed-in caller is eligible),
+ *          add-ons with monthly and yearly prices, tax and fair-use limits.
+ *          Drawn by the app's My Subscription screen and the website.
+ * @access  Public (optional auth personalizes founding-offer eligibility)
+ */
+router.get('/pricing', optionalAuth, subscriptionController.getPricing);
+
+/**
  * @route   GET /api/subscriptions/me
  * @desc    The caller's own access summary (unlocked feature keys, entitlements)
  * @access  Private

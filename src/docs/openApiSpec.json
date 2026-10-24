@@ -22063,6 +22063,44 @@
         ]
       }
     },
+    "/api/subscriptions/pricing": {
+      "get": {
+        "tags": [
+          "Subscriptions & Paywall"
+        ],
+        "summary": "Premium monthly/yearly with the yearly saving, the founding offer",
+        "description": "Premium monthly/yearly with the yearly saving, the founding offer (only while live, and only if a signed-in caller is eligible), add-ons with monthly and yearly prices, tax and fair-use limits. Drawn by the app's My Subscription screen and the website.\n\n**Access:** Public (optional auth personalizes founding-offer eligibility)",
+        "operationId": "get__api_subscriptions_pricing",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/subscriptions/me": {
       "get": {
         "tags": [
@@ -23642,6 +23680,62 @@
         ],
         "description": "**Permission:** `subscriptions.read` (see `config/permissions.js`; Super Admin holds all).",
         "operationId": "get__api_admin_subscriptions_overview",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardSuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Missing or invalid JWT Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Insufficient permissions / role restriction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests - rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/subscriptions/usage": {
+      "get": {
+        "tags": [
+          "Admin Subscriptions"
+        ],
+        "description": "**Permission:** `subscriptions.read` (see `config/permissions.js`; Super Admin holds all).",
+        "operationId": "get__api_admin_subscriptions_usage",
         "responses": {
           "200": {
             "description": "Successful operation",

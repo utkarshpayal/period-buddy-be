@@ -27,6 +27,11 @@ export const FEATURE_ROUTES = [
   { key: 'document_chat', method: 'POST', path: /^\/api\/documents\/chat$/ },
   { key: 'document_chat', method: 'POST', path: /^\/api\/documents\/summarize$/ },
 
+  // 'health_reports' has no entry on purpose: POST /api/reports/health-report
+  // also feeds the free Graphs & Reports screens, so reportController gates
+  // only its AI summary (the doctor-ready part) by this key and the monthly
+  // report allowance, and returns the free stats to everyone.
+
   // PCOS/endometriosis/fibroid/thyroid symptom checker.
   { key: 'symptom_checker', method: 'POST', path: /^\/api\/screening\/assess$/ },
 
