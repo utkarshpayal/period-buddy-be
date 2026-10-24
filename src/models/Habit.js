@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { encryptFields } from '../utils/fieldEncryption.js';
 
 const habitSchema = new mongoose.Schema(
   {
@@ -11,6 +12,9 @@ const habitSchema = new mongoose.Schema(
     title: { type: String, required: true, trim: true, maxlength: 100 },
     icon: { type: String, default: 'calendar-outline' },
     color: { type: String, default: '#d946a6' },
+    // Why it was suggested ("You logged cramps on 3 days lately"), kept so the
+    // card can still say why. From health logs, so encrypted.
+    reason: { type: String, trim: true, maxlength: 120 },
 
     // rewardPoints replaces tokens
     rewardPoints: { type: Number, default: 30, min: 1, max: 200 },
@@ -35,5 +39,7 @@ const habitSchema = new mongoose.Schema(
 );
 
 habitSchema.index({ userId: 1, isActive: 1 });
+
+habitSchema.plugin(encryptFields, { fields: ['reason'] });
 
 export default mongoose.model('Habit', habitSchema);

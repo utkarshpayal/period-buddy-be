@@ -12,6 +12,21 @@ const router = express.Router();
 router.get('/', authenticate, habitController.getHabits);
 
 /**
+ * @route   GET /api/habits/suggestions
+ * @desc    Today's personalized habit suggestions (AI from recent logs when the
+ *          account allows AI, else rule-based); made once per local day and stored
+ * @access  Private
+ */
+router.get('/suggestions', authenticate, habitController.getHabitSuggestions);
+
+/**
+ * @route   POST /api/habits/suggestions/:key/dismiss
+ * @desc    "Not for me": hide a suggestion today and don't suggest it again for 14 days
+ * @access  Private
+ */
+router.post('/suggestions/:key/dismiss', authenticate, habitController.dismissHabitSuggestion);
+
+/**
  * @route   POST /api/habits
  * @desc    Create a new habit
  * @access  Private

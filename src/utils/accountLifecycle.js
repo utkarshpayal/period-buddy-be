@@ -48,6 +48,7 @@ import CheckinCall from '../models/CheckinCall.js';
 import CycleSettings from '../models/CycleSettings.js';
 import Habit from '../models/Habit.js';
 import HabitCompletion from '../models/HabitCompletion.js';
+import HabitSuggestionDay from '../models/HabitSuggestionDay.js';
 import ForestLog from '../models/ForestLog.js';
 import Document from '../models/Document.js';
 import DocumentChatMessage from '../models/DocumentChatMessage.js';
@@ -524,6 +525,7 @@ export const purgeAccount = async (userId) => {
     CheckinCall.deleteMany({ userId }),
     Habit.deleteMany({ userId }),
     HabitCompletion.deleteMany({ userId }),
+    HabitSuggestionDay.deleteMany({ userId }),
     ForestLog.deleteMany({ userId }),
     ConsultationMessage.deleteMany({ consultationId: { $in: consultationIds } }),
     Consultation.deleteMany({ _id: { $in: unpaidIds } }),
