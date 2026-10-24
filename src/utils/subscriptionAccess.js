@@ -2,7 +2,7 @@ import SubscriptionSettings from '../models/SubscriptionSettings.js';
 import SubscriptionFeature from '../models/SubscriptionFeature.js';
 import SubscriptionPlan from '../models/SubscriptionPlan.js';
 import Entitlement from '../models/Entitlement.js';
-import { expiryFrom, resolveUnlockedKeys, usageTier } from './pricing.js';
+import { resolveUnlockedKeys, usageTier } from './pricing.js';
 
 /**
  * The subscription system is a singleton row: read/write it only through
@@ -118,7 +118,3 @@ export const getFeatureLockPayload = async (featureKey) => {
     })),
   };
 };
-
-/** monthly -> +30d, yearly -> +365d, one_time -> never expires. */
-export const computeExpiryFromCycle = (billingCycle, from = new Date()) =>
-  expiryFrom(billingCycle, from);

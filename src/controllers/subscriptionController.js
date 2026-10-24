@@ -36,6 +36,16 @@ import {
 import logger from '../utils/logger.js';
 import { memo } from '../utils/memoCache.js';
 
+// What the buyer is told when a promo plan can't be bought (utils/pricing.js reasons).
+const OFFER_REFUSAL = {
+  inactive: 'This offer isn’t running right now.',
+  ended: 'This offer has ended.',
+  sold_out: 'All founding-member places have been taken.',
+  existing_member: 'The founding offer is for new Premium members.',
+  already_used: 'The founding offer can be used once per person.',
+  default: 'This offer isn’t available for your account.',
+};
+
 const fail = (status, message, extra = {}) =>
   Object.assign(new Error(message), { status, ...extra });
 
@@ -115,10 +125,14 @@ const resolvePurchasableItem = async (
         ? await checkFoundingEligibility(plan, userId)
         : foundingEligibility({ status: promoStatus(plan) });
       if (!eligibility.eligible) {
-        throw fail(HTTP_STATUS.FORBIDDEN, 'This offer isn’t available for your account', {
-          code: 'OFFER_NOT_ELIGIBLE',
-          reason: eligibility.reason,
-        });
+        throw fail(
+          HTTP_STATUS.FORBIDDEN,
+          OFFER_REFUSAL[eligibility.reason] || OFFER_REFUSAL.default,
+          {
+            code: 'OFFER_NOT_ELIGIBLE',
+            reason: eligibility.reason,
+          },
+        );
       }
     }
 

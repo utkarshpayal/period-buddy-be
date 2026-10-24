@@ -90,6 +90,16 @@ export const isUrgentAiMessage = (req) =>
     return typeof text === 'string' && hasUrgentPattern(text);
   });
 
+// What a person reads at the limit, per counted action.
+const FAIR_USE_MESSAGES = {
+  ai_message: (limit) =>
+    `You’ve used all ${limit} Nura AI messages for today. They reset at midnight. Urgent health questions are always answered.`,
+  document_upload: (limit) =>
+    `You’ve uploaded ${limit} ${limit === 1 ? 'document' : 'documents'} this month, the most for your plan. The limit resets on the 1st.`,
+  doctor_report: (limit) =>
+    `You’ve used this month’s ${limit === 1 ? 'doctor report' : `${limit} doctor reports`}. It resets on the 1st.`,
+};
+
 export const fairUse = (quotaKey) => async (req, res, next) => {
   if (!req.userId) return next();
   if (quotaKey === 'ai_message' && isUrgentAiMessage(req)) return next();
@@ -110,7 +120,9 @@ export const fairUse = (quotaKey) => async (req, res, next) => {
         success: false,
         statusCode: HTTP_STATUS.TOO_MANY_REQUESTS,
         code: 'FAIR_USE_LIMIT',
-        message: 'You’ve reached this period’s fair-use limit for this feature.',
+        message:
+          FAIR_USE_MESSAGES[quotaKey]?.(limit) ||
+          'You’ve reached the fair-use limit for this feature.',
         quota: { key: quotaKey, limit, tier, resetsAt: result.resetsAt },
       });
     }
