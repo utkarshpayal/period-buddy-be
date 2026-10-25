@@ -17,7 +17,7 @@ import { broadcastToRoom } from '../config/websocket.js';
 import logger from '../utils/logger.js';
 import { aiAllowed } from '../utils/privacy.js';
 import { withAiSafety } from '../utils/aiSafety.js';
-import { URGENT_COMPANION_REPLY, hasUrgentPattern } from '../utils/companionChat.js';
+import { hasUrgentPattern, urgentReplyFor } from '../utils/companionChat.js';
 import { syncPrescriptionDocuments } from '../utils/prescriptionDocumentStore.js';
 
 /**
@@ -398,7 +398,7 @@ export const sendChatMessage = async (req, res, next) => {
 
     // Deterministic urgent check (same patterns as Nura Companion): the urgent
     // guidance is always put first, whatever the model says.
-    const urgentPrefix = hasUrgentPattern(message) ? `${URGENT_COMPANION_REPLY}\n\n` : '';
+    const urgentPrefix = hasUrgentPattern(message) ? `${urgentReplyFor(null, message)}\n\n` : '';
 
     if (!documents.length) {
       const reply = `${urgentPrefix}I don't see any uploaded documents yet. Add a report, prescription, or bill from the Documents screen and I can help you understand it.`;

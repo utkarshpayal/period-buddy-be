@@ -102,6 +102,10 @@ Rules:
 export const URGENT_VOICE_REPLY =
   "That sounds like it could need medical help right away. If you're bleeding very heavily, feeling faint, in severe pain, or pregnant with pain or bleeding, please call 112 now or go to the nearest hospital. Bleeding after sex or after menopause isn't an emergency, but please see a doctor soon. If you're thinking of harming yourself, call Tele-MANAS on 14416, any time.";
 
+/** URGENT_VOICE_REPLY in Hindi, for Hindi voice mode (TTS reads Devanagari). */
+export const URGENT_VOICE_REPLY_HI =
+  'यह ऐसा लग रहा है कि आपको तुरंत डॉक्टरी मदद की ज़रूरत हो सकती है। अगर बहुत ज़्यादा खून आ रहा है, बेहोशी जैसा लग रहा है, बहुत तेज़ दर्द है, या गर्भावस्था में दर्द या खून आ रहा है, तो अभी 112 पर कॉल करें या नज़दीकी अस्पताल जाएँ। सेक्स के बाद या मेनोपॉज़ के बाद खून आना इमरजेंसी नहीं है, लेकिन जल्द ही डॉक्टर को दिखाएँ। अगर आपके मन में खुद को नुकसान पहुँचाने के विचार आ रहे हैं, तो Tele-MANAS को 14416 पर कभी भी कॉल करें।';
+
 const LANGUAGE_NAMES = {
   'hi-IN': 'Hindi (Devanagari script)',
   'bn-IN': 'Bengali (Bengali script)',
@@ -217,7 +221,7 @@ export const converse = async (req, res, next) => {
       });
       return sendResponse(res, HTTP_STATUS.OK, 'Agent replied', {
         type: 'answer',
-        text: URGENT_VOICE_REPLY,
+        text: language === 'hi-IN' ? URGENT_VOICE_REPLY_HI : URGENT_VOICE_REPLY,
         urgent: true,
       });
     }
