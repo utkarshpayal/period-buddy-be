@@ -13,6 +13,7 @@ import { loadPredictionLogs } from './predictionLogs.js';
 import { createChatCompletion, getLanguageLabel, isAiConfigured } from './sarvamClient.js';
 import logger from './logger.js';
 import { AGE_BANDS, ageBandInstruction, computeAgeFromDob, withAiSafety } from './aiSafety.js';
+import { richTextToPlain } from './richText.js';
 
 export const DEFAULT_COMPANION_REPLY =
   'That is a valid thing to wonder about. I do not have a precise match yet, but you can ask in everyday words about brown blood, period cramps, hygiene, discharge, PMS, contraception, cycle tracking, or intimacy.';
@@ -336,7 +337,8 @@ const normalizeQueryTerms = (query) => {
 const scoreQuestionAnswer = (qa, query, terms) => {
   const normalizedQuery = query.toLowerCase();
   const question = String(qa.question || '').toLowerCase();
-  const answer = String(qa.answer || '').toLowerCase();
+  // Answers are rich text (see utils/richText.js): score the words, not the markup.
+  const answer = richTextToPlain(qa.answer).toLowerCase();
   const shortAnswer = String(qa.shortAnswer || '').toLowerCase();
   const tags = (qa.tags || []).join(' ').toLowerCase();
   const haystack = `${question} ${shortAnswer} ${answer} ${tags}`;

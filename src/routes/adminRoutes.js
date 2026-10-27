@@ -5,6 +5,7 @@ import User from '../models/User.js';
 import PushSchedule from '../models/PushSchedule.js';
 import * as adminController from '../controllers/adminController.js';
 import * as adminNotificationController from '../controllers/adminNotificationController.js';
+import * as adminAutoNotificationController from '../controllers/adminAutoNotificationController.js';
 import * as staffController from '../controllers/staffController.js';
 import * as changeRequestController from '../controllers/changeRequestController.js';
 import { authenticate } from '../middleware/authMiddleware.js';
@@ -67,6 +68,26 @@ const isWidePush = ({ audience, userIds } = {}) =>
 const describeRecipients = ({ audience, userIds } = {}) =>
   audience === 'selected' ? `${userIds?.length ?? 0} selected users` : audience || 'everyone';
 
+/**
+ * @route   GET /api/admin/notifications/automatic
+ * @desc    Automatic cycle notifications: each category, whether it's on for everyone, how many people have it on, and sends/opens in the last 7 days
+ * @access  Private (push.read)
+ */
+router.get(
+  '/notifications/automatic',
+  requirePermission(P.PUSH_READ),
+  adminAutoNotificationController.getAutomaticNotifications,
+);
+/**
+ * @route   PUT /api/admin/notifications/automatic
+ * @desc    Turn one automatic category on or off for everyone. Body: { key, enabled }
+ * @access  Private (push.broadcast)
+ */
+router.put(
+  '/notifications/automatic',
+  requirePermission(P.PUSH_BROADCAST),
+  adminAutoNotificationController.setAutomaticNotification,
+);
 router.get(
   '/notifications/audience',
   requirePermission(P.PUSH_READ),

@@ -416,3 +416,29 @@ export const summarizeRecentLog = (log, todayKey) => {
   if (log.sleepHours) bits.push(`slept ${log.sleepHours} hours`);
   return bits.length ? `${when}: ${bits.join('; ')}.` : '';
 };
+
+/**
+ * Agent variables go into the voice agent's prompt: one clean line each,
+ * capped, so a long summary or a note with line breaks or control
+ * characters can never make Sarvam reject the whole call.
+ */
+export const cleanAgentVariable = (value, max = 500) =>
+  String(value ?? '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, max)
+    .trim();
+
+/**
+ * Why a call failed, as a category the app explains in plain words; the raw
+ * provider message stays on the server (logs, the call record).
+ */
+export const failureKindOf = (reason) => {
+  if (!reason) return null;
+  const r = String(reason).toLowerCase();
+  if (r.includes('not configured')) return 'not_configured';
+  if (r.includes('phone number')) return 'no_phone';
+  return 'provider';
+};

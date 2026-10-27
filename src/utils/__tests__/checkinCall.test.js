@@ -276,3 +276,19 @@ test('inFirstCallWindow matches planScheduledAttempt for a day with no automatic
   }
   assert.equal(inFirstCallWindow({ clock: { minutes: 10 }, scheduledMinutes: null }), false);
 });
+
+test('agent variables are one clean, capped line', async () => {
+  const { cleanAgentVariable } = await import('../checkinCall.js');
+  assert.equal(cleanAgentVariable('Cramps\n\nand\tbloating  \u0007 ok'), 'Cramps and bloating ok');
+  assert.equal(cleanAgentVariable(null), '');
+  assert.equal(cleanAgentVariable('a'.repeat(900)).length, 500);
+  assert.equal(cleanAgentVariable('word word', 5), 'word');
+});
+
+test('a failed call is explained by kind, never by the raw provider text', async () => {
+  const { failureKindOf } = await import('../checkinCall.js');
+  assert.equal(failureKindOf(null), null);
+  assert.equal(failureKindOf('Check-in calling is not configured on the server'), 'not_configured');
+  assert.equal(failureKindOf('Add a phone number to your account first'), 'no_phone');
+  assert.equal(failureKindOf('(422) Invalid Parameter: [{"loc":["body"]}]'), 'provider');
+});

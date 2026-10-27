@@ -77,6 +77,7 @@ export const AUDIT_ACTIONS = {
   PUSH_BROADCAST_CANCELLED: 'push_broadcast.cancelled',
   PUSH_BROADCAST_RETRIED: 'push_broadcast.retried',
   PUSH_TEST_SENT: 'push_test.sent',
+  AUTO_NOTIFICATION_UPDATED: 'auto_notification.updated',
   PUSH_SCHEDULE_CREATED: 'push_schedule.created',
   PUSH_SCHEDULE_UPDATED: 'push_schedule.updated',
   PUSH_SCHEDULE_PAUSED: 'push_schedule.paused',
