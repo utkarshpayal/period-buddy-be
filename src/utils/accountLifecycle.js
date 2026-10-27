@@ -48,6 +48,8 @@ import CheckinCall from '../models/CheckinCall.js';
 import CycleSettings from '../models/CycleSettings.js';
 import Habit from '../models/Habit.js';
 import HabitCompletion from '../models/HabitCompletion.js';
+import HabitSuggestionDay from '../models/HabitSuggestionDay.js';
+import ForestGarden from '../models/ForestGarden.js';
 import ForestLog from '../models/ForestLog.js';
 import Document from '../models/Document.js';
 import DocumentChatMessage from '../models/DocumentChatMessage.js';
@@ -60,6 +62,7 @@ import SchemeApplication from '../models/SchemeApplication.js';
 import Newsletter from '../models/Newsletter.js';
 import ContactMessage from '../models/ContactMessage.js';
 import SupportTicket from '../models/SupportTicket.js';
+import SymptomRecord from '../models/SymptomRecord.js';
 import BlogReader from '../models/BlogReader.js';
 import PendingSignup from '../models/PendingSignup.js';
 import { broadcastToRoom, disconnectUser } from '../config/websocket.js';
@@ -524,7 +527,9 @@ export const purgeAccount = async (userId) => {
     CheckinCall.deleteMany({ userId }),
     Habit.deleteMany({ userId }),
     HabitCompletion.deleteMany({ userId }),
+    HabitSuggestionDay.deleteMany({ userId }),
     ForestLog.deleteMany({ userId }),
+    ForestGarden.deleteMany({ userId }),
     ConsultationMessage.deleteMany({ consultationId: { $in: consultationIds } }),
     Consultation.deleteMany({ _id: { $in: unpaidIds } }),
     Consultation.updateMany(
@@ -550,6 +555,7 @@ export const purgeAccount = async (userId) => {
     LaunchInterest.deleteMany({ user: userId }),
     QaChatSession.deleteMany({ userId }),
     SupportTicket.deleteMany({ userId }),
+    SymptomRecord.deleteMany({ userId }),
     BlogReader.deleteMany({ userId }),
     SchemeApplication.deleteMany({ userId }),
     PartnerMessage.deleteMany({ partnerId: { $in: partnerRows.map((row) => row._id) } }),

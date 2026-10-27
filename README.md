@@ -124,10 +124,12 @@ Details, logs, rollback and troubleshooting: [docs/INFRASTRUCTURE.md](docs/INFRA
 
 ## Contributing
 
-1. Branch from `main`, open a PR (the template has a checklist).
-2. CI runs `npm ci`, `npm run lint`, `npm test` on every PR.
+Full flow: [WORKFLOW.md](https://github.com/utkarshpayal/period-buddy/blob/main/docs/WORKFLOW.md).
+
+1. Branch from `staging` (`feat/…`, `fix/…`), open a PR to `staging` (the template has a checklist). Releases are `staging` → `main` PRs.
+2. CI runs `npm ci`, `npm run lint`, `npm test` on every PR and push to `staging` and `main`.
 3. New route? Add the `@route/@desc/@access` JSDoc and run `npm run swagger:generate`.
-4. New env var? Add it to `.env.example` **and** the production secret (see INFRASTRUCTURE.md §7).
+4. New env var? Add it to `.env.example` **and** both secrets, `nura/api/env` and `nura-stage/api/env` (see INFRASTRUCTURE.md §7).
 5. Never commit `.env*` files or service-account keys (they're gitignored).
 
 License: ISC.

@@ -57,7 +57,7 @@ export const FEATURE_CATALOG = [
   {
     key: 'symptomTrends',
     title: 'Symptom Trends',
-    description: 'Likely by cycle phase',
+    description: 'Where and when they show up',
     icon: 'pulse-outline',
     route: '/(app)/symptom-predictions',
     placement: 'care_hub',

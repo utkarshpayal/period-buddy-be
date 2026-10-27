@@ -6,6 +6,7 @@ import { withAiSafety } from '../utils/aiSafety.js';
 import { hasUrgentPattern } from '../utils/companionChat.js';
 import {
   isSamvaadConfigured,
+  missingSamvaadConfig,
   startCheckinCall,
   WEBHOOK_TOKEN_SCOPE,
 } from '../utils/samvaadClient.js';
@@ -31,6 +32,7 @@ import {
   checkinDateKey,
   classifyCallOutcome,
   describeCycleContext,
+  failureKindOf,
   localClock,
   localMomentToDate,
   parseTimeOfDay,
@@ -101,6 +103,10 @@ Rules:
 // model slip can't reassure someone who needs care now.
 export const URGENT_VOICE_REPLY =
   "That sounds like it could need medical help right away. If you're bleeding very heavily, feeling faint, in severe pain, or pregnant with pain or bleeding, please call 112 now or go to the nearest hospital. Bleeding after sex or after menopause isn't an emergency, but please see a doctor soon. If you're thinking of harming yourself, call Tele-MANAS on 14416, any time.";
+
+/** URGENT_VOICE_REPLY in Hindi, for Hindi voice mode (TTS reads Devanagari). */
+export const URGENT_VOICE_REPLY_HI =
+  'यह ऐसा लग रहा है कि आपको तुरंत डॉक्टरी मदद की ज़रूरत हो सकती है। अगर बहुत ज़्यादा खून आ रहा है, बेहोशी जैसा लग रहा है, बहुत तेज़ दर्द है, या गर्भावस्था में दर्द या खून आ रहा है, तो अभी 112 पर कॉल करें या नज़दीकी अस्पताल जाएँ। सेक्स के बाद या मेनोपॉज़ के बाद खून आना इमरजेंसी नहीं है, लेकिन जल्द ही डॉक्टर को दिखाएँ। अगर आपके मन में खुद को नुकसान पहुँचाने के विचार आ रहे हैं, तो Tele-MANAS को 14416 पर कभी भी कॉल करें।';
 
 const LANGUAGE_NAMES = {
   'hi-IN': 'Hindi (Devanagari script)',
@@ -217,7 +223,7 @@ export const converse = async (req, res, next) => {
       });
       return sendResponse(res, HTTP_STATUS.OK, 'Agent replied', {
         type: 'answer',
-        text: URGENT_VOICE_REPLY,
+        text: language === 'hi-IN' ? URGENT_VOICE_REPLY_HI : URGENT_VOICE_REPLY,
         urgent: true,
       });
     }
@@ -291,13 +297,27 @@ const httpError = (message, status, extra = {}) =>
 const CALLING_UNAVAILABLE_MESSAGE = 'Calling is busy right now. Please try again in a few minutes.';
 
 const CALL_HISTORY_FIELDS =
-  'source dateKey status outcome durationSeconds summary loggedFields retryAt endedAt createdAt';
+  'source dateKey status outcome durationSeconds summary loggedFields retryAt endedAt createdAt failureReason';
+
+const toHistoryRow = ({ failureReason, ...call }) => ({
+  ...call,
+  failureKind:
+    call.status === 'failed' || call.outcome === 'failed' ? failureKindOf(failureReason) : null,
+});
 
 /** Throws the expected, user-fixable reasons a call can't be placed. */
 const loadCallableUser = async (userId) => {
   if (!isSamvaadConfigured()) {
+    // Names only, never values. Shown to the caller outside production so a
+    // local setup says what to fill in.
+    const missing = missingSamvaadConfig();
+    logger.warn(
+      `Check-in calling not configured; missing: ${missing.join(', ') || '(none empty: restart the server)'}`,
+    );
     throw httpError(
-      'Check-in calling is not configured on the server',
+      process.env.NODE_ENV === 'production' || !missing.length
+        ? 'Check-in calling is not configured on the server'
+        : `Check-in calling is not configured on the server (missing ${missing.join(', ')})`,
       HTTP_STATUS.SERVICE_UNAVAILABLE,
     );
   }
@@ -559,7 +579,7 @@ const buildScheduleResponse = async (userId, settings) => {
     time: settings.checkinCallTime || null,
     periodLength: settings.periodLength || 5,
     nextCallAt: nextCallAt ? nextCallAt.toISOString() : null,
-    lastCall: lastCall || null,
+    lastCall: lastCall ? toHistoryRow(lastCall) : null,
     limits: {
       maxCallMinutes: 5,
       manualCallsPerDay: CALL_LIMITS.manualPerDay,
@@ -681,7 +701,9 @@ export const getCheckinCallHistory = async (req, res, next) => {
       .limit(limit)
       .select(CALL_HISTORY_FIELDS)
       .lean();
-    return sendResponse(res, HTTP_STATUS.OK, 'Check-in call history fetched', { calls });
+    return sendResponse(res, HTTP_STATUS.OK, 'Check-in call history fetched', {
+      calls: calls.map(toHistoryRow),
+    });
   } catch (error) {
     next(error);
   }

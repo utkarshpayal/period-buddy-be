@@ -2,6 +2,7 @@ import SubscriptionFeature from '../models/SubscriptionFeature.js';
 import SubscriptionPlan from '../models/SubscriptionPlan.js';
 import Entitlement from '../models/Entitlement.js';
 import Coupon from '../models/Coupon.js';
+import UsageCounter from '../models/UsageCounter.js';
 import { sendResponse, sendError } from '../utils/sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import {
@@ -14,6 +15,7 @@ import {
   sendPaginatedList,
 } from '../utils/apiHelpers.js';
 import { getSettings } from '../utils/subscriptionAccess.js';
+import { QUOTAS } from '../utils/pricing.js';
 import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
 import logger from '../utils/logger.js';
 
@@ -24,7 +26,27 @@ const SETTINGS_FIELDS = [
   'currency',
   'allowFeatureWisePurchase',
   'graceDays',
+  'tax',
+  'fairUse',
+  'unitCostInr',
 ];
+
+/**
+ * Applies `updates` to a mongoose doc, merging plain objects field by field
+ * (`doc.set('fairUse.aiMessagesPerDay.free', 30)`) instead of replacing them,
+ * so a partial update to one limit never resets its siblings to defaults.
+ * `skip` lists dotted paths an admin may not write.
+ */
+const assignNested = (doc, updates, skip = [], prefix = '') => {
+  for (const [key, value] of Object.entries(updates)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (skip.includes(path)) continue;
+    const isPlainObject =
+      value && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date);
+    if (isPlainObject) assignNested(doc, value, skip, path);
+    else doc.set(path, value);
+  }
+};
 
 /** GET /api/admin/subscriptions/settings */
 export const getSubscriptionSettings = async (req, res, next) => {
@@ -41,7 +63,7 @@ export const updateSubscriptionSettings = async (req, res, next) => {
   try {
     const updates = pickDefined(req.body, SETTINGS_FIELDS);
     const settings = await getSettings();
-    Object.assign(settings, updates);
+    assignNested(settings, updates);
     await settings.save();
 
     logger.info(`Admin ${req.user?._id} updated subscription settings`, {
@@ -72,6 +94,7 @@ const FEATURE_FIELDS = [
   'isPremium',
   'price',
   'billingCycle',
+  'yearlyPrice',
   'isActive',
   'sortOrder',
 ];
@@ -207,7 +230,12 @@ const PLAN_FIELDS = [
   'isActive',
   'sortOrder',
   'badge',
+  'family',
+  'promo',
 ];
+
+// Counted by the server only (utils/subscriptionPurchase.js), never set by hand.
+const PLAN_READ_ONLY = ['promo.redeemedCount'];
 
 const slugify = (value) =>
   String(value)
@@ -230,6 +258,7 @@ export const adminListPlans = async (req, res, next) => {
 export const createPlan = async (req, res, next) => {
   try {
     const payload = pickDefined(req.body, PLAN_FIELDS);
+    if (payload.promo) delete payload.promo.redeemedCount;
     if (!payload.name || !String(payload.name).trim()) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'A plan name is required');
     }
@@ -283,7 +312,7 @@ export const updatePlan = async (req, res, next) => {
       updates.slug = attempt;
     }
 
-    Object.assign(plan, updates);
+    assignNested(plan, updates, PLAN_READ_ONLY);
     await plan.save();
 
     logger.info(`Admin ${req.user?._id} updated subscription plan ${plan.slug}`);
@@ -556,6 +585,62 @@ export const getOverview = async (req, res, next) => {
       revenueByFeature,
       recentTransactions: recent,
       pagination: buildPagination({ page, limit, total }),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/* -------------------------------- Usage -------------------------------- */
+
+/** GET /api/admin/subscriptions/usage?month=YYYY-MM — this month's counted
+ * actions (AI messages, document uploads, doctor reports): total units, how
+ * many people used them, the heaviest single user's count, and an estimated
+ * cost from SubscriptionSettings.unitCostInr (0 until real provider costs are
+ * entered). Counts only: nothing about what anyone asked or uploaded. */
+export const getUsageOverview = async (req, res, next) => {
+  try {
+    const month = /^\d{4}-\d{2}$/.test(String(req.query.month || ''))
+      ? String(req.query.month)
+      : new Date(Date.now() + 330 * 60000).toISOString().slice(0, 7);
+    const settings = await getSettings();
+    const rows = await UsageCounter.aggregate([
+      { $match: { period: { $in: [`m:${month}`] } } },
+      {
+        $unionWith: {
+          coll: 'usagecounters',
+          pipeline: [{ $match: { period: { $regex: `^d:${month}-` } } }],
+        },
+      },
+      { $group: { _id: { key: '$key', user: '$user' }, count: { $sum: '$count' } } },
+      {
+        $group: {
+          _id: '$_id.key',
+          total: { $sum: '$count' },
+          users: { $sum: 1 },
+          maxPerUser: { $max: '$count' },
+        },
+      },
+    ]);
+    const items = Object.keys(QUOTAS).map((key) => {
+      const row = rows.find((r) => r._id === key);
+      const unitCost = settings.unitCostInr?.[key] || 0;
+      const total = row?.total || 0;
+      return {
+        key,
+        total,
+        users: row?.users || 0,
+        maxPerUser: row?.maxPerUser || 0,
+        unitCostInr: unitCost,
+        estimatedCostInr: Math.round(total * unitCost * 100) / 100,
+      };
+    });
+    return sendResponse(res, HTTP_STATUS.OK, 'Usage fetched', {
+      month,
+      items,
+      estimatedCostInr:
+        Math.round(items.reduce((sum, i) => sum + i.estimatedCostInr, 0) * 100) / 100,
+      costKnown: items.every((i) => i.unitCostInr > 0),
     });
   } catch (error) {
     next(error);

@@ -369,6 +369,8 @@ Blog payload:
 
 Blog `category` is one of `general`, `health`, `lifestyle`, `beauty` (any case; defaults to `general`, anything else is a `400`). `readTimeMinutes` is not accepted: it is computed from `content` (~200 words a minute, at least 1) on every create and update.
 
+**Rich text.** Blog `content`, Q&A `answer`, health issue `guide`/`symptoms`/`causes`/`treatment`/`prevention`/`whenToSeeDoctor` and guide `extendedGuide` items are written by the admin's rich editor: Markdown (GFM tables) plus `<span data-color="…">`, `<mark data-color="…">`, `<u>` and fenced ` ```chart ` blocks holding chart JSON (`{ type: "bar"|"line"|"pie", title?, caption?, unit?, labels: [], series: [{ name, values: [] }] }`). Colors are palette names (text: rose, violet, blue, teal, green, amber, red, gray; highlight: yellow, pink, green, blue, violet). The API stores the text as sent; the website and app drop any other HTML when rendering. Fields the app shows as lists stay one item per line. Reading time and Q&A matching ignore the markup (`utils/richText.js`), and `POST /api/blogs/:slug/translate` passes chart blocks and image-only paragraphs through untouched and drops the color/underline tags from the translated text.
+
 Video payload:
 
 ```json
@@ -660,7 +662,7 @@ Response:
 
 ### GET `/api/habits`
 
-Seeds default habits if the user has none.
+No starter habits are seeded: a new person starts with none and adds from `/api/habits/suggestions`. "Today" (`completed`, and every toggle) is the phone's local day from `X-Timezone-Offset`, the same day Forest and day logs use. `week` is the last 7 local days, oldest first (`[{ dateKey, done }]`), and `reason` is why it was suggested (set on create, stored encrypted). `streak` counts back from today, or from yesterday while today isn't ticked yet, so a streak doesn't show 0 in the morning (`utils/habitDays.js`).
 
 Response:
 
@@ -681,7 +683,35 @@ Payload:
 { "title": "Sleep 8 Hours", "icon": "moon-outline", "color": "#7c3aed", "tokens": 45 }
 ```
 
+Optional `reason` (≤ 120, the suggestion's reason, kept on the habit), and `suggestionKey` / `suggestionSource` (`ai` | `rules`) when it came from a suggestion; they're only logged (`habit_created`), to compare how often AI and rule picks are taken. A person may have up to 20 active habits; past that it answers `409`.
+
 Response: created habit.
+
+### GET `/api/habits/suggestions`
+
+Today's personalized habit picks: always 10 (`MAX_SUGGESTIONS`) once anything is logged in the last 14 days. The first call of the person's local day (`X-Timezone-Offset`) makes them from the last 14 days of cycle logs, today's phase and the tracking goal: by AI (Sarvam, `utils/habitSuggestionsAi.js`) when the account allows AI (`aiAllowed`), otherwise, or if the AI call fails, by the rules in `utils/habitSuggestions.js`. They're stored per user and day in `HabitSuggestionDay` (encrypted, expires after 30 days) and served unchanged for the rest of the day. Picks that answer her logs come first; the rest are topped up for today's phase and her goal from a curated catalog (`HABIT_CATALOG`, `topUp`), spread across sleep, food, movement, mind and care. 16 are stored (`STORED_SUGGESTIONS`, with the `context` phase/goal they were made for) and the response is always exactly 10: the stored picks not dismissed and not already a habit, topped up live from the catalog when adds and dismissals leave fewer. Habits dismissed or removed lately are skipped while anything else fits, and come back only to make up 10 (ones her logs point to first). With nothing logged in that window the response is `needsLogs: true` with no suggestions, and nothing is stored, so the first call after she logs makes real picks. Habits the person already has, and picks dismissed today, are left out of each response. Habits dismissed or removed in the last 14 days are listed to the AI as "not for her" and only used to make up 10. The AI call is cut off after 25 s; when the AI was allowed but failed, the rules' picks are stored with `aiFailed` and the AI is tried again on the next call after 30 minutes (an AI answer then replaces them).
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "dateKey": "2026-10-22",
+    "source": "ai",
+    "needsLogs": false,
+    "suggestions": [
+      { "key": "warm-compress", "title": "Warm Compress for 15 Minutes", "icon": "thermometer-outline", "category": "care", "rewardPoints": 25, "reason": "You logged cramps on 3 days lately" }
+    ]
+  }
+}
+```
+
+`category` is one of `sleep`, `nutrition`, `movement`, `mind`, `care`. Add one with `POST /api/habits` (`title`, `icon`, `rewardPoints`, `suggestionKey`, `suggestionSource`).
+
+### POST `/api/habits/suggestions/:key/dismiss`
+
+"Not for me": hides that pick for the rest of today and keeps it out of suggestions for 14 days. `key` is the suggestion's `key` (letters, digits, `-`, up to 60). Always `200` for a valid key, even if today's picks aren't stored yet.
 
 ### PATCH `/api/habits/:id/toggle`
 
@@ -694,6 +724,66 @@ Response:
 ### DELETE `/api/habits/:id`
 
 Soft-deletes the habit.
+
+## Body Map symptoms
+
+Symptoms the person places on the app's Body Map (Care & Insights → Body Map). Self-reported, never a diagnosis. All four routes need a session and only ever see the caller's own records. `note` and `customName` are encrypted at rest. Rules: `src/utils/symptomRecord.js` (unit-tested).
+
+Fields:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `symptomKey` | slug ≤ 40 | The app's day-log tag (`cramps`, `headache`…) or `other` |
+| `customName` | string ≤ 60 | Required when `symptomKey` is `other` |
+| `regionId` | enum | `head`, `face`, `neck`, `chest`, `breast`, `upper_abdomen`, `lower_abdomen`, `pelvis`, `genital`, `upper_back`, `lower_back`, `buttock`, `shoulder`, `arm`, `hand`, `hip`, `thigh`, `knee`, `lower_leg`, `foot`, `whole_body`. Stable ids, mirrored in the app's `lib/bodyRegions.ts` |
+| `side` | `center` \| `left` \| `right` \| `both` | Must be allowed for the region (`BODY_REGIONS`); defaults to the only side, else `both` |
+| `severity` | integer 1–10 | Required |
+| `status` | `active` \| `resolved` | Default `active` |
+| `onsetDate` | `YYYY-MM-DD` | Required, not after the phone's today (`X-Timezone-Offset`) |
+| `resolvedDate` | `YYYY-MM-DD` \| null | Set to today when resolved without one; cleared when re-opened; not before `onsetDate` |
+| `frequency` | `once` \| `occasional` \| `daily` \| `weekly` \| `cyclical` \| `constant` \| null | Optional |
+| `associatedSymptoms` | slug[] ≤ 10 | Deduped; the symptom itself is dropped |
+| `note` | string ≤ 1000 | Optional |
+
+### GET `/api/symptom-records`
+
+Optional `?status=active|resolved`. Newest onset first, at most 500.
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "recordId",
+      "symptomKey": "cramps",
+      "customName": null,
+      "regionId": "lower_abdomen",
+      "side": "left",
+      "severity": 6,
+      "status": "active",
+      "onsetDate": "2026-10-24",
+      "resolvedDate": null,
+      "frequency": "cyclical",
+      "associatedSymptoms": ["backache"],
+      "note": "Worse in the morning",
+      "createdAt": "2026-10-24T08:00:00.000Z",
+      "updatedAt": "2026-10-24T08:00:00.000Z"
+    }
+  ]
+}
+```
+
+### POST `/api/symptom-records`
+
+Payload: the fields above (`symptomKey`, `regionId`, `severity`, `onsetDate` required). Response `201` with the record. `400` with a plain message for invalid input; `409` once the account holds 500 records.
+
+### PATCH `/api/symptom-records/:id`
+
+Any subset of the fields. `{ "status": "resolved" }` marks it resolved today. Response: the updated record; `404` if it isn't the caller's.
+
+### DELETE `/api/symptom-records/:id`
+
+Response: `{ "deleted": true }`; `404` if it isn't the caller's.
 
 ## Wellness Forest
 
@@ -734,6 +824,14 @@ Response: forest log, token award, updated status.
 ### GET `/api/forest/logs?month=YYYY-MM&page=1&limit=20`
 
 Response: paginated forest care logs.
+
+### GET `/api/forest/garden?today=YYYY-MM-DD`
+
+The tree-care game, advanced to now: `moisture`, `nutrients`, `health` (0–100), `soggy`, `mulched`, `mulchHoursLeft`, `hoursUntilThirsty`, `weeds` (`{id,x,z}`), `pests` and `deadLeaves` (`{id,leaf}`, `leaf` a slot 0–999), `compost`, `mulch`, `xp`, `level`, `levelProgress`, `xpToNextLevel`, `xpToday`, `dailyXpCap`, `decorations`, `nextDecoration`, `needs` (`{key,label,urgent}`). Rules: `src/utils/garden.js`.
+
+### POST `/api/forest/garden/action`
+
+Payload: `{ "type": "water" | "weed" | "shoo" | "prune" | "fertilize" | "mulch", "id"?: number, "seconds"?: number, "today"?: "YYYY-MM-DD" }`. Response: `{ garden, xp, message, tokensEarned, status }` (`status` is the forest status after watering, which also counts as the day's water task). `400` with a plain message when refused (already gone, no compost, not hungry, mulch still fresh).
 
 ## Partner Sync
 
@@ -1602,6 +1700,20 @@ Create payload:
 
 All routes require an `admin` JWT. Broadcasts are sent in the background in batches of up to 500 users (one FCM `sendEach` call per batch). Progress is saved after every batch, so a crash or deploy resumes from the last completed batch. Only one audience-wide broadcast can be queued or sending at a time; sends to hand-picked users (`audience: "selected"`) run in a separate lane, so they're never blocked by or stuck behind a large broadcast.
 
+### GET `/api/notifications/preferences`
+The signed-in person's automatic notification settings. Also stamps the phone's timezone (`X-Timezone-Offset`) so they go out at local time. Returns `{ push, cycleSetUp, pregnancyMode, time, reminderDaysBefore, categories: [{ key, label, description, enabled, available, pausedInPregnancy }] }`. Keys: `health_alerts`, `period_late`, `period_upcoming` (= `remindersEnabled`), `period_start`, `fertile_window` (= `ovulationReminder`/`fertilityReminder`), `symptom_heads_up`, `phase_tips`, `daily_log`. `available: false` = an admin turned it off for everyone.
+
+### PUT `/api/notifications/preferences`
+Body, any of: `push` (boolean, = `User.notificationsEnabled`), `time` (`HH:mm`, local), `reminderDaysBefore` (0–10), `categories` (`{ key: boolean }`). Returns the same as GET. `409` when a cycle setting is changed before cycle tracking is set up.
+
+How they're sent: the hourly tick (`POST /api/notifications/daily-tick` or the in-process scheduler) gives each person what's due on their local today once their local time reaches `time` (default 09:00), never after 22:00, at most 2 a day (most important first; the daily log reminder only when nothing else went out). Pregnancy mode pauses all but the daily log reminder. Each has `data.route` (where a tap opens), `data.icon` and `data.autoKey`.
+
+### GET `/api/admin/notifications/automatic`
+Automatic cycle notifications (`utils/autoNotifications.js`), for the Content Studio's Automatic Notifications page. `push.read`. Returns `{ users, pregnancyMode, statsDays, updatedAt, categories: [{ key, label, description, defaultOn, enabled, usersOn, sent, read }] }`: `users` = live accounts with cycle tracking, `enabled: false` = turned off for everyone, `usersOn` = people with it switched on, `sent`/`read` = inbox rows (`data.autoKey`) in the last 7 days and how many were opened. Counts only.
+
+### PUT `/api/admin/notifications/automatic`
+`push.broadcast`. Body `{ key, enabled }`: turns one category on or off for everyone (`AutoNotificationConfig`, audited as `auto_notification.updated`). People's own switches are kept. Returns the same as GET.
+
 ### GET `/api/admin/notifications/audience?audience=all`
 
 `audience`: `all` | `user` | `partner` | `doctor`. Returns `{ audience, totalUsers, totalWithToken, fcmConfigured }` (active, non-deleted accounts only).
@@ -1894,3 +2006,42 @@ On create the support inbox gets an email (`SUPPORT_EMAIL`, else `CONTACT_RECEIV
 | POST | `/api/admin/support/tickets/:id/reply` | `{ message, status? }` → `201 { ticket }`. Without `status`, `open` becomes `in_progress`. Assigns the ticket to the replier if unassigned, and sends the person a `system` notification + push with `data: { kind: 'support_ticket', ticketId, route: '/support-tickets?id=<id>' }` |
 
 Account deletion (`purgeAccount`) deletes the person's tickets, and "Download my data" includes them (`supportTickets`, without staff ids).
+
+---
+
+## Subscriptions & pricing
+
+Rules: `src/utils/pricing.js` (unit-tested). Purchase lifecycle: `src/utils/subscriptionPurchase.js`. Prices are database rows edited in the Content Studio; `src/scripts/applyPricing2026.js` moves a database onto the 2026 pricing. Nothing renews automatically: every purchase is a prepaid period (30 days, 12 months or one-time).
+
+### Public (optional auth)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/subscriptions/pricing` | `{ currency, subscriptionEnabled, allowFeatureWisePurchase, tax: { ratePercent, pricesIncludeTax }, premium: { features: [{ key, name }], monthly, yearly: { …, comparison: { twelveMonthly, monthlyEquivalent, saving, savingPercent } }, founding: null \| { planId, price, endsAt, maxMembers, renewalPrice, renewalBillingCycle }, autoRenews: false }, addOns: [{ key, name, description, category, price, billingCycle, yearlyPrice, includedInPremium }], fairUse }`. `founding` is set only while the offer is switched on, before its end date and under its cap, and (signed in) only if the caller is eligible |
+| GET | `/api/subscriptions/plans` | Active plans (includes `family`, `promo`) |
+| GET | `/api/subscriptions/features` | Active features (includes `yearlyPrice`) |
+
+### App (private)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/subscriptions/me` | Re-checks recent unpaid orders with Cashfree first. `{ subscriptionEnabled, currency, entitlements, unlockedFeatureKeys, premium: { active, until, planSlug, billingCycle, isFoundingOffer, autoRenews: false, renewalPlanSlug }, usage: { tier, fairUseEnabled, items: [{ key, period, used, limit, remaining, resetsAt }] } }` |
+| GET | `/api/subscriptions/history` | Every entitlement, newest first (statuses: `pending`, `active`, `expired`, `cancelled`, `failed`, `refunded`) |
+| POST | `/api/subscriptions/coupons/apply` | `{ code, source, planId? \| featureKey?, billingCycle? }`. Coupons don't apply to promo plans |
+| POST | `/api/subscriptions/order` | `{ source: 'plan', planId } \| { source: 'feature', featureKey, billingCycle?: 'monthly' \| 'yearly' }`, optional `couponCode`. `403 OFFER_NOT_ELIGIBLE` (`reason`: `inactive`, `ended`, `sold_out`, `already_used`, `existing_member`); `409 ALREADY_INCLUDED` when the buyer's live plan includes the feature. Response adds `tax: { base, tax, total }` |
+| POST | `/api/subscriptions/verify` | `201` active, `202 { pending: true }` still open, `400` failed |
+
+Cashfree payment and refund webhooks for `sub_…` orders arrive at `POST /api/consultation/webhook/cashfree` (signature checked; the order or refund is re-read from Cashfree).
+
+### Fair use
+
+While `SubscriptionSettings.fairUse.enabled`, AI endpoints (`/api/questions/ask`, `/api/questions/sessions/:id/messages`, `/api/documents/chat`, `/api/documents/summarize`, `/api/voice-agent/converse`) answer `429 { code: 'FAIR_USE_LIMIT', quota: { key, limit, tier, resetsAt } }` at the daily limit; `POST /api/documents` at the monthly limit, and `400 DOCUMENT_TOO_LONG` (`details: { pages, maxPages }`) over the page limit. A red-flag message is never limited. `POST /api/reports/health-report` takes `includeAnalysis` (default `true`) and returns `analysisLocked` (no `health_reports` access) and `analysisLimit: { limit, resetsAt }` (this month's summaries used up); the stats are always returned.
+
+### Admin Workspace (`subscriptions.read` to view; changes go through approval)
+
+| Method | Path | Notes |
+|---|---|---|
+| PUT | `/api/admin/subscriptions/settings` | Adds `tax`, `fairUse`, `unitCostInr`; nested objects merge field by field |
+| POST/PATCH | `/api/admin/subscriptions/features` | Adds `yearlyPrice` |
+| POST/PATCH | `/api/admin/subscriptions/plans` | Adds `family`, `promo` (`promo.redeemedCount` is read-only). Switching the founding offer on = `isActive: true` on `premium-founding` |
+| GET | `/api/admin/subscriptions/usage` | `?month=YYYY-MM` → `{ month, items: [{ key, total, users, maxPerUser, unitCostInr, estimatedCostInr }], estimatedCostInr, costKnown }` |

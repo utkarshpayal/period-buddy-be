@@ -12,7 +12,7 @@ PR TITLE FORMAT (required)
          docs(swagger): generate spec from live routers
   Avoid: "fix", "fix: this commit fix the issues", "Update file"
 
-  Release PRs (Development → main): "release: <yyyy-mm-dd> — <one-line theme>"
+  Feature PRs target `staging`. Release PRs (staging → main): "release: <yyyy-mm-dd> — <one-line theme>"
 
 Delete sections that don't apply. Keep this comment out of the final description.
 -->

@@ -3,6 +3,7 @@ import multer from 'multer';
 import { authenticate } from '../middleware/authMiddleware.js';
 import * as documentController from '../controllers/documentController.js';
 import { requireAiConsent } from '../utils/privacy.js';
+import { fairUse } from '../middleware/subscriptionMiddleware.js';
 
 const router = express.Router();
 
@@ -25,10 +26,22 @@ router.use(authenticate);
 // (config/subscriptionRouteRegistry.js) — free until an admin marks it
 // premium; browsing/deleting documents you already uploaded stays free.
 router.get('/chat', documentController.getChatHistory);
-router.post('/chat', requireAiConsent, documentController.sendChatMessage);
-router.post('/summarize', requireAiConsent, documentController.summarizeDocuments);
+// Chat and summaries count as AI messages, uploads toward the monthly
+// document allowance (middleware/subscriptionMiddleware.js#fairUse).
+router.post('/chat', requireAiConsent, fairUse('ai_message'), documentController.sendChatMessage);
+router.post(
+  '/summarize',
+  requireAiConsent,
+  fairUse('ai_message'),
+  documentController.summarizeDocuments,
+);
 
-router.post('/', upload.single('file'), documentController.uploadDocument);
+router.post(
+  '/',
+  upload.single('file'),
+  fairUse('document_upload'),
+  documentController.uploadDocument,
+);
 router.get('/', documentController.listDocuments);
 router.get('/:id', documentController.getDocument);
 router.delete('/:id', documentController.deleteDocument);

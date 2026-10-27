@@ -2,7 +2,7 @@
 
 How the Nura API is built, deployed, configured and run in production, and
 every service involved. Written for the whole team. You don't need to know
-AWS to follow it. **Last verified against the live account: 2026-09-30.**
+AWS to follow it. **Last verified against the live account: 2026-10-21.**
 
 > **Quick facts**
 > - API: `https://www.backend.thenura.care` (and `https://backend.thenura.care`)
@@ -11,6 +11,7 @@ AWS to follow it. **Last verified against the live account: 2026-09-30.**
 > - Deploy: **merge to `main`** → pipeline `the-nura-care-be` builds, deploys and health-checks automatically
 > - Secrets: AWS Secrets Manager `nura/api/env`. Never in git, never on the server's disk outside `/opt/nura/app.env`
 > - Logs: CloudWatch log group `/nura/api`
+> - Staging: `https://stage.backend.thenura.care`, a separate copy of all of this deployed from the `staging` branch ([§4.13](#413-staging))
 
 ---
 
@@ -99,7 +100,7 @@ pulls its old image back from ECR.
 ## 3. How a request reaches the API
 
 1. The app calls `https://www.backend.thenura.care/api/...`.
-2. **Spaceship DNS** (`launch1/2.spaceship.net`) resolves `backend` and `www.backend` A records → `13.233.146.11` (the EC2 public IP).
+2. **Spaceship DNS** (`launch1/2.spaceship.net`) resolves `backend` and `www.backend` A records → `15.252.118.87` (the server's Elastic IP).
 3. The **security group** `launch-wizard-5` allows TCP 80/443 in.
 4. **Caddy** terminates TLS (Let's Encrypt certificate for both names) and adds `X-Forwarded-Proto`. HTTP → HTTPS redirect is automatic. Max request body 320 MB (reel uploads are up to 300 MB). Responses are gzip/zstd compressed.
 5. Caddy proxies to `api:5000` over the private Docker network. WebSocket upgrades pass through unchanged.
@@ -163,15 +164,16 @@ All in **ap-south-1** unless stated otherwise.
 ### 4.6 EC2 (the server)
 - **Instance:** `Nura-Backend`, `i-0d127cfe92c1fbf76`, `t3.small` (2 vCPU, 2 GB RAM), ap-south-1b, default VPC.
 - **OS:** Ubuntu 26.04 LTS.
-- **Public IP:** `13.233.146.11`. **Not an Elastic IP** — see [risks](#13-known-risks-and-to-dos).
-- **Disk:** 8 GB gp3 (`vol-0ff58870b4f8222de`). Tight — see risks.
+- **Public IP:** Elastic IP `15.252.118.87` (`eipalloc-0cd7592f67916a9f9`), so it survives a stop/start.
+- **Disk:** 20 GB gp3, tagged `Backup=nura-daily`: the DLM policy `policy-064f21f7c38309929` ("nura prod daily EBS snapshots") snapshots it every day at 21:30 UTC and keeps 7.
+- **Alarms** (CloudWatch → SNS topic `nura-alerts`, email): `nura-prod-cpu-high`, `nura-prod-instance-check-failed` (also reboots the instance) and `nura-prod-system-check-failed` (also recovers it onto new hardware).
 - **IMDSv2 required.** Hop limit 2, so the SDK inside the container can reach the instance role.
 - **Instance profile:** `nura-backend-instance-role` (see §5).
 - Details of what runs on it: [§6](#6-the-server).
 
 ### 4.7 Security group
 - **Ours:** `launch-wizard-5` (`sg-0d9e2f4d400f71b21`).
-- **Inbound:** 80 (HTTP, needed for Let's Encrypt and redirect), 443 (HTTPS), **22 (SSH, open to the world — should be closed, see risks)**.
+- **Inbound:** 80 (HTTP, needed for Let's Encrypt and redirect), 443 (HTTPS), **22 (SSH, open to the world: close it, see risks)**.
 - Outbound: all (to MongoDB Atlas, AWS APIs, third parties).
 
 ### 4.8 Secrets Manager
@@ -198,11 +200,36 @@ Docker ships container logs straight to CloudWatch (`awslogs` driver), so
 
 ### 4.11 S3 (uploads)
 - Bucket **`thenura`** in **us-east-1**. It holds user uploads (documents, media). The API uses it through `utils/s3.js`.
+- A bucket policy makes only the public media prefixes readable by anyone (`users/`, `doctors/`, `content/`, `cms/`, `notifications/`, `company-assets/`, `uploads/`). `medical-documents/` is private and only reachable through short-lived signed links.
+- **Versioning is off**, so a deleted or overwritten object can't be recovered (see risks).
 - The instance role has read/write/delete on it (`nura_api_uploads`). The app currently also has static `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` in the secret, and those take priority if set.
 
 ### 4.12 EventBridge (legacy, us-east-1)
 - Rule `nura-checkin-call-tick` is **ENABLED** and targets the old `/scheduler-tick` URL, but its API destination is inactive, so it currently does nothing.
 - The in-process scheduler inside the API does this job now. **Disable/delete the rule** so it can't cause double check-in calls if the destination is ever re-activated.
+
+### 4.13 Staging
+A second, smaller copy of the backend for testing before release. Created from
+[`infra/cloudformation/`](../infra/cloudformation/) as stack `nura-stage-api`.
+
+| | Production | Staging |
+|---|---|---|
+| API | `https://www.backend.thenura.care` | `https://stage.backend.thenura.care` (`/health` reports `environment: staging`) |
+| Deploys from | `main` → pipeline `the-nura-care-be` | `staging` → pipeline `nura-stage-api` |
+| Server | `Nura-Backend` (`i-0d127cfe92c1fbf76`), Ubuntu | `nura-stage-api` (`i-0d7acfe48a9c7ab75`), Amazon Linux 2023, `t3.small` |
+| Elastic IP | `15.252.118.87` | `13.205.94.59` |
+| Secret | `nura/api/env` | `nura-stage/api/env` |
+| Uploads bucket | `thenura` (us-east-1) | `nura-stage-uploads-740726746628` (ap-south-1) |
+| Alarms | `nura-prod-*` | `nura-stage-*` (same SNS topic) |
+| Disk snapshots | daily, 7 kept | none yet (tag its volume `Backup=nura-daily` to add it) |
+| Frontends allowed (`ALLOWED_ORIGINS`) | `admin`, `cms`, `thenura.care`, `www.thenura.care` | the same plus `staging.admin.thenura.care`, `staging.cms.thenura.care` |
+
+Staging frontends: `https://staging.admin.thenura.care` and
+`https://staging.cms.thenura.care` (Vercel, `staging` branch). The mobile
+app's `preview`/`development` EAS builds use staging, `production` uses prod.
+
+The staging secret must never reuse production's database, `JWT_SECRET` or
+`DATA_ENCRYPTION_KEYS`, and should use `CASHFREE_ENV=sandbox`.
 
 ---
 
@@ -326,9 +353,9 @@ secret (for production), then deploy. Adding it only to `.env.example` does noth
 | Service | Used for | Where configured | Notes |
 |---|---|---|---|
 | **GitHub** `utkarshpayal/period-buddy-be` | Source code; `main` = production | CodeConnections | Merge to `main` deploys. |
-| **Spaceship** | DNS for `thenura.care` | spaceship.com dashboard | A records `backend` + `www.backend` → `13.233.146.11`. |
+| **Spaceship** | DNS for `thenura.care` | spaceship.com dashboard | A records `backend` + `www.backend` → `15.252.118.87` (prod) and `stage.backend` → `13.205.94.59` (staging). |
 | **Let's Encrypt** | Free HTTPS certificates | Automatic via Caddy | Renewed automatically ~30 days before expiry. Needs port 80 open and DNS pointing here. |
-| **MongoDB Atlas** | The database | `MONGODB_URI` | Atlas → Network Access must allow the server IP `13.233.146.11`. Backups are Atlas's. |
+| **MongoDB Atlas** | The database | `MONGODB_URI` | Atlas → Network Access must allow both server IPs, `15.252.118.87` (prod) and `13.205.94.59` (staging). Backups are Atlas's. |
 | **Firebase (FCM)** project `the-nura-2b4a2` | Push notifications | `FIREBASE_SERVICE_ACCOUNT_JSON` | Android channel id must match the app (`default`). |
 | **Resend** | All email: OTP, invites, newsletter, contact, suspension notices | `RESEND_API_KEY`, `MAIL_FROM` | `MAIL_FROM`'s domain must be verified in Resend. |
 | **Cashfree** | Consultation + subscription payments | `CASHFREE_*` | Production mode. |
@@ -417,7 +444,7 @@ Problems we've already hit, and how they were fixed:
 | **502 Bad Gateway** from nginx | Old nginx was started again and forwards to port 5000, where nothing listens | `sudo systemctl disable --now nginx && cd /opt/nura && sudo docker compose up -d` |
 | 502 from Caddy for a few seconds during deploy | API container being swapped | Normal. Clients retry. |
 | Caddy log: certificate errors | DNS not pointing here, or port 80 blocked | Fix DNS/security group. Caddy retries by itself. |
-| Deploy fails pulling image: `no space left on device` | 8 GB disk full | `sudo docker image prune -af`; grow the disk (§13) |
+| Deploy fails pulling image: `no space left on device` | Disk full | `sudo docker image prune -af`; grow the disk (§13) |
 
 Useful commands on the server:
 ```bash
@@ -443,6 +470,9 @@ df -h /                                  # disk space
 | 2026-09-25 | **Cut over** from nginx + pm2 to Docker + Caddy on `Nura-Backend` | server |
 | PR #18 | Prune all unused images after each deploy (disk space) | repo |
 | 2026-09-30 | Secret: added `DATA_ENCRYPTION_KEYS` and the security/retention keys, removed unused `RAZORPAY_*` and `ADMIN_INVITE_CODE`; `SWAGGER_ENABLED=false`. Deployed with PR #43 (security & privacy) | AWS |
+| by 2026-10-21 | Elastic IP `15.252.118.87` on `Nura-Backend`; disk grown to 20 GB; daily EBS snapshots (DLM); CloudWatch alarms with auto-reboot/recover → SNS `nura-alerts`; `ALLOWED_ORIGINS` narrowed to the Nura sites; spare Elastic IPs released | AWS |
+| 2026-10-19 | Staging stack `nura-stage-api` (server, pipeline, secret, bucket, alarms) | AWS |
+| 2026-10-21 | GitHub CI and security checks also run on `staging`; `npm audit fix` | repo |
 
 ---
 
@@ -450,18 +480,18 @@ df -h /                                  # disk space
 
 | Priority | Item | Why it matters | Fix |
 |---|---|---|---|
-| 🔴 High | **Public IP is not an Elastic IP** | A stop/start (or AWS host maintenance) gives the server a new IP. The domain then points nowhere, and Atlas blocks the new IP. | Allocate/associate an Elastic IP → update Spaceship A records + Atlas allow-list. (4 EIPs sit unattached already. Reuse one, release the rest.) |
-| 🔴 High | **8 GB disk, ~85% full** | Deploys fail when it fills (each image ≈ 565 MB) | EC2 → Volumes → modify to 20 GB, then `growpart` + `resize2fs` |
 | 🟠 Medium | **SSH (22) open to 0.0.0.0/0** | Brute-force target; not needed (Session Manager works) | Remove the rule from `launch-wizard-5` |
-| 🟠 Medium | **`ALLOWED_ORIGINS=*`** (until changed) | Any website can call the API from a signed-in browser | Set the four site origins listed in §7.3, then Release change |
 | 🟠 Medium | **Production database reachable from laptops** | Local backends use the production `MONGODB_URI`, so a laptop can read production health data | Create a separate development database and user; keep the production URI only in the secret |
 | 🟠 Medium | Old software still on server (nginx, certbot timer, pm2 service, Node, `~/period-buddy-be/.env` with plaintext secrets) | Confusion, and nginx could grab ports 80/443 again, causing 502s | Remove (check whether this has been done) |
-| 🟠 Medium | Local AWS work uses the **root** account | Root keys can do anything, including closing the account | Create IAM users for people, delete root access keys, enable MFA |
+| 🟠 Medium | **Root account still has access keys**; IAM users without MFA | Root keys can do anything, including closing the account | Delete the root access keys; turn on MFA for every IAM user; rotate old keys |
+| 🟠 Medium | **Upload buckets have versioning off** | A deleted or overwritten medical document is gone for good | Turn on versioning with a lifecycle rule that expires old versions after 30 days |
+| 🟠 Medium | **Jitsi host (Lightsail `nura-meeting`) has no snapshots or alarms** | Losing it means rebuilding the video server by hand | Enable Lightsail automatic snapshots; add a status-check alarm |
 | 🟡 Low | No swap on a 2 GB server | Out-of-memory kill under load | Add a 2 GB swap file |
 | 🟡 Low | EventBridge `nura-checkin-call-tick` still enabled (us-east-1) | Could double-fire check-in calls if re-activated | Disable/delete it |
-| 🟡 Low | 4 unattached Elastic IPs | ~$3.6/month each | Release unused ones |
+| 🟡 Low | Staging disk has no snapshots | Staging data is lost if the disk fails | Tag its volume `Backup=nura-daily` |
 | 🟡 Low | Static S3 keys in the secret | Long-lived keys; the instance role already has access | Remove `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` from the secret after testing uploads |
-| 🟡 Low | No alerting | Nobody is paged if the site goes down | CloudWatch alarm on `StatusCheckFailed` + an uptime check on `/health/ready` |
+| 🟡 Low | `firebase-admin` 13 pulls in 7 moderate advisories (Firestore/Storage, which we don't use) | Only the `--audit-level=high` CI gate passes | Upgrade to `firebase-admin` 14, which needs Node 22: bump the Dockerfile, `buildspec.yml` and CI together |
+| 🟡 Low | No uptime check | Alarms watch the instance, not the API | Add an uptime check on `/health/ready` |
 | ℹ️ | Single server | By design (in-memory WebSockets/scheduler). Each deploy = a few seconds of downtime. | Scale up, not out |
 
 ---
@@ -473,14 +503,15 @@ Approximate, ap-south-1, per month:
 | Item | ~ Cost |
 |---|---|
 | EC2 `t3.small` | $16 |
-| EBS 8 GB gp3 (20 GB after resize) | $0.7 ($1.8) |
-| Public IPv4 address | $3.6 |
-| Unattached Elastic IPs (4) | $14.4 ← wasted |
+| EBS 20 GB gp3 + 7 daily snapshots | ~$2.5 |
+| Elastic IP (attached) | $3.6 |
 | CodePipeline V2 + CodeBuild minutes | $1–3 |
 | ECR storage (≤ 20 images) | ~$0.5–1 |
 | Secrets Manager (1 secret) | $0.4 |
 | CloudWatch Logs | < $1 |
-| **Total** | **≈ $23 (+ $14 for the idle EIPs)** |
+| **Total (production)** | **≈ $27** |
+
+Staging roughly doubles the EC2, IP and pipeline lines (≈ $22 more).
 
 MongoDB Atlas, Firebase, Resend, Cashfree, Sarvam and Spaceship are billed separately by those providers.
 
