@@ -1978,3 +1978,42 @@ On create the support inbox gets an email (`SUPPORT_EMAIL`, else `CONTACT_RECEIV
 | POST | `/api/admin/support/tickets/:id/reply` | `{ message, status? }` → `201 { ticket }`. Without `status`, `open` becomes `in_progress`. Assigns the ticket to the replier if unassigned, and sends the person a `system` notification + push with `data: { kind: 'support_ticket', ticketId, route: '/support-tickets?id=<id>' }` |
 
 Account deletion (`purgeAccount`) deletes the person's tickets, and "Download my data" includes them (`supportTickets`, without staff ids).
+
+---
+
+## Subscriptions & pricing
+
+Rules: `src/utils/pricing.js` (unit-tested). Purchase lifecycle: `src/utils/subscriptionPurchase.js`. Prices are database rows edited in the Content Studio; `src/scripts/applyPricing2026.js` moves a database onto the 2026 pricing. Nothing renews automatically: every purchase is a prepaid period (30 days, 12 months or one-time).
+
+### Public (optional auth)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/subscriptions/pricing` | `{ currency, subscriptionEnabled, allowFeatureWisePurchase, tax: { ratePercent, pricesIncludeTax }, premium: { features: [{ key, name }], monthly, yearly: { …, comparison: { twelveMonthly, monthlyEquivalent, saving, savingPercent } }, founding: null \| { planId, price, endsAt, maxMembers, renewalPrice, renewalBillingCycle }, autoRenews: false }, addOns: [{ key, name, description, category, price, billingCycle, yearlyPrice, includedInPremium }], fairUse }`. `founding` is set only while the offer is switched on, before its end date and under its cap, and (signed in) only if the caller is eligible |
+| GET | `/api/subscriptions/plans` | Active plans (includes `family`, `promo`) |
+| GET | `/api/subscriptions/features` | Active features (includes `yearlyPrice`) |
+
+### App (private)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/subscriptions/me` | Re-checks recent unpaid orders with Cashfree first. `{ subscriptionEnabled, currency, entitlements, unlockedFeatureKeys, premium: { active, until, planSlug, billingCycle, isFoundingOffer, autoRenews: false, renewalPlanSlug }, usage: { tier, fairUseEnabled, items: [{ key, period, used, limit, remaining, resetsAt }] } }` |
+| GET | `/api/subscriptions/history` | Every entitlement, newest first (statuses: `pending`, `active`, `expired`, `cancelled`, `failed`, `refunded`) |
+| POST | `/api/subscriptions/coupons/apply` | `{ code, source, planId? \| featureKey?, billingCycle? }`. Coupons don't apply to promo plans |
+| POST | `/api/subscriptions/order` | `{ source: 'plan', planId } \| { source: 'feature', featureKey, billingCycle?: 'monthly' \| 'yearly' }`, optional `couponCode`. `403 OFFER_NOT_ELIGIBLE` (`reason`: `inactive`, `ended`, `sold_out`, `already_used`, `existing_member`); `409 ALREADY_INCLUDED` when the buyer's live plan includes the feature. Response adds `tax: { base, tax, total }` |
+| POST | `/api/subscriptions/verify` | `201` active, `202 { pending: true }` still open, `400` failed |
+
+Cashfree payment and refund webhooks for `sub_…` orders arrive at `POST /api/consultation/webhook/cashfree` (signature checked; the order or refund is re-read from Cashfree).
+
+### Fair use
+
+While `SubscriptionSettings.fairUse.enabled`, AI endpoints (`/api/questions/ask`, `/api/questions/sessions/:id/messages`, `/api/documents/chat`, `/api/documents/summarize`, `/api/voice-agent/converse`) answer `429 { code: 'FAIR_USE_LIMIT', quota: { key, limit, tier, resetsAt } }` at the daily limit; `POST /api/documents` at the monthly limit, and `400 DOCUMENT_TOO_LONG` (`details: { pages, maxPages }`) over the page limit. A red-flag message is never limited. `POST /api/reports/health-report` takes `includeAnalysis` (default `true`) and returns `analysisLocked` (no `health_reports` access) and `analysisLimit: { limit, resetsAt }` (this month's summaries used up); the stats are always returned.
+
+### Admin Workspace (`subscriptions.read` to view; changes go through approval)
+
+| Method | Path | Notes |
+|---|---|---|
+| PUT | `/api/admin/subscriptions/settings` | Adds `tax`, `fairUse`, `unitCostInr`; nested objects merge field by field |
+| POST/PATCH | `/api/admin/subscriptions/features` | Adds `yearlyPrice` |
+| POST/PATCH | `/api/admin/subscriptions/plans` | Adds `family`, `promo` (`promo.redeemedCount` is read-only). Switching the founding offer on = `isActive: true` on `premium-founding` |
+| GET | `/api/admin/subscriptions/usage` | `?month=YYYY-MM` → `{ month, items: [{ key, total, users, maxPerUser, unitCostInr, estimatedCostInr }], estimatedCostInr, costKnown }` |

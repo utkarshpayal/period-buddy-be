@@ -3,6 +3,7 @@ import * as voiceAgentController from '../controllers/voiceAgentController.js';
 import { authenticate } from '../middleware/authMiddleware.js';
 import { handleSchedulerTick } from '../utils/checkinCallScheduler.js';
 import { requireAiConsent } from '../utils/privacy.js';
+import { fairUse } from '../middleware/subscriptionMiddleware.js';
 
 const router = express.Router();
 
@@ -12,7 +13,13 @@ const router = express.Router();
  *          guides/executes an action (e.g. logging today's cycle entry)
  * @access  Private
  */
-router.post('/converse', authenticate, requireAiConsent, voiceAgentController.converse);
+router.post(
+  '/converse',
+  authenticate,
+  requireAiConsent,
+  fairUse('ai_message'),
+  voiceAgentController.converse,
+);
 
 /**
  * @route   POST /api/voice-agent/checkin-call

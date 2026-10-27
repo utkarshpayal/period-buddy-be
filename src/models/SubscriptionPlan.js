@@ -26,6 +26,25 @@ const subscriptionPlanSchema = new mongoose.Schema(
     sortOrder: { type: Number, default: 0 },
     // Optional highlight ribbon in pricing UI, e.g. "Most popular".
     badge: { type: String, trim: true },
+
+    // Plans sold as one product at different cycles share a family (monthly,
+    // yearly and founding Premium are all 'premium'). Buying while a plan of
+    // the same family is live starts after it ends (utils/pricing.js#accessStart).
+    family: { type: String, trim: true, lowercase: true, default: null },
+
+    // Set only on a promotional plan such as the founding-member offer. It
+    // can be bought only while `isActive`, before `endsAt`, under
+    // `maxRedemptions` and by eligible users (utils/pricing.js). Nothing
+    // renews automatically: after the promo year the member is offered
+    // `renewalPlanSlug` at its normal price.
+    promo: {
+      kind: { type: String, trim: true, default: null },
+      maxRedemptions: { type: Number, default: null, min: 1 },
+      endsAt: { type: Date, default: null },
+      // Paid activations so far, incremented once per entitlement.
+      redeemedCount: { type: Number, default: 0, min: 0 },
+      renewalPlanSlug: { type: String, trim: true, lowercase: true, default: null },
+    },
   },
   { timestamps: true },
 );

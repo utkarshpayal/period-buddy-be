@@ -5,6 +5,9 @@ import { HTTP_STATUS } from '../constants/httpStatus.js';
 import { buildPagination, getPagination, isValidObjectId } from '../utils/apiHelpers.js';
 import { uploadBufferToS3, deleteFromS3, getSignedViewUrl } from '../utils/s3.js';
 import { assertAllowedUpload } from '../utils/fileValidation.js';
+import { countPages, withinPageLimit } from '../utils/documentPages.js';
+import { getSettings, getUsageTier } from '../utils/subscriptionAccess.js';
+import { maxPagesFor } from '../utils/pricing.js';
 import {
   createChatCompletion,
   extractDocumentText,
@@ -14,7 +17,7 @@ import { broadcastToRoom } from '../config/websocket.js';
 import logger from '../utils/logger.js';
 import { aiAllowed } from '../utils/privacy.js';
 import { withAiSafety } from '../utils/aiSafety.js';
-import { URGENT_COMPANION_REPLY, hasUrgentPattern } from '../utils/companionChat.js';
+import { hasUrgentPattern, urgentReplyFor } from '../utils/companionChat.js';
 import { syncPrescriptionDocuments } from '../utils/prescriptionDocumentStore.js';
 
 /**
@@ -81,6 +84,26 @@ export const uploadDocument = async (req, res, next) => {
       assertAllowedUpload(req.file.buffer, ['image', 'pdf']);
     } catch (validationError) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, validationError.message);
+    }
+
+    // Fair use: a document is read page by page by our AI provider, so long
+    // ones are refused while the page limit is on (utils/pricing.js).
+    const subscriptionSettings = await getSettings();
+    const maxPages = maxPagesFor(
+      subscriptionSettings.fairUse,
+      await getUsageTier(req.userId, subscriptionSettings),
+    );
+    if (maxPages != null) {
+      const pages = await countPages(req.file.buffer, req.file.mimetype);
+      if (!withinPageLimit(pages, maxPages)) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          success: false,
+          statusCode: HTTP_STATUS.BAD_REQUEST,
+          code: 'DOCUMENT_TOO_LONG',
+          message: `Documents can be up to ${maxPages} pages. This one has ${pages}.`,
+          details: { pages, maxPages },
+        });
+      }
     }
 
     const { key } = await uploadBufferToS3({
@@ -375,7 +398,7 @@ export const sendChatMessage = async (req, res, next) => {
 
     // Deterministic urgent check (same patterns as Nura Companion): the urgent
     // guidance is always put first, whatever the model says.
-    const urgentPrefix = hasUrgentPattern(message) ? `${URGENT_COMPANION_REPLY}\n\n` : '';
+    const urgentPrefix = hasUrgentPattern(message) ? `${urgentReplyFor(null, message)}\n\n` : '';
 
     if (!documents.length) {
       const reply = `${urgentPrefix}I don't see any uploaded documents yet. Add a report, prescription, or bill from the Documents screen and I can help you understand it.`;
