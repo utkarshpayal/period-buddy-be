@@ -662,7 +662,7 @@ Response:
 
 ### GET `/api/habits`
 
-Seeds default habits if the user has none.
+No starter habits are seeded: a new person starts with none and adds from `/api/habits/suggestions`. "Today" (`completed`, and every toggle) is the phone's local day from `X-Timezone-Offset`, the same day Forest and day logs use. `week` is the last 7 local days, oldest first (`[{ dateKey, done }]`), and `reason` is why it was suggested (set on create, stored encrypted). `streak` counts back from today, or from yesterday while today isn't ticked yet, so a streak doesn't show 0 in the morning (`utils/habitDays.js`).
 
 Response:
 
@@ -683,7 +683,35 @@ Payload:
 { "title": "Sleep 8 Hours", "icon": "moon-outline", "color": "#7c3aed", "tokens": 45 }
 ```
 
+Optional `reason` (≤ 120, the suggestion's reason, kept on the habit), and `suggestionKey` / `suggestionSource` (`ai` | `rules`) when it came from a suggestion; they're only logged (`habit_created`), to compare how often AI and rule picks are taken. A person may have up to 20 active habits; past that it answers `409`.
+
 Response: created habit.
+
+### GET `/api/habits/suggestions`
+
+Today's personalized habit picks: always 10 (`MAX_SUGGESTIONS`) once anything is logged in the last 14 days. The first call of the person's local day (`X-Timezone-Offset`) makes them from the last 14 days of cycle logs, today's phase and the tracking goal: by AI (Sarvam, `utils/habitSuggestionsAi.js`) when the account allows AI (`aiAllowed`), otherwise, or if the AI call fails, by the rules in `utils/habitSuggestions.js`. They're stored per user and day in `HabitSuggestionDay` (encrypted, expires after 30 days) and served unchanged for the rest of the day. Picks that answer her logs come first; the rest are topped up for today's phase and her goal from a curated catalog (`HABIT_CATALOG`, `topUp`), spread across sleep, food, movement, mind and care. 16 are stored (`STORED_SUGGESTIONS`, with the `context` phase/goal they were made for) and the response is always exactly 10: the stored picks not dismissed and not already a habit, topped up live from the catalog when adds and dismissals leave fewer. Habits dismissed or removed lately are skipped while anything else fits, and come back only to make up 10 (ones her logs point to first). With nothing logged in that window the response is `needsLogs: true` with no suggestions, and nothing is stored, so the first call after she logs makes real picks. Habits the person already has, and picks dismissed today, are left out of each response. Habits dismissed or removed in the last 14 days are listed to the AI as "not for her" and only used to make up 10. The AI call is cut off after 25 s; when the AI was allowed but failed, the rules' picks are stored with `aiFailed` and the AI is tried again on the next call after 30 minutes (an AI answer then replaces them).
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "dateKey": "2026-10-22",
+    "source": "ai",
+    "needsLogs": false,
+    "suggestions": [
+      { "key": "warm-compress", "title": "Warm Compress for 15 Minutes", "icon": "thermometer-outline", "category": "care", "rewardPoints": 25, "reason": "You logged cramps on 3 days lately" }
+    ]
+  }
+}
+```
+
+`category` is one of `sleep`, `nutrition`, `movement`, `mind`, `care`. Add one with `POST /api/habits` (`title`, `icon`, `rewardPoints`, `suggestionKey`, `suggestionSource`).
+
+### POST `/api/habits/suggestions/:key/dismiss`
+
+"Not for me": hides that pick for the rest of today and keeps it out of suggestions for 14 days. `key` is the suggestion's `key` (letters, digits, `-`, up to 60). Always `200` for a valid key, even if today's picks aren't stored yet.
 
 ### PATCH `/api/habits/:id/toggle`
 
