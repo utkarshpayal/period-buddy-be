@@ -35,6 +35,9 @@ const subscriptionFeatureSchema = new mongoose.Schema(
       enum: ['monthly', 'yearly', 'one_time'],
       default: 'monthly',
     },
+    // Optional annual option for an add-on (null = not sold yearly). A buyer
+    // picks it with `billingCycle: 'yearly'` on POST /api/subscriptions/order.
+    yearlyPrice: { type: Number, default: null, min: 0 },
 
     // Whether the feature exists at all in pricing/paywall UI. Distinct from
     // isPremium: an inactive feature is hidden everywhere and never gates.

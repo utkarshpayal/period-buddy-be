@@ -21,6 +21,7 @@ import { authenticate, optionalAuth } from '../middleware/authMiddleware.js';
 import { requirePermission } from '../middleware/rbac.js';
 import { PERMISSIONS } from '../config/permissions.js';
 import { requireAiConsent } from '../utils/privacy.js';
+import { fairUse } from '../middleware/subscriptionMiddleware.js';
 
 const router = express.Router();
 
@@ -33,7 +34,8 @@ router.post(
 
 router.get('/', optionalAuth, getAllQuestionAnswers);
 
-router.post('/ask', optionalAuth, requireAiConsent, askQuestion);
+// Each AI answer counts toward the daily fair-use allowance (signed-in only).
+router.post('/ask', optionalAuth, requireAiConsent, fairUse('ai_message'), askQuestion);
 
 // Persisted, topic-scoped Nura Companion chat sessions — chat history the
 // user can reopen and continue, one per topic (or 'general'). All
@@ -47,7 +49,13 @@ router.post('/ask', optionalAuth, requireAiConsent, askQuestion);
 router.post('/sessions', authenticate, requireAiConsent, createChatSession);
 router.get('/sessions', authenticate, listChatSessions);
 router.get('/sessions/:id', authenticate, getChatSession);
-router.post('/sessions/:id/messages', authenticate, requireAiConsent, sendChatSessionMessage);
+router.post(
+  '/sessions/:id/messages',
+  authenticate,
+  requireAiConsent,
+  fairUse('ai_message'),
+  sendChatSessionMessage,
+);
 router.delete('/sessions/:id', authenticate, deleteChatSession);
 
 router.get('/:id', optionalAuth, getSingleQuestionAnswer);

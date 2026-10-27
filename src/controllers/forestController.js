@@ -1,5 +1,14 @@
 import CycleLog from '../models/CycleLog.js';
+import ForestGarden from '../models/ForestGarden.js';
 import ForestLog from '../models/ForestLog.js';
+import {
+  advanceGarden,
+  applyAction,
+  describeGarden,
+  grantSupplies,
+  newGarden,
+  seedOf,
+} from '../utils/garden.js';
 import Habit from '../models/Habit.js';
 import HabitCompletion from '../models/HabitCompletion.js';
 import User from '../models/User.js';
@@ -179,6 +188,25 @@ export const getForestStatus = async (req, res, next) => {
   }
 };
 
+/**
+ * Upserts the day's ForestLog and pays the day's 5 tokens once. Whether the
+ * bonus was already paid comes from the upsert's own result, so concurrent
+ * requests can't both pay it (ForestLog is unique per user and day).
+ * `healthDelta`/`rewardPoints` are only set on insert, so a concurrent update
+ * can't stomp them.
+ */
+const recordDailyCare = async (userId, dateKey, fields) => {
+  const result = await ForestLog.findOneAndUpdate(
+    { userId, dateKey },
+    { $set: fields, $setOnInsert: { healthDelta: 5, rewardPoints: 5 } },
+    { new: true, upsert: true, runValidators: true, includeResultMetadata: true },
+  );
+  const existing = Boolean(result.lastErrorObject?.updatedExisting);
+  const tokensEarned = existing ? 0 : 5;
+  if (!existing) await User.findByIdAndUpdate(userId, { $inc: { walletBalance: tokensEarned } });
+  return { log: result.value, existing, tokensEarned };
+};
+
 export const logForestCare = async (req, res, next) => {
   try {
     const dateKey = req.body.dateKey || todayDateKey();
@@ -204,35 +232,13 @@ export const logForestCare = async (req, res, next) => {
     // land as one document (silently double/triple-crediting tokens with no
     // error at all). `healthDelta`/`rewardPoints` are only ever set on the
     // insert branch (`$setOnInsert`) so a concurrent update can't stomp them.
-    const result = await ForestLog.findOneAndUpdate(
-      { userId: req.userId, dateKey },
-      {
-        $set: {
-          careType,
-          note: req.body.note?.trim() || '',
-          duration: req.body.duration !== undefined ? Number(req.body.duration) : undefined,
-          treeType: req.body.treeType?.trim(),
-          completed: req.body.completed !== undefined ? !!req.body.completed : undefined,
-        },
-        $setOnInsert: {
-          healthDelta: 5,
-          rewardPoints: 5,
-        },
-      },
-      { new: true, upsert: true, runValidators: true, includeResultMetadata: true },
-    );
-
-    const log = result.value;
-    const existing = Boolean(result.lastErrorObject?.updatedExisting);
-    const tokensEarned = existing ? 0 : 5;
-
-    if (existing) {
-      // Not the request that created today's row — its `rewardPoints` stays
-      // at the value the creating request set (5), reflecting "5 tokens were
-      // earned for today," not "5 tokens were earned by this specific call."
-    } else {
-      await User.findByIdAndUpdate(req.userId, { $inc: { walletBalance: tokensEarned } });
-    }
+    const { log, existing, tokensEarned } = await recordDailyCare(req.userId, dateKey, {
+      careType,
+      note: req.body.note?.trim() || '',
+      duration: req.body.duration !== undefined ? Number(req.body.duration) : undefined,
+      treeType: req.body.treeType?.trim(),
+      completed: req.body.completed !== undefined ? !!req.body.completed : undefined,
+    });
 
     const status = await calculateForest(req.userId, resolveToday(req.body.today || dateKey));
 
@@ -273,6 +279,121 @@ export const getForestLogs = async (req, res, next) => {
       logs,
       pagination: buildPagination({ page, limit, total }),
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ── Care game (utils/garden.js) ─────────────────────────────────────────────
+
+/** Day logs / habit days after the last grant (last 7 days at most) → supplies. */
+const loadGarden = async (userId, now, today) => {
+  let doc = await ForestGarden.findOne({ userId });
+  if (!doc) {
+    try {
+      doc = await ForestGarden.create({ userId, ...newGarden(now), suppliesGrantedThrough: today });
+    } catch (err) {
+      if (err?.code !== 11000) throw err;
+      doc = await ForestGarden.findOne({ userId });
+    }
+  }
+  const from =
+    doc.suppliesGrantedThrough > shiftDateKey(today, -7)
+      ? doc.suppliesGrantedThrough
+      : shiftDateKey(today, -7);
+  let state = doc.toObject();
+  if (from < today) {
+    const [logs, habitDays] = await Promise.all([
+      CycleLog.find({ userId, dateKey: { $gt: from, $lte: today } }).lean(),
+      HabitCompletion.distinct('dateKey', { userId, dateKey: { $gt: from, $lte: today } }),
+    ]);
+    state = grantSupplies(state, {
+      logDays: logs.filter(hasCycleEntry).length,
+      habitDays: habitDays.length,
+    });
+    state.suppliesGrantedThrough = today;
+  }
+  state = advanceGarden(state, now.getTime(), seedOf(userId));
+  return { doc, state };
+};
+
+const GARDEN_FIELDS = [
+  'tick',
+  'moisture',
+  'nutrients',
+  'health',
+  'soggyUntil',
+  'mulchUntil',
+  'weeds',
+  'pests',
+  'deadLeaves',
+  'nextId',
+  'compost',
+  'mulch',
+  'xp',
+  'xpDay',
+  'xpToday',
+  'waterXpToday',
+  'suppliesGrantedThrough',
+];
+const saveGarden = (doc, state) => {
+  for (const f of GARDEN_FIELDS) doc.set(f, state[f]);
+  return doc.save();
+};
+
+/** GET /api/forest/garden — The care game's live state (advanced to now) */
+export const getGarden = async (req, res, next) => {
+  try {
+    const now = new Date();
+    const today = resolveToday(req.query.today);
+    const { doc, state } = await loadGarden(req.userId, now, today);
+    try {
+      await saveGarden(doc, state);
+    } catch (err) {
+      // Another request saved first; what we computed is still right to show.
+      if (err?.name !== 'VersionError') throw err;
+    }
+    return sendResponse(
+      res,
+      HTTP_STATUS.OK,
+      'Garden fetched',
+      describeGarden(state, now.getTime()),
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** POST /api/forest/garden/action — water, weed, shoo, prune, fertilize or mulch */
+export const gardenAction = async (req, res, next) => {
+  try {
+    const today = resolveToday(req.body.today);
+    for (let attempt = 0; ; attempt++) {
+      const now = new Date();
+      const { doc, state } = await loadGarden(req.userId, now, today);
+      const result = applyAction(state, req.body, { now: now.getTime(), dayKey: today });
+      if (result.error) return sendError(res, HTTP_STATUS.BAD_REQUEST, result.error);
+      try {
+        await saveGarden(doc, result.state);
+      } catch (err) {
+        if (err?.name === 'VersionError' && attempt < 2) continue;
+        throw err;
+      }
+      // Watering also counts as the day's forest `water` task (growth).
+      let status = null;
+      let tokensEarned = 0;
+      if (req.body.type === 'water') {
+        ({ tokensEarned } = await recordDailyCare(req.userId, today, { careType: 'water' }));
+        status = await calculateForest(req.userId, today);
+      }
+      return sendResponse(res, HTTP_STATUS.OK, result.message, {
+        garden: describeGarden(result.state, now.getTime()),
+        xp: result.xp,
+        message: result.message,
+        tokensEarned,
+        status,
+      });
+    }
   } catch (error) {
     next(error);
   }

@@ -1,6 +1,9 @@
 // Initial feature catalog for the subscription system. Every entry seeds
 // `isPremium: false` — nothing is actually gated until an admin flips it on
-// from the Content Studio's Subscriptions screen. Keys here must have a
+// from the Content Studio's Subscriptions screen. Prices follow the 2026
+// pricing (utils/pricing.js#PRICING_2026); the seeder only inserts missing
+// keys, so an existing database moves to them with
+// src/scripts/applyPricing2026.js, never on restart. Keys here must have a
 // matching entry in config/subscriptionRouteRegistry.js (the global
 // middleware that actually enforces the gate) — add both together; this
 // file alone only makes a key visible/priceable in the admin Features tab.
@@ -12,7 +15,8 @@ export const subscriptionFeatureData = [
     category: 'AI & Insights',
     icon: 'Sparkles',
     billingCycle: 'monthly',
-    price: 99,
+    price: 29,
+    yearlyPrice: 290,
     sortOrder: 1,
   },
   {
@@ -22,17 +26,19 @@ export const subscriptionFeatureData = [
     category: 'AI & Insights',
     icon: 'FileText',
     billingCycle: 'monthly',
-    price: 149,
+    price: 39,
+    yearlyPrice: 390,
     sortOrder: 2,
   },
   {
     key: 'health_reports',
     name: 'Doctor-Ready Health Reports',
-    description: 'AI-written and downloadable PDF cycle/symptom reports.',
+    description: 'An AI summary in a downloadable, doctor-ready PDF of your cycle and symptoms.',
     category: 'AI & Insights',
     icon: 'ClipboardList',
     billingCycle: 'monthly',
-    price: 99,
+    price: 19,
+    yearlyPrice: 190,
     sortOrder: 3,
   },
   {
@@ -41,14 +47,15 @@ export const subscriptionFeatureData = [
     description: 'Guided screening for PCOS, endometriosis, fibroids, and thyroid issues.',
     category: 'AI & Insights',
     icon: 'Stethoscope',
-    billingCycle: 'one_time',
-    price: 49,
+    billingCycle: 'monthly',
+    price: 29,
+    yearlyPrice: 290,
     sortOrder: 4,
   },
   {
     key: 'voice_checkin_calls',
     name: 'Voice Check-in Calls',
-    description: 'Scheduled cycle check-in phone calls.',
+    description: 'Scheduled cycle check-in phone calls. Not sold yet: minutes aren’t metered.',
     category: 'Care',
     icon: 'Phone',
     billingCycle: 'monthly',
@@ -58,11 +65,13 @@ export const subscriptionFeatureData = [
   {
     key: 'government_scheme_applications',
     name: 'Government Scheme Application Assistance',
-    description: 'Submit and track applications to government health schemes in-app.',
+    description:
+      'Save schemes to My applications and track them (free). Assisted applications aren’t offered yet.',
     category: 'Care',
     icon: 'Landmark',
     billingCycle: 'one_time',
-    price: 49,
+    price: 0,
+    yearlyPrice: null,
     sortOrder: 6,
   },
   {
@@ -72,7 +81,8 @@ export const subscriptionFeatureData = [
     category: 'Community',
     icon: 'Users',
     billingCycle: 'monthly',
-    price: 29,
+    price: 0,
+    yearlyPrice: null,
     sortOrder: 7,
   },
   {
@@ -81,8 +91,9 @@ export const subscriptionFeatureData = [
     description: 'Invite a partner into their own connected view of your cycle.',
     category: 'Community',
     icon: 'Heart',
-    billingCycle: 'one_time',
-    price: 49,
+    billingCycle: 'monthly',
+    price: 19,
+    yearlyPrice: 190,
     sortOrder: 8,
   },
   {
@@ -92,7 +103,8 @@ export const subscriptionFeatureData = [
     category: 'AI & Insights',
     icon: 'TrendingUp',
     billingCycle: 'monthly',
-    price: 79,
+    price: 19,
+    yearlyPrice: 190,
     sortOrder: 9,
   },
   {
@@ -101,8 +113,9 @@ export const subscriptionFeatureData = [
     description: 'Get matched with a peer buddy for chat and video support.',
     category: 'Community',
     icon: 'UserPlus',
-    billingCycle: 'one_time',
-    price: 39,
+    billingCycle: 'monthly',
+    price: 19,
+    yearlyPrice: 190,
     sortOrder: 10,
   },
 ];

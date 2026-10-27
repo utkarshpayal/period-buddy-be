@@ -7,6 +7,9 @@ import { createChatCompletion, isAiConfigured, getLanguageLabel } from '../utils
 import { buildDocumentContext, buildCycleContext } from '../utils/reportContext.js';
 import logger from '../utils/logger.js';
 import { aiAllowed } from '../utils/privacy.js';
+import { getSettings, getUsageTier, hasFeatureAccess } from '../utils/subscriptionAccess.js';
+import { consumeQuota, releaseQuota } from '../utils/usageQuota.js';
+import { limitFor } from '../utils/pricing.js';
 
 const MAX_CONTEXT_DOCS = 20;
 
@@ -53,7 +56,10 @@ function trendPoints(logs, field) {
  * multiple month-by-month calls itself. */
 export const getHealthReport = async (req, res, next) => {
   try {
-    const { startDate, endDate, language } = req.body;
+    // `includeAnalysis: false` skips the AI summary (the free Graphs & Reports
+    // and Symptom report screens don't show it). Builds before this flag
+    // leave it out, so it defaults to on.
+    const { startDate, endDate, language, includeAnalysis = true } = req.body;
 
     const start = startDate ? new Date(startDate) : null;
     const end = endDate ? new Date(endDate) : null;
@@ -114,8 +120,34 @@ export const getHealthReport = async (req, res, next) => {
       },
     };
 
+    // The AI summary is the paid, doctor-ready part: it needs `health_reports`
+    // access and counts toward the monthly report allowance. The stats above
+    // stay free for everyone.
     let analysis = null;
-    if (isAiConfigured() && aiAllowed(req.user) && (documents.length || cycle.daysLogged)) {
+    let analysisLocked = false;
+    let analysisLimit = null;
+    let reportQuota = null;
+    const wantsAnalysis =
+      includeAnalysis !== false &&
+      isAiConfigured() &&
+      aiAllowed(req.user) &&
+      (documents.length || cycle.daysLogged);
+    if (wantsAnalysis && !(await hasFeatureAccess(req.userId, 'health_reports'))) {
+      analysisLocked = true;
+    } else if (wantsAnalysis) {
+      const settings = await getSettings();
+      const tier = await getUsageTier(req.userId, settings);
+      reportQuota = await consumeQuota({
+        userId: req.userId,
+        quotaKey: 'doctor_report',
+        limit: limitFor(settings.fairUse, 'doctor_report', tier),
+      });
+      if (!reportQuota.allowed) {
+        analysisLimit = { limit: reportQuota.limit, resetsAt: reportQuota.resetsAt };
+        reportQuota = null;
+      }
+    }
+    if (reportQuota) {
       try {
         const sections = [];
         if (documents.length)
@@ -147,6 +179,14 @@ export const getHealthReport = async (req, res, next) => {
         // Analysis is a bonus, not a hard requirement — a flaky AI call
         // shouldn't block the rest of the report.
       }
+      // A failed summary doesn't use up the month's report.
+      if (!analysis) {
+        await releaseQuota({
+          userId: req.userId,
+          quotaKey: 'doctor_report',
+          period: reportQuota.period,
+        }).catch(() => {});
+      }
     }
 
     logger.info('health_report_generated', {
@@ -166,6 +206,9 @@ export const getHealthReport = async (req, res, next) => {
       })),
       cycle,
       analysis,
+      // true: the summary needs `health_reports`; set: this month's reports are used up.
+      analysisLocked,
+      analysisLimit,
     });
   } catch (error) {
     logger.error('health_report_error', { userId: req.userId, error: error.message });

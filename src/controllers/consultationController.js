@@ -38,6 +38,11 @@ import { broadcastToRoom } from '../config/websocket.js';
 import { buildPrescriptionDocument } from '../utils/prescriptionDocument.js';
 import { handleRefundWebhook } from '../utils/consultationRefunds.js';
 import {
+  SUBSCRIPTION_ORDER_PREFIX,
+  handleSubscriptionOrderWebhook,
+  handleSubscriptionRefundWebhook,
+} from '../utils/subscriptionPurchase.js';
+import {
   createOrder,
   getOrderStatus,
   isPaymentConfigured,
@@ -510,7 +515,9 @@ export const verifyConsultationPayment = async (req, res, next) => {
  * POST /api/consultation/webhook/cashfree — Cashfree payment webhook (public,
  * raw body). A consultation order paid while the app was closed or lost the
  * verify call gets booked here. The signature is checked, and the order is
- * still re-read from Cashfree before anything is booked.
+ * still re-read from Cashfree before anything is booked. Cashfree sends every
+ * order's events to this one URL, so subscription orders (`sub_…`) and their
+ * refunds are handed to utils/subscriptionPurchase.js from here too.
  */
 export const cashfreeConsultationWebhook = async (req, res) => {
   try {
@@ -535,6 +542,16 @@ export const cashfreeConsultationWebhook = async (req, res) => {
 
     const payload = JSON.parse(raw);
     // Refund updates (REFUND_STATUS_WEBHOOK) come to the same URL.
+    const refundOrderId = payload?.data?.refund?.order_id;
+    if (typeof refundOrderId === 'string' && refundOrderId.startsWith(SUBSCRIPTION_ORDER_PREFIX)) {
+      const outcome = await handleSubscriptionRefundWebhook(payload);
+      logger.info('subscription_refund_webhook_processed', {
+        action: 'subscription_refund_webhook_processed',
+        orderId: refundOrderId,
+        outcome,
+      });
+      return res.status(200).json({ ok: true });
+    }
     if (payload?.data?.refund) {
       const outcome = await handleRefundWebhook(payload);
       logger.info('consultation_refund_webhook_processed', {
@@ -545,6 +562,15 @@ export const cashfreeConsultationWebhook = async (req, res) => {
       return res.status(200).json({ ok: true });
     }
     const orderId = payload?.data?.order?.order_id;
+    if (typeof orderId === 'string' && orderId.startsWith(SUBSCRIPTION_ORDER_PREFIX)) {
+      const outcome = await handleSubscriptionOrderWebhook(orderId);
+      logger.info('subscription_webhook_processed', {
+        action: 'subscription_webhook_processed',
+        orderId,
+        outcome,
+      });
+      return res.status(200).json({ ok: true });
+    }
     if (typeof orderId !== 'string' || !orderId.startsWith('consult_')) {
       return res.status(200).json({ ok: true, ignored: true });
     }

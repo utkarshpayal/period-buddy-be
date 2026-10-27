@@ -30,6 +30,28 @@ const cycleSettingsSchema = new mongoose.Schema(
     // The daily "log today" nudge is once-per-calendar-day, not once-per-cycle.
     lastDailyNudgeDateKey: { type: String },
 
+    // Automatic notifications (utils/autoNotifications.js). One switch per
+    // category; unset means the category's default. period_upcoming and
+    // fertile_window live in remindersEnabled / ovulationReminder above.
+    notificationPrefs: {
+      period_start: { type: Boolean },
+      period_late: { type: Boolean },
+      phase_tips: { type: Boolean },
+      symptom_heads_up: { type: Boolean },
+      health_alerts: { type: Boolean },
+      daily_log: { type: Boolean },
+    },
+    // Local time they go out ('HH:mm'), and the phone's offset
+    // (Date#getTimezoneOffset) it's read in, stamped by the app.
+    notificationTime: { type: String, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
+    notificationTimezoneOffsetMinutes: { type: Number, min: -840, max: 840 },
+    // Last value sent per category, so each goes out once per cycle/day
+    // (claimed atomically by the tick). notificationDayKey/notificationsSentToday
+    // count today's sends for the daily cap.
+    notificationGuards: { type: Map, of: String, default: undefined },
+    notificationDayKey: { type: String },
+    notificationsSentToday: { type: Number, default: 0 },
+
     // Recurring "Buddy" cycle check-in phone call (see
     // utils/checkinCallScheduler.js) — distinct from remindersEnabled above,
     // which is a push-notification reminder, not an outbound call. Days are

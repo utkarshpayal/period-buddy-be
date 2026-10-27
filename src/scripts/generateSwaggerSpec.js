@@ -360,6 +360,7 @@ function determineTag(r) {
   if (g === 'sign') return 'Document signing';
   if (g === 'cms') return 'App CMS';
   if (g === 'support' || g === 'supportAdmin') return 'Help & Support';
+  if (g === 'symptomRecord') return 'Body Map';
   console.warn(`No tag mapping for route group "${g}" (${r.method} ${r.path}) — add one`);
   return 'System & Health';
 }

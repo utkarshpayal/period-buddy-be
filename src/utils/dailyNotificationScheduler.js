@@ -2,168 +2,139 @@ import CycleSettings from '../models/CycleSettings.js';
 import Notification from '../models/Notification.js';
 import { computeCyclePredictions } from './cycle.js';
 import { loadPredictionLogs } from './predictionLogs.js';
-import { dateToDateKey, timingSafeEqualStrings, todayDateKey } from './apiHelpers.js';
+import { dateFromDateKey, timingSafeEqualStrings } from './apiHelpers.js';
+import AutoNotificationConfig from '../models/AutoNotificationConfig.js';
+import { localClock, parseTimeOfDay } from './checkinCall.js';
+import {
+  AUTO_NOTIFICATION_KEYS,
+  DEFAULT_NOTIFICATION_TIME,
+  MAX_PER_DAY,
+  QUIET_AFTER_MINUTES,
+  planNotifications,
+  resolvePrefs,
+} from './autoNotifications.js';
 import { sendResponse, sendError } from './sendResponse.js';
 import { HTTP_STATUS } from '../constants/httpStatus.js';
 import logger from './logger.js';
 import { activeUserIdSet } from './accountStatus.js';
 import { completeOverdueConsultations } from './consultationLifecycle.js';
 
-// A few rotating variants so the daily nudge doesn't read as the exact same
-// canned line every day.
-const DAILY_NUDGE_MESSAGES = [
-  {
-    title: 'How are you feeling today? 💭',
-    body: 'Take a moment to log your mood, flow, or symptoms — it only takes a few taps.',
-  },
-  {
-    title: 'Got a minute for yourself?',
-    body: 'Logging today helps Buddy give you better predictions and care.',
-  },
-  {
-    title: 'Check in with yourself 🌸',
-    body: "How's your body feeling today? Log it and watch your patterns build up over time.",
-  },
-];
-
 /**
- * One daily-notification tick — for every user with cycle tracking set up,
- * checks three things against their own CycleSettings preferences (all
- * already user-configurable from the tracker's Cycle Settings sheet, but
- * previously never actually read by anything):
+ * One automatic-notification tick. Runs hourly (utils/inProcessScheduler.js,
+ * or an external scheduler on POST /api/notifications/daily-tick). For each
+ * person whose local time has reached their notification time (default
+ * 9:00, never after 10 PM), it works out what's due on *their* local today
+ * (utils/autoNotifications.js#planNotifications: period coming / due / late,
+ * fertile window and ovulation, phase tips, their usual symptoms, health
+ * alerts, the daily log reminder) and sends at most two.
  *
- *  - `remindersEnabled` + `reminderDaysBefore` → a period_reminder exactly
- *    that many days before the predicted period start, once per cycle.
- *  - `ovulationReminder` / `fertilityReminder` → an ovulation_reminder the
- *    day the fertile window opens, once per cycle.
- *  - Also gated on `remindersEnabled` (not a separate preference, to avoid
- *    adding a new toggle for this): a once-daily "log today" nudge if the
- *    user hasn't logged anything yet today — this is the closest existing
- *    preference to "I want reminders from this app."
- *
- * Each Notification created here triggers its own push send automatically
- * (see models/Notification.js's post-save hook), so this file only needs to
- * decide *whether* to create one, not how to deliver it.
- *
- * Unlike checkinCallScheduler.js, this only needs day-level (not
- * minute-of-day) precision, so a tick once a day is enough — see
- * handleDailyNotificationTick below and the README's "Scheduled jobs"
- * section for exactly what to point an external scheduler at. "Today" is
- * evaluated in UTC (todayDateKey()), same convention as the rest of the
- * cycle-log data model — for users far from UTC this can land a reminder up
- * to ~12h off their actual local morning/evening, which is an accepted
- * trade-off for day-granularity reminders (unlike the check-in call's
- * chosen time-of-day, which does track a real per-user timezone offset).
+ * Every item is claimed atomically before it's created (its category's
+ * guard in CycleSettings.notificationGuards, in the same findOneAndUpdate
+ * filter as the write), so overlapping or repeated ticks can't send it
+ * twice. Each Notification sends its own push (models/Notification.js).
+ * Categories an admin turned off (AutoNotificationConfig) go to nobody.
  */
-// What the tick reads from each settings doc (computeCyclePredictions uses
-// periodLength, cycleLength and lastPeriodStartDate). Hydrated, not lean,
-// so selected paths keep their schema defaults (remindersEnabled: true).
 const SETTINGS_FIELDS =
   'userId lastPeriodStartDate cycleLength periodLength pregnancyMode remindersEnabled ' +
-  'reminderDaysBefore ovulationReminder fertilityReminder';
+  'reminderDaysBefore ovulationReminder fertilityReminder notificationPrefs notificationTime ' +
+  'notificationTimezoneOffsetMinutes checkinCallTimezoneOffsetMinutes notificationGuards ' +
+  'notificationDayKey notificationsSentToday lastPeriodReminderCycleKey ' +
+  'lastOvulationReminderCycleKey lastDailyNudgeDateKey';
 
-// Users processed concurrently per batch: each one is a log read plus up to
-// three guarded writes, so a small batch keeps the pool free for requests.
+// Users processed concurrently per batch: each one is a log read plus a few
+// guarded writes, so a small batch keeps the pool free for requests.
 const USER_BATCH_SIZE = 10;
 
-export const runDailyNotificationTick = async () => {
-  const allCandidates = await CycleSettings.find({
-    $or: [{ remindersEnabled: true }, { ovulationReminder: true }, { fertilityReminder: true }],
-  }).select(SETTINGS_FIELDS);
-  // Suspended/deleted accounts get no reminders (or inbox rows).
-  const liveIds = await activeUserIdSet(allCandidates.map((settings) => settings.userId));
-  const candidates = allCandidates.filter((settings) => liveIds.has(String(settings.userId)));
+/** Categories an admin has turned off for everyone. */
+export const loadDisabledCategories = async () => {
+  const config = await AutoNotificationConfig.findOne({ key: 'global' }).lean();
+  return new Set(config?.disabled || []);
+};
 
-  let periodRemindersSent = 0;
-  let ovulationRemindersSent = 0;
-  let dailyNudgesSent = 0;
-  const todayKey = todayDateKey();
+/**
+ * This person's guards, filled in from the fields the reminders used before
+ * per-category guards existed, so nothing already sent this cycle repeats.
+ */
+const guardsFor = (settings) => {
+  const guards = Object.fromEntries(settings.notificationGuards || []);
+  if (!guards.period_upcoming && settings.lastPeriodReminderCycleKey) {
+    guards.period_upcoming = settings.lastPeriodReminderCycleKey;
+  }
+  if (!guards.fertile_window && settings.lastOvulationReminderCycleKey) {
+    guards.fertile_window = `${settings.lastOvulationReminderCycleKey}:start`;
+  }
+  if (!guards.daily_log && settings.lastDailyNudgeDateKey) {
+    guards.daily_log = settings.lastDailyNudgeDateKey;
+  }
+  return guards;
+};
+
+export const runDailyNotificationTick = async (now = new Date()) => {
+  const disabled = await loadDisabledCategories();
+  const allSettings = await CycleSettings.find({}).select(SETTINGS_FIELDS);
+  // Suspended/deleted accounts get no reminders (or inbox rows).
+  const liveIds = await activeUserIdSet(allSettings.map((settings) => settings.userId));
+
+  const sent = Object.fromEntries(AUTO_NOTIFICATION_KEYS.map((key) => [key, 0]));
+  let due = 0;
 
   const processUser = async (settings) => {
     try {
+      const clock = localClock(
+        now,
+        settings.notificationTimezoneOffsetMinutes ?? settings.checkinCallTimezoneOffsetMinutes,
+      );
+      const sendAt = parseTimeOfDay(settings.notificationTime || DEFAULT_NOTIFICATION_TIME);
+      if (clock.minutes < sendAt || clock.minutes >= QUIET_AFTER_MINUTES) return;
+      const todayKey = clock.dateKey;
+      const sentToday =
+        settings.notificationDayKey === todayKey ? settings.notificationsSentToday || 0 : 0;
+      if (sentToday >= MAX_PER_DAY) return;
+
       const logs = await loadPredictionLogs(settings.userId);
-      const predictions = computeCyclePredictions(settings, logs);
+      const predictions = computeCyclePredictions(settings, logs, {
+        today: dateFromDateKey(todayKey),
+      });
+      const plan = planNotifications({
+        predictions,
+        logs,
+        todayKey,
+        prefs: resolvePrefs(settings),
+        reminderDaysBefore: settings.reminderDaysBefore ?? 2,
+        pregnancyMode: Boolean(settings.pregnancyMode),
+        disabled,
+        guards: guardsFor(settings),
+        sentToday,
+      });
+      if (!plan.length) return;
+      due += 1;
 
-      // Each guard below is claimed atomically (the guard field's own
-      // `$ne` check lives in the same `findOneAndUpdate` filter as the
-      // write that sets it), rather than checked in-memory and persisted
-      // together via one `settings.save()` at the end — a retried/
-      // concurrent tick invocation could otherwise read the same stale
-      // guard value for two overlapping runs and create duplicate
-      // notifications/pushes before either persisted it.
-      // Pregnancy Mode pauses the period and fertile-window reminders (the
-      // app's toggle says so); the daily "log today" nudge still goes out.
-      const cyclePaused = Boolean(settings.pregnancyMode);
-
-      if (
-        !cyclePaused &&
-        settings.remindersEnabled &&
-        predictions.nextPeriodDaysAway === (settings.reminderDaysBefore ?? 2)
-      ) {
+      // A new local day starts the daily count again.
+      if (settings.notificationDayKey !== todayKey) {
+        await CycleSettings.updateOne(
+          { userId: settings.userId, notificationDayKey: { $ne: todayKey } },
+          { $set: { notificationDayKey: todayKey, notificationsSentToday: 0 } },
+        );
+      }
+      for (const item of plan) {
+        const guardPath = `notificationGuards.${item.key}`;
         const claimed = await CycleSettings.findOneAndUpdate(
           {
             userId: settings.userId,
-            lastPeriodReminderCycleKey: { $ne: predictions.nextPeriodDateKey },
+            [guardPath]: { $ne: item.guard },
+            notificationsSentToday: { $lt: MAX_PER_DAY },
           },
-          { $set: { lastPeriodReminderCycleKey: predictions.nextPeriodDateKey } },
+          { $set: { [guardPath]: item.guard }, $inc: { notificationsSentToday: 1 } },
         );
-        if (claimed) {
-          await Notification.create({
-            userId: settings.userId,
-            type: 'period_reminder',
-            title: 'Your period is coming up',
-            body: `Your period is expected around ${predictions.nextPeriodDate} — want to get ahead of it?`,
-            data: { nextPeriodDateKey: predictions.nextPeriodDateKey },
-          });
-          periodRemindersSent += 1;
-        }
-      }
-
-      // Fires the day the fertile window *opens* (a few days ahead of
-      // ovulation itself), so there's still time to act on it, rather than
-      // on ovulation day itself.
-      if (
-        !cyclePaused &&
-        (settings.ovulationReminder || settings.fertilityReminder) &&
-        predictions.ovulationReliable &&
-        todayKey === dateToDateKey(predictions.fertileWindowStartISO)
-      ) {
-        const claimed = await CycleSettings.findOneAndUpdate(
-          {
-            userId: settings.userId,
-            lastOvulationReminderCycleKey: { $ne: predictions.ovulationDateKey },
-          },
-          { $set: { lastOvulationReminderCycleKey: predictions.ovulationDateKey } },
-        );
-        if (claimed) {
-          await Notification.create({
-            userId: settings.userId,
-            type: 'ovulation_reminder',
-            title: 'Your fertile window is starting',
-            body: `Ovulation is expected around ${predictions.ovulationDate}.`,
-            data: { ovulationDateKey: predictions.ovulationDateKey },
-          });
-          ovulationRemindersSent += 1;
-        }
-      }
-
-      if (settings.remindersEnabled && !logs.some((log) => log.dateKey === todayKey)) {
-        const claimed = await CycleSettings.findOneAndUpdate(
-          { userId: settings.userId, lastDailyNudgeDateKey: { $ne: todayKey } },
-          { $set: { lastDailyNudgeDateKey: todayKey } },
-        );
-        if (claimed) {
-          const message =
-            DAILY_NUDGE_MESSAGES[Math.floor(Math.random() * DAILY_NUDGE_MESSAGES.length)];
-          await Notification.create({
-            userId: settings.userId,
-            type: 'system',
-            title: message.title,
-            body: message.body,
-            data: { kind: 'daily_nudge' },
-          });
-          dailyNudgesSent += 1;
-        }
+        if (!claimed) continue;
+        await Notification.create({
+          userId: settings.userId,
+          type: item.type,
+          title: item.title,
+          body: item.body,
+          data: { ...item.data, autoKey: item.key },
+        });
+        sent[item.key] += 1;
       }
     } catch (error) {
       // One user's failure shouldn't stop the rest of this tick.
@@ -175,16 +146,12 @@ export const runDailyNotificationTick = async () => {
     }
   };
 
+  const candidates = allSettings.filter((settings) => liveIds.has(String(settings.userId)));
   for (let i = 0; i < candidates.length; i += USER_BATCH_SIZE) {
     await Promise.all(candidates.slice(i, i + USER_BATCH_SIZE).map(processUser));
   }
 
-  return {
-    candidates: candidates.length,
-    periodRemindersSent,
-    ovulationRemindersSent,
-    dailyNudgesSent,
-  };
+  return { candidates: candidates.length, usersNotified: due, sent };
 };
 
 /**

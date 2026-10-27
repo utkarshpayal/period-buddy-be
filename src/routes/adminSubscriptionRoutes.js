@@ -142,5 +142,6 @@ router.delete(
 );
 
 router.get('/overview', adminController.getOverview);
+router.get('/usage', adminController.getUsageOverview);
 
 export default router;

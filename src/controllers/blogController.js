@@ -16,6 +16,7 @@ import {
   pickDefined,
 } from '../utils/apiHelpers.js';
 import { SUPPORTED_LANGUAGES, translateText, TRANSLATE_MAX_CHARS } from '../utils/sarvamClient.js';
+import { splitForTranslation } from '../utils/richText.js';
 import { readingMinutes } from '../utils/blogReadTime.js';
 import { parseReadReport, readIncrement, readStats } from '../utils/blogReadStats.js';
 
@@ -253,24 +254,31 @@ export const translateBlog = async (req, res, next) => {
       });
     }
 
-    const contentChunks = chunkTextForTranslation(blog.content, TRANSLATE_MAX_CHARS);
-    const [translatedTitle, ...translatedChunks] = await Promise.all([
+    // Chart blocks and images pass through untouched; only prose is translated.
+    const parts = splitForTranslation(blog.content);
+    const translateParts = parts.map(async (part) => {
+      if (!part.translate) return part.text;
+      const chunks = chunkTextForTranslation(part.text, TRANSLATE_MAX_CHARS);
+      const translated = await Promise.all(
+        chunks.map((chunk) => translateText({ input: chunk, targetLanguageCode: language })),
+      );
+      return translated.map((chunk) => chunk.translatedText).join('\n\n');
+    });
+    const [translatedTitle, ...translatedParts] = await Promise.all([
       translateText({ input: blog.title, targetLanguageCode: language }),
-      ...contentChunks.map((chunk) =>
-        translateText({ input: chunk, targetLanguageCode: language }),
-      ),
+      ...translateParts,
     ]);
 
     logger.info('blog_translated', {
       action: 'blog_translated',
       blogId: blog._id,
       language,
-      chunks: contentChunks.length,
+      parts: parts.length,
     });
 
     return sendResponse(res, HTTP_STATUS.OK, 'Blog translated', {
       title: translatedTitle.translatedText,
-      content: translatedChunks.map((chunk) => chunk.translatedText).join('\n\n'),
+      content: translatedParts.join('\n\n'),
       language,
     });
   } catch (error) {

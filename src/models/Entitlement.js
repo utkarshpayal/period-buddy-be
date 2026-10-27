@@ -18,7 +18,7 @@ const entitlementSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ['pending', 'active', 'expired', 'cancelled', 'failed'],
+      enum: ['pending', 'active', 'expired', 'cancelled', 'failed', 'refunded'],
       default: 'pending',
       index: true,
     },
@@ -49,7 +49,11 @@ const entitlementSchema = new mongoose.Schema(
     couponCode: { type: String, trim: true, uppercase: true },
     originalAmount: { type: Number, min: 0 },
 
-    cashfreeOrderId: { type: String, trim: true },
+    cashfreeOrderId: { type: String, trim: true, index: true },
+    // Set when Cashfree confirms a refund of this order; access ends then.
+    refundedAt: { type: Date, default: null },
+    // True for a founding-member offer purchase (once per account).
+    isFoundingOffer: { type: Boolean, default: false },
 
     // True for access an admin comped manually rather than a real purchase
     // (support gestures, promos) — kept distinct for revenue reporting.
