@@ -5,12 +5,15 @@
  * that (see blogController#ensureReadTimes).
  */
 
+import { CHART_FENCE } from './richText.js';
+
 export const WORDS_PER_MINUTE = 200;
 
-/** Words a reader actually reads: HTML tags, markdown image/link targets
- * and bare URLs don't count. */
+/** Words a reader actually reads: chart data, HTML tags, markdown image/link
+ * targets and bare URLs don't count. */
 export const countWords = (content = '') =>
   String(content ?? '')
+    .replace(CHART_FENCE, ' ')
     .replace(/<[^>]*>/g, ' ')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
     .replace(/\]\([^)]*\)/g, ' ')

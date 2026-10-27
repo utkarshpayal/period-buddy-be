@@ -1,6 +1,11 @@
 import logger from './logger.js';
 import { generateToken } from './jwt.js';
-import { checkinDateKey, describePeriodTiming, weekdayOf } from './checkinCall.js';
+import {
+  checkinDateKey,
+  cleanAgentVariable,
+  describePeriodTiming,
+  weekdayOf,
+} from './checkinCall.js';
 
 // "Samvaad" (the informal name used for this feature elsewhere in this
 // codebase) is Sarvam's OWN outbound-calling product — Instant Outbound,
@@ -70,6 +75,20 @@ const toE164 = (phone) => {
 const outboundCallUrl = () =>
   `https://apps.sarvam.ai/api/outbounds/v1/orgs/${SARVAM_ORG_ID}/workspaces/${SARVAM_WORKSPACE_ID}/outbounds`;
 
+const REQUIRED_ENV = [
+  'SARVAM_OUTBOUND_API_KEY',
+  'SARVAM_ORG_ID',
+  'SARVAM_WORKSPACE_ID',
+  'SARVAM_APP_ID',
+  'SARVAM_APP_VERSION',
+  'SARVAM_CONNECTION_ID',
+  'SARVAM_AGENT_PHONE_NUMBER',
+];
+
+/** Names (never values) of the calling settings that are empty. */
+export const missingSamvaadConfig = () =>
+  REQUIRED_ENV.filter((k) => !String(process.env[k] ?? '').trim());
+
 export const isSamvaadConfigured = () =>
   Boolean(
     process.env.SARVAM_OUTBOUND_API_KEY &&
@@ -78,15 +97,21 @@ export const isSamvaadConfigured = () =>
     SARVAM_APP_ID &&
     SARVAM_APP_VERSION &&
     SARVAM_CONNECTION_ID &&
-    SARVAM_AGENT_PHONE_NUMBER &&
-    API_BASE_URL,
+    SARVAM_AGENT_PHONE_NUMBER,
   );
+
+/**
+ * Without a public API_BASE_URL (a local server) the call is still placed,
+ * just with no webhook: the phone rings, but its outcome and summary never
+ * reach us, so the CheckinCall stays "dialing". Fine for testing calls.
+ */
+export const hasCallWebhook = () => /^https:\/\//.test(String(API_BASE_URL ?? '').trim());
 
 const authHeaders = () => {
   const apiKey = process.env.SARVAM_OUTBOUND_API_KEY;
   if (!isSamvaadConfigured()) {
     throw new Error(
-      'Check-in calling is not configured on the server (missing one of SARVAM_OUTBOUND_API_KEY / SARVAM_ORG_ID / SARVAM_WORKSPACE_ID / SARVAM_APP_ID / SARVAM_APP_VERSION / SARVAM_CONNECTION_ID / SARVAM_AGENT_PHONE_NUMBER / API_BASE_URL)',
+      'Check-in calling is not configured on the server (missing one of SARVAM_OUTBOUND_API_KEY / SARVAM_ORG_ID / SARVAM_WORKSPACE_ID / SARVAM_APP_ID / SARVAM_APP_VERSION / SARVAM_CONNECTION_ID / SARVAM_AGENT_PHONE_NUMBER)',
     );
   }
   // apps.sarvam.ai (this outbound-calling product) authenticates with
@@ -106,11 +131,16 @@ async function readJsonOrThrow(response, action) {
     // the generic message below using the raw text instead.
   }
   if (!response.ok) {
-    const message =
+    const base =
       body?.error?.message ||
       body?.message ||
       raw ||
       `Sarvam outbound request failed (${response.status})`;
+    // Sarvam's 422s say "Invalid Parameter" up front and name the field only
+    // in the details; keep them, or the saved reason can't say what was wrong.
+    const details =
+      body?.error?.details ?? body?.details ?? body?.detail ?? body?.errors ?? body?.error?.errors;
+    const message = details ? `${base}: ${JSON.stringify(details).slice(0, 400)}` : base;
     logger.error(action, { action, status: response.status, error: message });
     // Tagged so callers can tell "Sarvam said no" (a 503 to the app) from
     // a bug on our side.
@@ -179,39 +209,46 @@ export const startCheckinCall = async (user) => {
       agent_variables: {
         // Always sent, even blank: an omitted variable falls back to the agent's
         // own default, and a stale test default would greet the wrong name.
-        user_name: user.name || '',
-        expected_period_date: user.expectedPeriodDate || '',
-        period_timing: describePeriodTiming(user.expectedPeriodDate, callDate),
-        last_cycle_summary: user.lastCycleSummary || '',
+        user_name: cleanAgentVariable(user.name, 60),
+        expected_period_date: cleanAgentVariable(user.expectedPeriodDate, 40),
+        period_timing: cleanAgentVariable(
+          describePeriodTiming(user.expectedPeriodDate, callDate),
+          200,
+        ),
+        last_cycle_summary: cleanAgentVariable(user.lastCycleSummary),
         call_date: callDate,
         call_weekday: weekdayOf(callDate),
-        call_reason: user.callReason || 'scheduled',
-        cycle_context: user.cycleContext || '',
-        recent_log: user.recentLog || '',
-        last_call_summary: user.lastCallSummary || '',
-        gender: user.gender || 'female',
+        call_reason: cleanAgentVariable(user.callReason || 'scheduled', 40),
+        cycle_context: cleanAgentVariable(user.cycleContext),
+        recent_log: cleanAgentVariable(user.recentLog),
+        last_call_summary: cleanAgentVariable(user.lastCallSummary),
+        gender: cleanAgentVariable(user.gender || 'female', 40),
         user_auth_token: issueCallToken(user.id),
       },
     },
     user_config: {
       user_phone_number: userPhoneNumber,
     },
-    webhook_config: {
-      url: `${API_BASE_URL}/api/voice-agent/checkin-call/webhook`,
-      // Echoed back verbatim in the webhook payload — the only way to
-      // correlate a call outcome back to this user (Sarvam's attempt_id
-      // isn't ours to look up by). userId alone isn't trusted for anything
-      // sensitive though: Sarvam documents no webhook signature/HMAC
-      // scheme, so anyone who could guess/obtain a userId could otherwise
-      // forge a webhook call for them. callToken (issueWebhookToken, the
-      // same signed-JWT pattern as issueCallToken but with its own longer
-      // TTL — see WEBHOOK_TOKEN_TTL) is what checkinCallWebhook actually
-      // verifies against.
-      metadata: {
-        userId: String(user.id),
-        callToken: issueWebhookToken(user.id, callDate, user.callId),
-      },
-    },
+    ...(hasCallWebhook()
+      ? {
+          webhook_config: {
+            url: `${API_BASE_URL}/api/voice-agent/checkin-call/webhook`,
+            // Echoed back verbatim in the webhook payload — the only way to
+            // correlate a call outcome back to this user (Sarvam's attempt_id
+            // isn't ours to look up by). userId alone isn't trusted for anything
+            // sensitive though: Sarvam documents no webhook signature/HMAC
+            // scheme, so anyone who could guess/obtain a userId could otherwise
+            // forge a webhook call for them. callToken (issueWebhookToken, the
+            // same signed-JWT pattern as issueCallToken but with its own longer
+            // TTL — see WEBHOOK_TOKEN_TTL) is what checkinCallWebhook actually
+            // verifies against.
+            metadata: {
+              userId: String(user.id),
+              callToken: issueWebhookToken(user.id, callDate, user.callId),
+            },
+          },
+        }
+      : {}),
   };
 
   const response = await fetch(outboundCallUrl(), {
@@ -232,7 +269,7 @@ export const startCheckinCall = async (user) => {
       connectionId: SARVAM_CONNECTION_ID,
       agentPhoneNumber: SARVAM_AGENT_PHONE_NUMBER,
       userPhoneNumber,
-      webhookUrl: payload.webhook_config.url,
+      webhookUrl: payload.webhook_config?.url ?? null,
     });
   }
 

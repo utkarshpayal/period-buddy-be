@@ -65,7 +65,7 @@ scheduled one — don't take that as evidence the scheduler itself is fine).
 | Job | Endpoint | Header | Env var | Cadence | Code |
 |---|---|---|---|---|---|
 | Recurring check-in calls | `POST /api/voice-agent/checkin-call/scheduler-tick` | `X-Scheduler-Secret` | `CHECKIN_CALL_SCHEDULER_SECRET` | **Every 1 minute** (needs minute-of-day precision — see `checkinCallTime`) | `src/utils/checkinCallScheduler.js` |
-| Period/ovulation reminders + daily nudge, and completing consultations 3 h past their slot that nobody closed | `POST /api/notifications/daily-tick` | `X-Scheduler-Secret` | `NOTIFICATION_SCHEDULER_SECRET` | **Once a day** (day-level precision only) | `src/utils/dailyNotificationScheduler.js`, `completeOverdueConsultations` in `src/utils/consultationLifecycle.js` (hourly in-process) |
+| Automatic cycle notifications (period coming / due / late, fertile window, phase tips, symptom heads-up, health alerts, daily log; `utils/autoNotifications.js`), and completing consultations 3 h past their slot that nobody closed | `POST /api/notifications/daily-tick` | `X-Scheduler-Secret` | `NOTIFICATION_SCHEDULER_SECRET` | **Every hour** (each person gets theirs at their own local time) | `src/utils/dailyNotificationScheduler.js`, `completeOverdueConsultations` in `src/utils/consultationLifecycle.js` (hourly in-process) |
 
 Both are safe to invoke more often than needed — each guards itself against
 double-firing the same reminder/call (`checkinCallLastFiredDateKey`,
@@ -97,11 +97,11 @@ aws scheduler create-schedule \
     }
   }'
 
-# Once a day — reminders/nudge (pick a UTC hour that lands sensibly for
-# your user base's timezones, e.g. 03:00 UTC ≈ 8:30am IST)
+# Every hour — automatic notifications go out at each person's own local
+# time, so the tick must run hourly (claims make repeats safe)
 aws scheduler create-schedule \
   --name period-buddy-daily-notification-tick \
-  --schedule-expression "cron(0 3 * * ? *)" \
+  --schedule-expression "cron(5 * * * ? *)" \
   --flexible-time-window '{"Mode": "OFF"}' \
   --target '{
     "Arn": "arn:aws:scheduler:::http-invoke",

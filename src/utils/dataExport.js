@@ -4,6 +4,7 @@ import CycleSettings from '../models/CycleSettings.js';
 import CheckinCall from '../models/CheckinCall.js';
 import Habit from '../models/Habit.js';
 import HabitCompletion from '../models/HabitCompletion.js';
+import ForestGarden from '../models/ForestGarden.js';
 import ForestLog from '../models/ForestLog.js';
 import Consultation from '../models/Consultation.js';
 import ConsultationMessage from '../models/ConsultationMessage.js';
@@ -14,6 +15,7 @@ import RewardTransaction from '../models/RewardTransaction.js';
 import ScreeningAssessment from '../models/ScreeningAssessment.js';
 import QaChatSession from '../models/QaChatSession.js';
 import SupportTicket from '../models/SupportTicket.js';
+import SymptomRecord from '../models/SymptomRecord.js';
 import BlogReader from '../models/BlogReader.js';
 import SchemeApplication from '../models/SchemeApplication.js';
 import Partner from '../models/Partner.js';
@@ -81,6 +83,8 @@ export const buildDataExport = async (userId) => {
     comments,
     waitlists,
     supportTickets,
+    symptomRecords,
+    forestGarden,
     blogReads,
     reelLikes,
     reelSaves,
@@ -113,6 +117,8 @@ export const buildDataExport = async (userId) => {
       .select('-assignee -replies.authorId -adminEmailDelivered')
       .sort({ createdAt: 1 })
       .lean(),
+    SymptomRecord.find({ userId }).select('-userId').sort({ onsetDate: 1 }).lean(),
+    ForestGarden.find({ userId }).select('-userId').lean(),
     BlogReader.find({ userId }).select('-userId').lean(),
     ReelLike.find({ userId }).select('-userId').sort({ createdAt: 1 }).lean(),
     ReelSave.find({ userId }).select('-userId').sort({ createdAt: 1 }).lean(),
@@ -136,6 +142,7 @@ export const buildDataExport = async (userId) => {
     cycle: { settings: all(cycleSettings), logs: all(cycleLogs) },
     habits: { habits: all(habits), completions: all(habitCompletions) },
     forest: all(forest),
+    forestGarden: all(forestGarden),
     rewards: all(rewards),
     documents: { files: documentsOut, chats: all(documentChats) },
     aiChats: all(aiChats),
@@ -149,6 +156,7 @@ export const buildDataExport = async (userId) => {
     notifyMeLists: all(waitlists),
     notifications: all(notifications),
     supportTickets: all(supportTickets),
+    bodyMapSymptoms: all(symptomRecords),
     blogReads: all(blogReads),
     reels: { likes: all(reelLikes), saves: all(reelSaves), comments: all(reelComments) },
     signedInDevices: sessions,

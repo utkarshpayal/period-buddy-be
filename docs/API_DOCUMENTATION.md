@@ -369,6 +369,8 @@ Blog payload:
 
 Blog `category` is one of `general`, `health`, `lifestyle`, `beauty` (any case; defaults to `general`, anything else is a `400`). `readTimeMinutes` is not accepted: it is computed from `content` (~200 words a minute, at least 1) on every create and update.
 
+**Rich text.** Blog `content`, Q&A `answer`, health issue `guide`/`symptoms`/`causes`/`treatment`/`prevention`/`whenToSeeDoctor` and guide `extendedGuide` items are written by the admin's rich editor: Markdown (GFM tables) plus `<span data-color="…">`, `<mark data-color="…">`, `<u>` and fenced ` ```chart ` blocks holding chart JSON (`{ type: "bar"|"line"|"pie", title?, caption?, unit?, labels: [], series: [{ name, values: [] }] }`). Colors are palette names (text: rose, violet, blue, teal, green, amber, red, gray; highlight: yellow, pink, green, blue, violet). The API stores the text as sent; the website and app drop any other HTML when rendering. Fields the app shows as lists stay one item per line. Reading time and Q&A matching ignore the markup (`utils/richText.js`), and `POST /api/blogs/:slug/translate` passes chart blocks and image-only paragraphs through untouched and drops the color/underline tags from the translated text.
+
 Video payload:
 
 ```json
@@ -695,6 +697,66 @@ Response:
 
 Soft-deletes the habit.
 
+## Body Map symptoms
+
+Symptoms the person places on the app's Body Map (Care & Insights → Body Map). Self-reported, never a diagnosis. All four routes need a session and only ever see the caller's own records. `note` and `customName` are encrypted at rest. Rules: `src/utils/symptomRecord.js` (unit-tested).
+
+Fields:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `symptomKey` | slug ≤ 40 | The app's day-log tag (`cramps`, `headache`…) or `other` |
+| `customName` | string ≤ 60 | Required when `symptomKey` is `other` |
+| `regionId` | enum | `head`, `face`, `neck`, `chest`, `breast`, `upper_abdomen`, `lower_abdomen`, `pelvis`, `genital`, `upper_back`, `lower_back`, `buttock`, `shoulder`, `arm`, `hand`, `hip`, `thigh`, `knee`, `lower_leg`, `foot`, `whole_body`. Stable ids, mirrored in the app's `lib/bodyRegions.ts` |
+| `side` | `center` \| `left` \| `right` \| `both` | Must be allowed for the region (`BODY_REGIONS`); defaults to the only side, else `both` |
+| `severity` | integer 1–10 | Required |
+| `status` | `active` \| `resolved` | Default `active` |
+| `onsetDate` | `YYYY-MM-DD` | Required, not after the phone's today (`X-Timezone-Offset`) |
+| `resolvedDate` | `YYYY-MM-DD` \| null | Set to today when resolved without one; cleared when re-opened; not before `onsetDate` |
+| `frequency` | `once` \| `occasional` \| `daily` \| `weekly` \| `cyclical` \| `constant` \| null | Optional |
+| `associatedSymptoms` | slug[] ≤ 10 | Deduped; the symptom itself is dropped |
+| `note` | string ≤ 1000 | Optional |
+
+### GET `/api/symptom-records`
+
+Optional `?status=active|resolved`. Newest onset first, at most 500.
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "recordId",
+      "symptomKey": "cramps",
+      "customName": null,
+      "regionId": "lower_abdomen",
+      "side": "left",
+      "severity": 6,
+      "status": "active",
+      "onsetDate": "2026-10-24",
+      "resolvedDate": null,
+      "frequency": "cyclical",
+      "associatedSymptoms": ["backache"],
+      "note": "Worse in the morning",
+      "createdAt": "2026-10-24T08:00:00.000Z",
+      "updatedAt": "2026-10-24T08:00:00.000Z"
+    }
+  ]
+}
+```
+
+### POST `/api/symptom-records`
+
+Payload: the fields above (`symptomKey`, `regionId`, `severity`, `onsetDate` required). Response `201` with the record. `400` with a plain message for invalid input; `409` once the account holds 500 records.
+
+### PATCH `/api/symptom-records/:id`
+
+Any subset of the fields. `{ "status": "resolved" }` marks it resolved today. Response: the updated record; `404` if it isn't the caller's.
+
+### DELETE `/api/symptom-records/:id`
+
+Response: `{ "deleted": true }`; `404` if it isn't the caller's.
+
 ## Wellness Forest
 
 ### GET `/api/forest/status`
@@ -734,6 +796,14 @@ Response: forest log, token award, updated status.
 ### GET `/api/forest/logs?month=YYYY-MM&page=1&limit=20`
 
 Response: paginated forest care logs.
+
+### GET `/api/forest/garden?today=YYYY-MM-DD`
+
+The tree-care game, advanced to now: `moisture`, `nutrients`, `health` (0–100), `soggy`, `mulched`, `mulchHoursLeft`, `hoursUntilThirsty`, `weeds` (`{id,x,z}`), `pests` and `deadLeaves` (`{id,leaf}`, `leaf` a slot 0–999), `compost`, `mulch`, `xp`, `level`, `levelProgress`, `xpToNextLevel`, `xpToday`, `dailyXpCap`, `decorations`, `nextDecoration`, `needs` (`{key,label,urgent}`). Rules: `src/utils/garden.js`.
+
+### POST `/api/forest/garden/action`
+
+Payload: `{ "type": "water" | "weed" | "shoo" | "prune" | "fertilize" | "mulch", "id"?: number, "seconds"?: number, "today"?: "YYYY-MM-DD" }`. Response: `{ garden, xp, message, tokensEarned, status }` (`status` is the forest status after watering, which also counts as the day's water task). `400` with a plain message when refused (already gone, no compost, not hungry, mulch still fresh).
 
 ## Partner Sync
 
@@ -1601,6 +1671,20 @@ Create payload:
 ## Admin Push Notification Broadcasts
 
 All routes require an `admin` JWT. Broadcasts are sent in the background in batches of up to 500 users (one FCM `sendEach` call per batch). Progress is saved after every batch, so a crash or deploy resumes from the last completed batch. Only one audience-wide broadcast can be queued or sending at a time; sends to hand-picked users (`audience: "selected"`) run in a separate lane, so they're never blocked by or stuck behind a large broadcast.
+
+### GET `/api/notifications/preferences`
+The signed-in person's automatic notification settings. Also stamps the phone's timezone (`X-Timezone-Offset`) so they go out at local time. Returns `{ push, cycleSetUp, pregnancyMode, time, reminderDaysBefore, categories: [{ key, label, description, enabled, available, pausedInPregnancy }] }`. Keys: `health_alerts`, `period_late`, `period_upcoming` (= `remindersEnabled`), `period_start`, `fertile_window` (= `ovulationReminder`/`fertilityReminder`), `symptom_heads_up`, `phase_tips`, `daily_log`. `available: false` = an admin turned it off for everyone.
+
+### PUT `/api/notifications/preferences`
+Body, any of: `push` (boolean, = `User.notificationsEnabled`), `time` (`HH:mm`, local), `reminderDaysBefore` (0–10), `categories` (`{ key: boolean }`). Returns the same as GET. `409` when a cycle setting is changed before cycle tracking is set up.
+
+How they're sent: the hourly tick (`POST /api/notifications/daily-tick` or the in-process scheduler) gives each person what's due on their local today once their local time reaches `time` (default 09:00), never after 22:00, at most 2 a day (most important first; the daily log reminder only when nothing else went out). Pregnancy mode pauses all but the daily log reminder. Each has `data.route` (where a tap opens), `data.icon` and `data.autoKey`.
+
+### GET `/api/admin/notifications/automatic`
+Automatic cycle notifications (`utils/autoNotifications.js`), for the Content Studio's Automatic Notifications page. `push.read`. Returns `{ users, pregnancyMode, statsDays, updatedAt, categories: [{ key, label, description, defaultOn, enabled, usersOn, sent, read }] }`: `users` = live accounts with cycle tracking, `enabled: false` = turned off for everyone, `usersOn` = people with it switched on, `sent`/`read` = inbox rows (`data.autoKey`) in the last 7 days and how many were opened. Counts only.
+
+### PUT `/api/admin/notifications/automatic`
+`push.broadcast`. Body `{ key, enabled }`: turns one category on or off for everyone (`AutoNotificationConfig`, audited as `auto_notification.updated`). People's own switches are kept. Returns the same as GET.
 
 ### GET `/api/admin/notifications/audience?audience=all`
 

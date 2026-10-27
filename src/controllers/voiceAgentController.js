@@ -6,6 +6,7 @@ import { withAiSafety } from '../utils/aiSafety.js';
 import { hasUrgentPattern } from '../utils/companionChat.js';
 import {
   isSamvaadConfigured,
+  missingSamvaadConfig,
   startCheckinCall,
   WEBHOOK_TOKEN_SCOPE,
 } from '../utils/samvaadClient.js';
@@ -31,6 +32,7 @@ import {
   checkinDateKey,
   classifyCallOutcome,
   describeCycleContext,
+  failureKindOf,
   localClock,
   localMomentToDate,
   parseTimeOfDay,
@@ -291,13 +293,27 @@ const httpError = (message, status, extra = {}) =>
 const CALLING_UNAVAILABLE_MESSAGE = 'Calling is busy right now. Please try again in a few minutes.';
 
 const CALL_HISTORY_FIELDS =
-  'source dateKey status outcome durationSeconds summary loggedFields retryAt endedAt createdAt';
+  'source dateKey status outcome durationSeconds summary loggedFields retryAt endedAt createdAt failureReason';
+
+const toHistoryRow = ({ failureReason, ...call }) => ({
+  ...call,
+  failureKind:
+    call.status === 'failed' || call.outcome === 'failed' ? failureKindOf(failureReason) : null,
+});
 
 /** Throws the expected, user-fixable reasons a call can't be placed. */
 const loadCallableUser = async (userId) => {
   if (!isSamvaadConfigured()) {
+    // Names only, never values. Shown to the caller outside production so a
+    // local setup says what to fill in.
+    const missing = missingSamvaadConfig();
+    logger.warn(
+      `Check-in calling not configured; missing: ${missing.join(', ') || '(none empty: restart the server)'}`,
+    );
     throw httpError(
-      'Check-in calling is not configured on the server',
+      process.env.NODE_ENV === 'production' || !missing.length
+        ? 'Check-in calling is not configured on the server'
+        : `Check-in calling is not configured on the server (missing ${missing.join(', ')})`,
       HTTP_STATUS.SERVICE_UNAVAILABLE,
     );
   }
@@ -559,7 +575,7 @@ const buildScheduleResponse = async (userId, settings) => {
     time: settings.checkinCallTime || null,
     periodLength: settings.periodLength || 5,
     nextCallAt: nextCallAt ? nextCallAt.toISOString() : null,
-    lastCall: lastCall || null,
+    lastCall: lastCall ? toHistoryRow(lastCall) : null,
     limits: {
       maxCallMinutes: 5,
       manualCallsPerDay: CALL_LIMITS.manualPerDay,
@@ -681,7 +697,9 @@ export const getCheckinCallHistory = async (req, res, next) => {
       .limit(limit)
       .select(CALL_HISTORY_FIELDS)
       .lean();
-    return sendResponse(res, HTTP_STATUS.OK, 'Check-in call history fetched', { calls });
+    return sendResponse(res, HTTP_STATUS.OK, 'Check-in call history fetched', {
+      calls: calls.map(toHistoryRow),
+    });
   } catch (error) {
     next(error);
   }
