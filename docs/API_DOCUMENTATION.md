@@ -1189,6 +1189,17 @@ Referral statuses: portal referrals start at `invited`; admin-recorded leads at 
 | POST | `/api/doctor/referrals` | `{ name, email, specialty?, phone?, note? }`: creates the referral and emails the colleague their invite (returns the referral, status `invited`, plus `inviteEmailDelivered`). 400 self-referral / bad input, 403 program paused, 409 `CANNOT_REFER` (one generic message for "already on Nura" and "already referred", so the portal never reveals who has an account), 429 too many open referrals or the daily limit (`REFERRAL_RATE_LIMIT_MAX`, default 20/day) |
 | DELETE | `/api/doctor/referrals/:id` | Withdraw, only while `submitted` |
 
+### Doctor community answers (role `doctor`)
+
+Gynecologists answer community posts from the Clinician portal. Doctors never see who wrote a post or comment. An answer is a post comment carrying an `expert` block; the app shows it as "Medically verified" with the doctor's name only when `showName` was on, otherwise as "Verified gynaecologist". The post's author gets a `community_reply` notification (`data.route: /community?postId=<id>`). Logic: `controllers/doctorCommunityController.js`, `utils/communityExpert.js` (pure, tested).
+
+| Method | Path | What it does |
+|---|---|---|
+| GET | `/api/doctor/community?view=unanswered\|mine\|all&category=&search=&page=&limit=` | Posts without authors: `{ view, posts: [{ id, title, content, category, tags, attachments, poll?, likeCount, commentCount, expertAnswerCount, answeredByMe, createdAt }], pagination }`. `unanswered` (default) = no gynecologist answer yet, oldest first; `mine` = posts you answered |
+| GET | `/api/doctor/community/:id` | The post plus `comments: [{ id, content, attachments, createdAt, author, expert, isMine }]` (`expert` is null for members) |
+| POST | `/api/doctor/community/:id/answers` | `{ content (≤ 2000), showName? }` → `{ post }`. Notifies the post's author and updates open feeds over the `community` socket room |
+| DELETE | `/api/doctor/community/:id/answers/:commentId` | Remove your own answer → `{ post }` |
+
 ### Clinical Admin (`referrals.read`; writes need `referrals.manage`)
 
 All under `/api/admin/referrals`, every write audited.
@@ -1324,6 +1335,8 @@ Payload:
 `tags` are free-form (the app's "+ Add tag"): each is trimmed, a leading `#` and any character other than letters, digits, spaces, `-` and `_` are removed, and duplicates are dropped ignoring case. At most 5 tags of up to 24 characters each, otherwise `400`.
 
 ### GET `/api/community/:id`
+
+A comment written by a gynecologist (see "Doctor community answers") carries `expert: { verified: true, showName, name, specialty, avatarUrl }` (`name`/`avatarUrl` null unless the doctor shows them), and its `userId` is replaced by that display name. Posts carry `expertAnswerCount`, in the feed too.
 
 Single post with comments.
 

@@ -13,6 +13,12 @@ import {
   normalizeBoolean,
 } from '../utils/apiHelpers.js';
 import { normalizeCommunityTags, sanitizeCommunityTag } from '../utils/communityTags.js';
+import {
+  countExpertAnswers,
+  expertAuthor,
+  isExpertComment,
+  publicExpert,
+} from '../utils/communityExpert.js';
 
 const ANONYMOUS_USER = { firstName: 'Anonymous', lastName: '', profilePicture: null };
 
@@ -60,6 +66,22 @@ const serializePoll = (object, requestingUserId) => {
   };
 };
 
+/**
+ * A gynecologist's answer for clients: `expert` (verified, and the name only
+ * if the doctor chose to show it) stands in for the doctor's own account.
+ */
+export const serializeExpertComment = (comment, requestingUserId) => {
+  const authorId = comment.userId?._id ?? comment.userId;
+  const isOwn = String(authorId) === String(requestingUserId);
+  return {
+    ...comment,
+    id: comment._id,
+    isAnonymous: false,
+    userId: { ...expertAuthor(comment.expert), ...(isOwn ? { isOwn: true } : {}) },
+    expert: publicExpert(comment.expert),
+  };
+};
+
 const serializePost = (
   post,
   user,
@@ -95,6 +117,7 @@ const serializePost = (
   const comments = !includeComments
     ? []
     : (object.comments || []).map((comment) => {
+        if (isExpertComment(comment)) return serializeExpertComment(comment, requestingUserId);
         const commentAuthorId = comment.userId?._id ?? comment.userId;
         const isCommentOwn = String(commentAuthorId) === String(requestingUserId);
 
@@ -122,6 +145,7 @@ const serializePost = (
     userId: resolvedPostUser,
     comments,
     commentsCount: totalCommentCount,
+    expertAnswerCount: object.expertAnswerCount ?? 0,
     likedByMe: likedBy.some((id) => String(id) === String(user?._id)),
     savedByMe: savedPosts.some((id) => String(id) === String(object._id)),
     likedBy: undefined,
@@ -637,6 +661,7 @@ export const deleteComment = async (req, res, next) => {
 
     post.comments.pull({ _id: commentId });
     post.commentCount = post.comments.length;
+    post.expertAnswerCount = countExpertAnswers(post.comments);
     await post.save();
 
     logger.info('community_comment_deleted', {
