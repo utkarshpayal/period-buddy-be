@@ -41,6 +41,8 @@ const DISCHARGES = new Set(['none', 'sticky', 'creamy', 'watery', 'egg-white']);
 // Free-form tags (symptoms/exercise/medication) are short slugs in the app.
 const TAG_MAX = 60;
 const TAG_LIST_MAX = 40;
+// CycleLog.note's limit.
+const NOTE_MAX = 1000;
 
 const tagList = (value) => {
   if (!Array.isArray(value)) return undefined;
@@ -59,6 +61,12 @@ const enumList = (value, allowed) => {
   if (!Array.isArray(value)) return undefined;
   const list = [...new Set(value.filter((v) => allowed.has(v)))];
   return list.length ? list : undefined;
+};
+
+const noteText = (value) => {
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim().slice(0, NOTE_MAX);
+  return text || undefined;
 };
 
 const oneOf = (value, allowed) => (allowed.has(value) ? value : undefined);
@@ -90,6 +98,7 @@ export const sanitizeImportedLog = (raw, todayKey) => {
     symptoms: tagList(raw.symptoms),
     isIntimate: raw.isIntimate === true ? true : undefined,
     sleepHours: numberIn(raw.sleepHours, 0, 24),
+    waterIntake: numberIn(raw.waterIntake, 1, 20000),
     weight: numberIn(raw.weight, 1, 500),
     temperature: numberIn(raw.temperature, 30, 45),
     medication: tagList(raw.medication),
@@ -99,6 +108,7 @@ export const sanitizeImportedLog = (raw, todayKey) => {
     skins,
     discharge: oneOf(raw.discharge, DISCHARGES),
     exercise: tagList(raw.exercise),
+    note: noteText(raw.note),
   };
   // A "none" flow on its own says nothing.
   if (fields.flow === 'none') fields.flow = undefined;
@@ -115,6 +125,7 @@ const SCALAR_FIELDS = [
   'mood',
   'energy',
   'sleepHours',
+  'waterIntake',
   'weight',
   'temperature',
   'digestion',
@@ -129,7 +140,8 @@ const isEmpty = (value) =>
  * The `$set` that merges an imported day into a day already logged in Nura,
  * or null when it adds nothing. What the person logged in Nura wins: the
  * import only fills fields that are empty (a flow of "none" counts as
- * empty), and adds to lists (symptoms, moods…) without removing anything.
+ * empty), adds to lists (symptoms, moods…) without removing anything, and
+ * adds an imported note below the day's own note.
  */
 export const mergeImportedLog = (existing, incoming) => {
   const set = {};
@@ -144,6 +156,14 @@ export const mergeImportedLog = (existing, incoming) => {
     if (merged.length > before.length) set[field] = merged;
   }
   if (incoming.isIntimate && !existing.isIntimate) set.isIntimate = true;
+  // A note is added below the one already there, never replacing it.
+  if (incoming.note) {
+    const before = typeof existing.note === 'string' ? existing.note.trim() : '';
+    if (!before) set.note = incoming.note;
+    else if (!before.includes(incoming.note) && before.length < NOTE_MAX) {
+      set.note = `${before}\n${incoming.note}`.slice(0, NOTE_MAX);
+    }
+  }
   return Object.keys(set).length ? set : null;
 };
 
