@@ -625,6 +625,25 @@ Response:
 }
 ```
 
+### POST `/api/cycle/import`
+
+Day logs exported from another period app. The app reads the Clue or Flo export on the phone (`lib/cycleImport.ts`) and sends plain day logs; the server never sees the other app's file.
+
+```json
+{
+  "source": "clue",
+  "logs": [
+    { "dateKey": "2026-10-01", "flow": "medium", "symptoms": ["cramps"], "moods": ["moodSwings"] }
+  ]
+}
+```
+
+- `source`: `clue` or `flo`. `logs`: 1–5000 days, each with a `dateKey` and any of `flow`, `mood`/`moods`, `energy`, `symptoms`, `isIntimate`, `sleepHours`, `weight`, `temperature`, `medication`, `digestion`/`digestions`, `skin`/`skins`, `discharge`, `exercise`, with the same values as `POST /api/cycle/log`. Anything else (unknown fields or values, notes, invalid or future dates, days with nothing left) is dropped; repeated dates are merged. Today is the caller's local date (`X-Timezone-Offset`).
+- New days are inserted. A day already logged in Nura only gets the fields it's missing (a `none` flow counts as missing) plus new list items; nothing logged in Nura is overwritten, so repeating an import changes nothing.
+- No reward points and no partner notification. `cycleDay`/`phase` are left unset. The tracking streak is recomputed when days were added.
+
+Response: `{ "received": 120, "added": 96, "updated": 4, "unchanged": 18, "skipped": 2 }`.
+
 ### GET `/api/cycle/logs?month=YYYY-MM` / `?year=YYYY`
 
 Optional filters: `month=YYYY-MM` (one month) or `year=YYYY` (a whole year in one request, instead of 12 month calls). `month` wins if both are sent; a malformed value is a 400. With neither, every log is returned.
