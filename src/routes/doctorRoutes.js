@@ -3,6 +3,7 @@ import * as doctorController from '../controllers/doctorController.js';
 import * as twoFactorController from '../controllers/twoFactorController.js';
 import * as walletController from '../controllers/doctorWalletController.js';
 import * as referralController from '../controllers/referralController.js';
+import * as doctorCommunityController from '../controllers/doctorCommunityController.js';
 import { uploadContentMedia } from '../controllers/uploadController.js';
 import { authenticate, authorize } from '../middleware/authMiddleware.js';
 import { requirePermission } from '../middleware/rbac.js';
@@ -306,6 +307,42 @@ router.post('/wallet/methods/:id/default', ...doctorOnly, walletController.makeD
  * @access  Private (doctor)
  */
 router.get('/referrals', ...doctorOnly, referralController.getMyReferrals);
+
+/* ---------------------------------------------------------------------------
+ * Doctor — answer community posts (shown in the app as "Medically verified")
+ * ------------------------------------------------------------------------- */
+
+/**
+ * @route   GET /api/doctor/community
+ * @desc    Community posts, authors hidden (?view=unanswered|mine|all&category=&search=&page=&limit=)
+ * @access  Private (doctor)
+ */
+router.get('/community', ...doctorOnly, doctorCommunityController.listPosts);
+
+/**
+ * @route   GET /api/doctor/community/:id
+ * @desc    One post with its comments, authors hidden
+ * @access  Private (doctor)
+ */
+router.get('/community/:id', ...doctorOnly, doctorCommunityController.getPost);
+
+/**
+ * @route   POST /api/doctor/community/:id/answers
+ * @desc    Answer a post as a verified gynecologist ({ content, showName })
+ * @access  Private (doctor)
+ */
+router.post('/community/:id/answers', ...doctorOnly, doctorCommunityController.answerPost);
+
+/**
+ * @route   DELETE /api/doctor/community/:id/answers/:commentId
+ * @desc    Remove your own answer
+ * @access  Private (doctor)
+ */
+router.delete(
+  '/community/:id/answers/:commentId',
+  ...doctorOnly,
+  doctorCommunityController.deleteAnswer,
+);
 
 /**
  * @route   POST /api/doctor/referrals

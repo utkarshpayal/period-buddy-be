@@ -217,7 +217,16 @@ export const scrubCommunityFootprint = async (userId, { dropReports = false } = 
         },
       },
     },
-    { $set: { commentCount: { $size: '$comments' } } },
+    {
+      $set: {
+        commentCount: { $size: '$comments' },
+        expertAnswerCount: {
+          $size: {
+            $filter: { input: '$comments', cond: { $gt: ['$$this.expert.doctorId', null] } },
+          },
+        },
+      },
+    },
   ]);
 
   await CommunityPost.updateMany(

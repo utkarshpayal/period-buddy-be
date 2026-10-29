@@ -17,6 +17,23 @@ const communityCommentSchema = new mongoose.Schema(
         _id: false,
       },
     ],
+    // Set when a gynecologist answered from the Clinician portal
+    // (doctorCommunityController). Name and specialty are copied at answer
+    // time; the app shows "Verified gynecologist" instead of the name
+    // unless showName is on. utils/communityExpert.js shapes it for clients.
+    expert: {
+      type: new mongoose.Schema(
+        {
+          doctorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor', required: true },
+          name: { type: String, trim: true },
+          specialty: { type: String, trim: true },
+          avatarUrl: { type: String, trim: true },
+          showName: { type: Boolean, default: false },
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 );
@@ -86,6 +103,8 @@ const communityPostSchema = new mongoose.Schema(
     // Denormalized counters (sources of truth live in CommunityLike / Comment collections)
     likeCount: { type: Number, default: 0 },
     commentCount: { type: Number, default: 0 },
+    // Comments with `expert` set (gynecologist answers); 0 = still waiting.
+    expertAnswerCount: { type: Number, default: 0 },
     reportCount: { type: Number, default: 0 },
 
     // Moderation
@@ -114,6 +133,9 @@ communityPostSchema.index({ isActive: 1, createdAt: -1 });
 communityPostSchema.index({ isActive: 1, category: 1, createdAt: -1 });
 communityPostSchema.index({ category: 1, createdAt: -1 });
 communityPostSchema.index({ userId: 1, createdAt: -1 });
+// Clinician portal: "Needs an answer" and "Answered by me".
+communityPostSchema.index({ isActive: 1, expertAnswerCount: 1, createdAt: -1 });
+communityPostSchema.index({ 'comments.expert.doctorId': 1, createdAt: -1 });
 
 communityPostSchema
   .virtual('likes')
