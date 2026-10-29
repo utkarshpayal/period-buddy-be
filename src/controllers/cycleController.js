@@ -13,6 +13,7 @@ import {
   validateDateKey,
   validateMonthKey,
   clientToday,
+  clientTodayKey as requestTodayKey,
 } from '../utils/apiHelpers.js';
 import {
   buildCycleAnalytics,
@@ -24,6 +25,12 @@ import {
 } from '../utils/cycle.js';
 import { loadPredictionLogs } from '../utils/predictionLogs.js';
 import { computeAgeFromDob } from '../utils/companionChat.js';
+import {
+  IMPORT_SOURCES,
+  MAX_IMPORT_DAYS,
+  mergeImportedLog,
+  prepareImport,
+} from '../utils/cycleImport.js';
 
 // Finished cycles needed before a symptom pattern is shown.
 const MIN_SYMPTOM_CYCLES = 3;
@@ -345,6 +352,123 @@ export const saveCycleLog = async (req, res, next) => {
       return sendError(res, error.status, error.message);
     }
     logger.error('cycle_log_save_error', { userId: req.userId, error: error.message });
+    next(error);
+  }
+};
+
+/**
+ * POST /api/cycle/import — Day logs from another period app (Clue, Flo)
+ *
+ * The app reads the other app's export and sends plain day logs. New days
+ * are inserted; a day already logged in Nura only gets the fields it's
+ * missing (utils/cycleImport.js#mergeImportedLog), so nothing the person
+ * logged here is overwritten. Unlike POST /log, an import earns no reward
+ * points and sends no partner notification: it's history, not a new log.
+ * cycleDay/phase are left unset; everything that shows them derives them
+ * from the logs. Safe to repeat: a second import of the same file changes
+ * nothing.
+ */
+export const importCycleLogs = async (req, res, next) => {
+  try {
+    const { source, logs } = req.body ?? {};
+    if (!IMPORT_SOURCES.includes(source)) {
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        `source must be one of: ${IMPORT_SOURCES.join(', ')}`,
+      );
+    }
+    if (!Array.isArray(logs) || logs.length === 0) {
+      return sendError(res, HTTP_STATUS.BAD_REQUEST, 'logs must be a non-empty array');
+    }
+    if (logs.length > MAX_IMPORT_DAYS) {
+      return sendError(
+        res,
+        HTTP_STATUS.BAD_REQUEST,
+        `At most ${MAX_IMPORT_DAYS} days can be imported at once`,
+      );
+    }
+
+    const todayKey = requestTodayKey(req);
+    const { logs: cleaned, invalid } = prepareImport(logs, todayKey);
+
+    const existing = await CycleLog.find({
+      userId: req.userId,
+      dateKey: { $in: cleaned.map((log) => log.dateKey) },
+    })
+      .select(
+        'dateKey flow mood moods energy symptoms isIntimate sleepHours weight temperature medication digestion digestions skin skins discharge exercise',
+      )
+      .lean();
+    const existingByDate = new Map(existing.map((log) => [log.dateKey, log]));
+
+    const inserts = [];
+    const updates = [];
+    let unchanged = 0;
+    for (const log of cleaned) {
+      const current = existingByDate.get(log.dateKey);
+      if (!current) {
+        inserts.push({
+          ...log,
+          userId: req.userId,
+          date: dateFromDateKey(log.dateKey),
+          rewardPoints: 0,
+        });
+        continue;
+      }
+      const set = mergeImportedLog(current, log);
+      if (!set) {
+        unchanged += 1;
+        continue;
+      }
+      updates.push({ updateOne: { filter: { _id: current._id }, update: { $set: set } } });
+    }
+
+    let added = 0;
+    if (inserts.length) {
+      try {
+        added = (await CycleLog.insertMany(inserts, { ordered: false })).length;
+      } catch (error) {
+        // A day logged in the app while the import ran: keep that log, and
+        // count everything else that went in.
+        if (error?.code !== 11000 && error?.name !== 'MongoBulkWriteError') throw error;
+        added = error.insertedDocs?.length ?? error.result?.insertedCount ?? 0;
+        unchanged += inserts.length - added;
+      }
+    }
+    if (updates.length) await CycleLog.bulkWrite(updates, { ordered: false });
+
+    if (added > 0) {
+      const streakWindowStart = new Date();
+      streakWindowStart.setDate(streakWindowStart.getDate() - 730);
+      const recentLogs = await CycleLog.find({
+        userId: req.userId,
+        dateKey: { $gte: streakWindowStart.toISOString().slice(0, 10) },
+      })
+        .select('dateKey')
+        .lean();
+      await User.findByIdAndUpdate(req.userId, {
+        $set: { streakCount: calculateTrackingStreak(recentLogs, todayKey) },
+      });
+    }
+
+    const summary = {
+      received: logs.length,
+      added,
+      updated: updates.length,
+      unchanged,
+      skipped: invalid,
+    };
+    logger.info('cycle_logs_imported', {
+      action: 'cycle_logs_imported',
+      userId: req.userId,
+      source,
+      ...summary,
+    });
+
+    return sendResponse(res, HTTP_STATUS.OK, 'Cycle history imported', summary);
+  } catch (error) {
+    logger.error('cycle_logs_import_error', { userId: req.userId, error: error.message });
     next(error);
   }
 };

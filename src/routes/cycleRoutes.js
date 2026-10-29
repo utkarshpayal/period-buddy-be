@@ -33,6 +33,13 @@ router.get('/predictions', authenticate, cycleController.getPredictions);
 router.post('/log', authenticate, cycleController.saveCycleLog);
 
 /**
+ * @route   POST /api/cycle/import
+ * @desc    Import day logs exported from another period app (Clue, Flo); fills gaps, never overwrites
+ * @access  Private
+ */
+router.post('/import', authenticate, cycleController.importCycleLogs);
+
+/**
  * @route   GET /api/cycle/logs
  * @desc    Get all logs optionally filtered by ?month=YYYY-MM or ?year=YYYY (month wins)
  * @access  Private
