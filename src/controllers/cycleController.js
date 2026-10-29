@@ -397,7 +397,7 @@ export const importCycleLogs = async (req, res, next) => {
       dateKey: { $in: cleaned.map((log) => log.dateKey) },
     })
       .select(
-        'dateKey flow mood moods energy symptoms isIntimate sleepHours weight temperature medication digestion digestions skin skins discharge exercise',
+        'dateKey flow mood moods energy symptoms isIntimate sleepHours waterIntake weight temperature medication digestion digestions skin skins discharge exercise note',
       )
       .lean();
     const existingByDate = new Map(existing.map((log) => [log.dateKey, log]));

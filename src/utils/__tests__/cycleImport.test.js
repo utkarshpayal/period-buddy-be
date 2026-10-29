@@ -14,7 +14,7 @@ test('sanitizeImportedLog keeps known fields and values only', () => {
       digestions: ['bloated'],
       temperature: 99,
       weight: 60,
-      note: 'not imported',
+      note: 'Felt fine',
       rewardPoints: 999,
       userId: 'someone-else',
     },
@@ -29,6 +29,7 @@ test('sanitizeImportedLog keeps known fields and values only', () => {
     weight: 60,
     digestion: 'bloated',
     digestions: ['bloated'],
+    note: 'Felt fine',
   });
 });
 
@@ -96,4 +97,21 @@ test('prepareImport folds repeated dates, sorts, and counts what it dropped', ()
     { dateKey: '2026-10-01', flow: 'light' },
     { dateKey: '2026-10-02', symptoms: ['cramps', 'headache'], flow: 'medium' },
   ]);
+});
+
+test('notes and water come across, and a note never replaces one logged in Nura', () => {
+  const log = sanitizeImportedLog(
+    { dateKey: '2026-10-01', waterIntake: 2000, note: `  ${'a'.repeat(1200)}` },
+    TODAY,
+  );
+  assert.equal(log.waterIntake, 2000);
+  assert.equal(log.note.length, 1000);
+  assert.equal(sanitizeImportedLog({ dateKey: '2026-10-01', waterIntake: 50000 }, TODAY), null);
+
+  const incoming = { dateKey: '2026-10-01', note: 'From Clue: PMS: Yes' };
+  assert.deepEqual(mergeImportedLog({ note: '' }, incoming), { note: 'From Clue: PMS: Yes' });
+  assert.deepEqual(mergeImportedLog({ note: 'Felt fine' }, incoming), {
+    note: 'Felt fine\nFrom Clue: PMS: Yes',
+  });
+  assert.equal(mergeImportedLog({ note: 'Felt fine\nFrom Clue: PMS: Yes' }, incoming), null);
 });
