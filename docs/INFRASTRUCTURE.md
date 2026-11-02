@@ -222,7 +222,7 @@ A second, smaller copy of the backend for testing before release. Created from
 | Uploads bucket | `thenura` (us-east-1) | `nura-stage-uploads-740726746628` (ap-south-1) |
 | Alarms | `nura-prod-*` | `nura-stage-*` (same SNS topic) |
 | Disk snapshots | daily, 7 kept | none yet (tag its volume `Backup=nura-daily` to add it) |
-| Frontends allowed (`ALLOWED_ORIGINS`) | `admin`, `cms`, `thenura.care`, `www.thenura.care` | the same plus `staging.admin.thenura.care`, `staging.cms.thenura.care` |
+| Frontends allowed (`ALLOWED_ORIGINS`) | `thenura.care` and every `*.thenura.care` subdomain (`www`, `admin`, `cms`, `app` = the web app / PWA) | every `*.thenura.care` subdomain |
 
 Staging frontends: `https://staging.admin.thenura.care` and
 `https://staging.cms.thenura.care` (Vercel, `staging` branch). The mobile
@@ -328,7 +328,7 @@ Keep it a single valid JSON object.
 |---|---|
 | Core | `MONGODB_URI`\*, `JWT_SECRET`\* (≥ 32 chars), `JWT_EXPIRE`, `BCRYPT_ROUNDS` |
 | Security & privacy ([SECURITY.md](SECURITY.md)) | `DATA_ENCRYPTION_KEYS`\*\* (the server won't start in production without it; must be the key the data was encrypted with, never a new one), `AI_CONSENT_ENFORCED`, `STAFF_2FA_ENABLED`, `STAFF_COOKIE_AUTH`, `STAFF_SESSION_TTL`, `LOGIN_MAX_FAILURES`, `LOGIN_LOCK_MINUTES`, `ACCOUNT_PURGE_AFTER_DAYS`, `NOTIFICATION_RETENTION_DAYS`, `AUDIT_LOG_RETENTION_DAYS`, `USAGE_RETENTION_DAYS` |
-| URLs / CORS | `API_BASE_URL` (`https://www.backend.thenura.care`: used for email links and the Sarvam webhook), `ALLOWED_ORIGINS` (should be `https://admin.thenura.care,https://cms.thenura.care,https://thenura.care,https://www.thenura.care`; the mobile app sends no Origin and needs no entry; staging uses the pattern `https://*.thenura.care`, which allows every https subdomain), `ADMIN_APP_URL` |
+| URLs / CORS | `API_BASE_URL` (`https://www.backend.thenura.care`: used for email links and the Sarvam webhook), `ALLOWED_ORIGINS` (prod: `https://thenura.care,https://*.thenura.care`; the pattern allows every https subdomain at any depth (`www`, `admin`, `cms`, `app`, the web app / PWA) but not the bare domain, hence the first entry; staging uses `https://*.thenura.care`; the mobile app sends no Origin and needs no entry), `ADMIN_APP_URL` |
 | Email (Resend) | `RESEND_API_KEY`, `MAIL_FROM`, `CONTACT_RECEIVER_EMAIL` |
 | Push (Firebase) | `FIREBASE_SERVICE_ACCOUNT_JSON` |
 | Uploads (S3) | `AWS_S3_BUCKET` (`thenura`), `AWS_REGION` (`us-east-1`, the bucket's region), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
