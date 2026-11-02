@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import logger from './logger.js';
-import User from '../models/User.js';
+import { pruneDeadTokens } from './pushTokens.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -125,6 +125,11 @@ const buildMessage = (token, { title, body, data }) => {
         channelId: ANDROID_CHANNEL_ID,
       },
     },
+    // Browsers (web app / PWA): the app's service worker (public/sw.js)
+    // shows the notification and routes its tap from `data`.
+    webpush: {
+      headers: { Urgency: 'high' },
+    },
     apns: {
       payload: {
         aps: {
@@ -177,10 +182,7 @@ export const sendPushNotification = async (token, { title, body, data }) => {
     // Uninstalled app / rotated token: drop it so we stop sending to it and
     // the admin "has device" counts stay honest.
     if (isDeadTokenError(error)) {
-      await User.updateMany(
-        { notificationToken: token },
-        { $unset: { notificationToken: 1 } },
-      ).catch(() => {});
+      await pruneDeadTokens([token]).catch(() => {});
     }
   }
 };

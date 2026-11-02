@@ -51,6 +51,7 @@ export const buildDataExport = async (userId) => {
   const {
     password: _p,
     notificationToken: _n,
+    webPushTokens: _w,
     googleId: _g,
     sessionsRevokedAt: _s,
     __v,

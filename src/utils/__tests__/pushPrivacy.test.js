@@ -38,3 +38,15 @@ test('splitTokensByPrivacy: groups, dedupes, hidden wins on a shared device', ()
   ];
   assert.deepEqual(splitTokensByPrivacy(users), { open: ['a'], hidden: ['b', 'c'] });
 });
+
+test('splitTokensByPrivacy: browser tokens follow the same rules as the phone', () => {
+  const users = [
+    { notificationToken: 'phone1', webPushTokens: ['web1', 'web2'], ...shows },
+    { webPushTokens: ['web3'] },
+    { webPushTokens: ['web4'], notificationsEnabled: false, ...shows },
+  ];
+  assert.deepEqual(splitTokensByPrivacy(users), {
+    open: ['phone1', 'web1', 'web2'],
+    hidden: ['web3'],
+  });
+});

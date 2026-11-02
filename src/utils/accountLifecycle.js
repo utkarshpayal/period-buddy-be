@@ -420,7 +420,7 @@ export const cancelPendingChangeRequests = (userId, note) =>
 
 /** No more pushes, reminders, or outbound check-in calls. */
 const silenceAccount = async (userId) => {
-  await User.updateOne({ _id: userId }, { $unset: { notificationToken: 1 } });
+  await User.updateOne({ _id: userId }, { $unset: { notificationToken: 1, webPushTokens: 1 } });
   await CycleSettings.updateMany(
     { userId },
     {
@@ -469,6 +469,7 @@ export const softDeleteAccount = async (user) => {
   // its original email instead (see findAccountsByOriginalEmail).
   user.googleId = undefined;
   user.notificationToken = undefined;
+  user.webPushTokens = undefined;
   user.inviteTokenHash = undefined;
   user.inviteTokenExpiresAt = undefined;
   user.$locals.skipPasswordHash = true;
