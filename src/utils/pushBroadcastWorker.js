@@ -2,6 +2,7 @@ import User from '../models/User.js';
 import Notification from '../models/Notification.js';
 import PushBroadcast from '../models/PushBroadcast.js';
 import { sendPushBatch, FCM_MAX_BATCH_SIZE } from './fcm.js';
+import { HAS_PUSH_TOKEN, pruneDeadTokens, pushTokensOf } from './pushTokens.js';
 import { parsePositiveInt } from './apiHelpers.js';
 import { hidesNotificationDetails, pushFor } from './privacy.js';
 import logger from './logger.js';
@@ -54,9 +55,7 @@ export const countAudience = async (audience, userIds) => {
   const [totalUsers, totalWithToken] = await Promise.all([
     User.countDocuments(filter),
     User.countDocuments({
-      ...filter,
-      notificationToken: { $nin: [null, ''] },
-      notificationsEnabled: { $ne: false },
+      $and: [filter, HAS_PUSH_TOKEN, { notificationsEnabled: { $ne: false } }],
     }),
   ]);
   return { totalUsers, totalWithToken };
@@ -73,8 +72,9 @@ export const splitTokensByPrivacy = (users) => {
   const open = new Set();
   const hidden = new Set();
   for (const u of users) {
-    if (u.notificationsEnabled === false || !u.notificationToken) continue;
-    (hidesNotificationDetails(u) ? hidden : open).add(u.notificationToken);
+    if (u.notificationsEnabled === false) continue;
+    const target = hidesNotificationDetails(u) ? hidden : open;
+    for (const token of pushTokensOf(u)) target.add(token);
   }
   for (const token of hidden) open.delete(token);
   return { open: [...open], hidden: [...hidden] };
@@ -158,7 +158,7 @@ const processBroadcast = async (id) => {
       })
         .sort({ _id: 1 })
         .limit(BATCH_SIZE)
-        .select('_id notificationToken notificationsEnabled privacySettings')
+        .select('_id notificationToken webPushTokens notificationsEnabled privacySettings')
         .lean();
 
       if (users.length === 0) {
@@ -198,17 +198,18 @@ const processBroadcast = async (id) => {
         [open, payload],
         [hidden, pushFor(null, payload)],
       ]) {
-        const sent = await sendWithRetry(tokens, message, id);
-        result.successCount += sent.successCount;
-        result.failureCount += sent.failureCount;
-        result.deadTokens.push(...sent.deadTokens);
+        // A user can have a phone plus browsers, so a page of users can be
+        // more than one FCM call's worth of tokens.
+        for (let i = 0; i < tokens.length; i += FCM_MAX_BATCH_SIZE) {
+          const sent = await sendWithRetry(tokens.slice(i, i + FCM_MAX_BATCH_SIZE), message, id);
+          result.successCount += sent.successCount;
+          result.failureCount += sent.failureCount;
+          result.deadTokens.push(...sent.deadTokens);
+        }
       }
 
       if (result.deadTokens.length > 0) {
-        await User.updateMany(
-          { notificationToken: { $in: result.deadTokens } },
-          { $unset: { notificationToken: 1 } },
-        );
+        await pruneDeadTokens(result.deadTokens);
       }
 
       broadcast = await PushBroadcast.findOneAndUpdate(

@@ -139,6 +139,10 @@ const userSchema = new mongoose.Schema(
     state: { type: String, trim: true },
     language: { type: String, trim: true, default: 'en' },
     notificationToken: { type: String, trim: true },
+    // Browser (web app / PWA) FCM tokens, newest last, at most
+    // MAX_WEB_PUSH_TOKENS (utils/pushTokens.js). Separate from
+    // notificationToken so signing in on the web never silences the phone.
+    webPushTokens: { type: [String], default: undefined },
 
     // Subscription
     subscriptionPlan: {

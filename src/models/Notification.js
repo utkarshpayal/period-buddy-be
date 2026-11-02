@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import User from './User.js';
 import { sendPushNotification } from '../utils/fcm.js';
+import { pushTokensOf } from '../utils/pushTokens.js';
 import logger from '../utils/logger.js';
 import { pushFor } from '../utils/privacy.js';
 
@@ -47,29 +48,22 @@ notificationSchema.index({ userId: 1, createdAt: -1 });
 notificationSchema.post('save', async function (doc) {
   try {
     const user = await User.findById(doc.userId).select(
-      'notificationToken notificationsEnabled isActive deletedAt privacySettings',
+      'notificationToken webPushTokens notificationsEnabled isActive deletedAt privacySettings',
     );
     // notificationsEnabled is the app's Profile → Notifications toggle. The
     // in-app row is still saved; only the device push is skipped. A
     // suspended/deleted account's device never gets a push either.
-    if (
-      user &&
-      user.isActive &&
-      !user.deletedAt &&
-      user.notificationToken &&
-      user.notificationsEnabled !== false
-    ) {
+    if (user && user.isActive && !user.deletedAt && user.notificationsEnabled !== false) {
       // "Hide notification details" (on unless the person turned it off):
       // a locked phone shows neutral text, the details stay in the app's
       // notification list. Tapping still opens the right screen (data).
-      await sendPushNotification(
-        user.notificationToken,
-        pushFor(user, {
-          title: doc.title,
-          body: doc.body,
-          data: { notificationId: String(doc._id), type: doc.type, ...(doc.data || {}) },
-        }),
-      );
+      // Every device: the phone and any browsers with web push on.
+      const message = pushFor(user, {
+        title: doc.title,
+        body: doc.body,
+        data: { notificationId: String(doc._id), type: doc.type, ...(doc.data || {}) },
+      });
+      await Promise.all(pushTokensOf(user).map((token) => sendPushNotification(token, message)));
     }
   } catch (error) {
     logger.error('notification_push_send_failed', {

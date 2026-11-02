@@ -29,7 +29,8 @@ import {
 import { verifyGoogleIdToken } from '../utils/googleAuth.js';
 import logger from '../utils/logger.js';
 import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
-import { buildLogoutTokenFilter } from '../utils/logoutToken.js';
+import { buildLogoutTokenFilter, MAX_FCM_TOKEN_LENGTH } from '../utils/logoutToken.js';
+import { addWebPushToken, isWebTokenRequest } from '../utils/pushTokens.js';
 import {
   isSuspended,
   notifySuspendedLoginAttempt,
@@ -646,6 +647,13 @@ export const logout = async (req, res, next) => {
     if (filter) {
       try {
         await User.updateOne(filter, { $unset: { notificationToken: 1 } });
+        // A browser logging out sends its own web push token the same way.
+        if (filter.notificationToken) {
+          await User.updateOne(
+            { _id: req.userId },
+            { $pull: { webPushTokens: filter.notificationToken } },
+          );
+        }
       } catch (err) {
         logger.warn('logout_token_unset_failed', { userId: req.userId, error: err?.message });
       }
@@ -844,7 +852,10 @@ export const logoutAll = async (req, res, next) => {
     await revokeAllSessions(req.userId, 'logout_all');
     clearSessionCookie(res);
     disconnectUser(req.userId);
-    await User.updateOne({ _id: req.userId }, { $unset: { notificationToken: 1 } });
+    await User.updateOne(
+      { _id: req.userId },
+      { $unset: { notificationToken: 1, webPushTokens: 1 } },
+    );
     return sendResponse(res, HTTP_STATUS.OK, 'Signed out of every device');
   } catch (error) {
     next(error);
@@ -960,6 +971,22 @@ export const updateFcmToken = async (req, res, next) => {
     const token = typeof req.body.token === 'string' ? req.body.token.trim() : '';
     if (!token) {
       return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Token is required');
+    }
+
+    // A browser (web app / PWA) token goes in its own list, so signing in on
+    // the web never replaces the phone's token. See utils/pushTokens.js.
+    if (isWebTokenRequest(req.body)) {
+      if (token.length > MAX_FCM_TOKEN_LENGTH) {
+        return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Token is too long');
+      }
+      const webUser = await addWebPushToken(req.userId, token);
+      if (!webUser) {
+        return sendError(res, HTTP_STATUS.NOT_FOUND, ERROR_MESSAGES.USER_NOT_FOUND);
+      }
+      logger.info('web_push_token_updated', { userId: req.userId });
+      return sendResponse(res, HTTP_STATUS.OK, 'Web push token updated successfully', {
+        notificationToken: token,
+      });
     }
 
     // A device token belongs to one install. If another account previously

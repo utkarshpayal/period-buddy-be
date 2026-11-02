@@ -13,6 +13,7 @@ import {
 } from '../utils/apiHelpers.js';
 import { recordAudit, AUDIT_ACTIONS } from '../utils/auditLog.js';
 import { isFcmReady, sendPushNotification } from '../utils/fcm.js';
+import { pushTokensOf } from '../utils/pushTokens.js';
 import { uploadBufferToS3 } from '../utils/s3.js';
 import { assertAllowedUpload } from '../utils/fileValidation.js';
 import {
@@ -100,13 +101,14 @@ export const getAudienceCount = async (req, res, next) => {
 };
 
 const RECIPIENT_FIELDS =
-  'firstName lastName email phone role profilePicture notificationToken notificationsEnabled';
+  'firstName lastName email phone role profilePicture notificationToken webPushTokens notificationsEnabled';
 
-const toRecipient = ({ notificationToken, notificationsEnabled, ...u }) => ({
+const toRecipient = ({ notificationToken, webPushTokens, notificationsEnabled, ...u }) => ({
   ...u,
-  // "Can receive a push": has a registered device and hasn't turned
-  // notifications off in the app.
-  hasDevice: Boolean(notificationToken) && notificationsEnabled !== false,
+  // "Can receive a push": has a registered device (phone or browser) and
+  // hasn't turned notifications off in the app.
+  hasDevice:
+    pushTokensOf({ notificationToken, webPushTokens }).length > 0 && notificationsEnabled !== false,
 });
 
 /**
@@ -192,10 +194,11 @@ export const sendTestNotification = async (req, res, next) => {
     if (!email) return sendError(res, HTTP_STATUS.BAD_REQUEST, 'Email is required');
 
     const user = await User.findOne({ email }).select(
-      '_id notificationToken notificationsEnabled privacySettings',
+      '_id notificationToken webPushTokens notificationsEnabled privacySettings',
     );
     if (!user) return sendError(res, HTTP_STATUS.NOT_FOUND, 'No user with that email');
-    if (!user.notificationToken) {
+    const tokens = pushTokensOf(user);
+    if (tokens.length === 0) {
       return sendError(
         res,
         HTTP_STATUS.BAD_REQUEST,
@@ -213,18 +216,20 @@ export const sendTestNotification = async (req, res, next) => {
     // Same rule as every other push: a person who hides notification details
     // gets the neutral text, and the admin is told so.
     const detailsHidden = hidesNotificationDetails(user);
-    const messageId = await sendPushNotification(
-      user.notificationToken,
-      pushFor(user, {
-        title: msg.title,
-        body: msg.body,
-        data: {
-          type: 'system',
-          test: 'true',
-          ...pushData.data,
-        },
-      }),
+    const message = pushFor(user, {
+      title: msg.title,
+      body: msg.body,
+      data: {
+        type: 'system',
+        test: 'true',
+        ...pushData.data,
+      },
+    });
+    // Every device: the phone and any browsers with web push on.
+    const messageIds = await Promise.all(
+      tokens.map((token) => sendPushNotification(token, message)),
     );
+    const messageId = messageIds.find(Boolean);
     if (!messageId) {
       return sendError(res, HTTP_STATUS.BAD_GATEWAY, 'Firebase rejected the notification');
     }

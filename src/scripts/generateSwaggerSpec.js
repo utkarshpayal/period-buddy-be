@@ -711,7 +711,8 @@ function getSamplePayload(p) {
     return { email: 'jane@example.com', code: '123456' };
   }
   if (p === '/api/auth/fcm-token') {
-    return { fcmToken: 'firebase_cloud_messaging_device_token' };
+    // platform: 'web' only for a browser (web app / PWA) token.
+    return { token: 'firebase_cloud_messaging_device_token', platform: 'web' };
   }
   if (p === '/api/cycle/settings') {
     return {
