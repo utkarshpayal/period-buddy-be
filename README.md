@@ -21,12 +21,13 @@ Each domain has its own router under `/api/<domain>`:
 - **Accounts:** email/OTP + Google sign-in, JWT auth, account suspension and deletion
 - **Cycle tracking:** logs, settings, predictions, insights, health reports
 - **Partner & Period Buddy:** partner linking/view, buddy matching, chat, nominations
-- **Care:** gynaecologist consultations (booking, chat, payments), symptom checker, health issues
+- **Care:** gynaecologist consultations (booking, chat, payments), symptom checker, health issues, screening
+- **Video calls:** consultation and Period Buddy calls on a self-hosted Jitsi server (JWT join tokens; setup in [`infra/jitsi/`](infra/jitsi/README.md))
 - **AI:** chat assistant, document upload + OCR + Q&A, speech-to-text/text-to-speech, outbound "Buddy" check-in phone calls (all via Sarvam AI)
-- **Content & community:** blogs, guides, reels, Q&A, community posts, government schemes
-- **Engagement:** habits, forest/rewards, reminders, push notifications, newsletter
+- **Content & community:** blogs (incl. a public sitemap), guides, reels, Q&A, community posts, circles, wellbeing decks, Gen-Z pack, government schemes and scheme applications
+- **Engagement:** habits, forest/rewards, reminders, push notifications, newsletter, contact form, support tickets
 - **Subscriptions:** per-feature paywall, plans, coupons, Cashfree payments
-- **Admin Workspace:** staff roles/permissions, approval workflow, audit log, push broadcasts
+- **Admin Workspace:** staff roles/permissions, approval workflow, audit log, push broadcasts, clinical finance (doctor commission, wallets, Cashfree Payouts), gynac referrals, HR letters with e-signing, company files
 - **App CMS:** remote app layout (feature tiles, home sections, theme, promo banners) for the separate The-Nura-CMS portal
 
 Full endpoint reference: [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md).
@@ -49,6 +50,33 @@ Check it: `curl http://localhost:5000/health/ready`.
 Every other key in [`.env.example`](.env.example) (Firebase, S3, Resend,
 Cashfree, Sarvam, Google…) is optional locally. Without it, that feature logs
 instead of calling the service (e.g. emails are logged, pushes are mocked).
+
+### Environment variables
+
+[`.env.example`](.env.example) documents every variable with comments; this is a
+map of the names only. In production `DATA_ENCRYPTION_KEYS` is required (the
+server refuses to start without it), and `RESEND_API_KEY` is needed for email.
+
+| Area | Variables |
+|---|---|
+| Core | `MONGODB_URI`, `PORT`, `NODE_ENV`, `APP_ENV`, `LOG_LEVEL`, `API_BASE_URL`, `ADMIN_APP_URL`, `PUBLIC_SITE_URL`, `ALLOWED_ORIGINS`, `SWAGGER_ENABLED` |
+| Auth & sessions | `JWT_SECRET`, `JWT_EXPIRE`, `STAFF_SESSION_TTL`, `STAFF_2FA_ENABLED`, `STAFF_COOKIE_AUTH`, `LOGIN_MAX_FAILURES`, `LOGIN_LOCK_MINUTES`, `TEST_LOGIN_EMAILS`, `BCRYPT_ROUNDS`, `OTP_EXPIRY_MINUTES`, `GOOGLE_{WEB,IOS,ANDROID,EXPO}_CLIENT_ID` |
+| Privacy & retention | `DATA_ENCRYPTION_KEYS`, `AI_CONSENT_ENFORCED`, `ACCOUNT_PURGE_AFTER_DAYS`, `NOTIFICATION_RETENTION_DAYS`, `AUDIT_LOG_RETENTION_DAYS`, `USAGE_RETENTION_DAYS` |
+| Rate limits | `RATE_LIMIT_ENABLED`, `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS`, `AUTH_RATE_LIMIT_*`, `OTP_EMAIL_RATE_LIMIT_*`, `SUPPORT_RATE_LIMIT_*`, `SUPPORT_TICKET_HOURLY_MAX`, `REEL_COMMENT_RATE_LIMIT_*`, `REFERRAL_RATE_LIMIT_*`, `VIDEO_JOIN_RATE_LIMIT_*`, `VIDEO_ATTENDANCE_RATE_LIMIT_MAX` |
+| Email (Resend) | `RESEND_API_KEY`, `MAIL_FROM`, `CONTACT_RECEIVER_EMAIL`, `SUPPORT_EMAIL` |
+| Storage (S3) | `AWS_REGION`, `AWS_S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_PUBLIC_URL_BASE`, `AWS_S3_KMS_KEY_ID`, `COMPANY_ASSETS_PUBLIC_ORIGIN` |
+| AI (Sarvam) | `SARVAM_API_KEY`, `SARVAM_CHAT_MODEL`, `SARVAM_TTS_MODEL`, `SARVAM_TTS_SPEAKER`, `SARVAM_STT_MODEL`, `SARVAM_TRANSLATE_MODEL` |
+| Check-in calls (Sarvam outbound) | `SARVAM_OUTBOUND_API_KEY`, `SARVAM_ORG_ID`, `SARVAM_WORKSPACE_ID`, `SARVAM_APP_ID`, `SARVAM_APP_VERSION`, `SARVAM_CONNECTION_ID`, `SARVAM_AGENT_PHONE_NUMBER`, `SAMVAAD_CALL_TOKEN_TTL`, `SAMVAAD_WEBHOOK_TOKEN_TTL` |
+| Schedulers & push | `ENABLE_IN_PROCESS_SCHEDULER`, `CHECKIN_CALL_SCHEDULER_SECRET`, `NOTIFICATION_SCHEDULER_SECRET`, `FIREBASE_SERVICE_ACCOUNT_JSON`, `PUSH_BROADCAST_BATCH_SIZE`, `PUSH_BROADCAST_BATCH_DELAY_MS` |
+| Payments (Cashfree) | `CASHFREE_APP_ID`, `CASHFREE_SECRET_KEY`, `CASHFREE_ENV`, `CASHFREE_RETURN_URL_BASE`, `CASHFREE_AUTO_REFUNDS`, `CASHFREE_PAYOUT_CLIENT_ID`, `CASHFREE_PAYOUT_CLIENT_SECRET`, `CASHFREE_PAYOUT_PUBLIC_KEY`, `CASHFREE_PAYOUT_ENV` |
+| Video (Jitsi) | `JITSI_DOMAIN`, `JITSI_APP_ID`, `JITSI_APP_SECRET`, `JITSI_AUDIENCE`, `JITSI_TOKEN_TTL_SECONDS`, `CONSULTATION_JOIN_EARLY_MINUTES`, `CONSULTATION_JOIN_GRACE_MINUTES`, `CONSULTATION_DEFAULT_DURATION_MINUTES` |
+| HR letters | `COMPANY_NAME`, `HR_DOCUMENT_PREFIX`, `HR_NOTIFY_EMAIL` |
+| Testing only | `FOREST_FULL_HISTORY_EMAILS` |
+
+Not yet in `.env.example` but read by the code: `OTP_EMAIL_RATE_LIMIT_WINDOW_MS`,
+`OTP_EMAIL_RATE_LIMIT_MAX`, `PUSH_BROADCAST_BATCH_SIZE`, `PUSH_BROADCAST_BATCH_DELAY_MS`,
+`SAMVAAD_WEBHOOK_TOKEN_TTL`, `SARVAM_TRANSLATE_MODEL`, plus legacy fallbacks
+`FRONTEND_URL` (for `ADMIN_APP_URL`) and `SMTP_USER` (for `CONTACT_RECEIVER_EMAIL`).
 
 ### Scripts
 
@@ -79,13 +107,15 @@ src/
 ├── config/           DB, WebSocket, permissions, subscription route registry
 ├── utils/            Integrations (FCM, S3, Cashfree, Sarvam, Resend…) and helpers
 ├── constants/ enums/ templates/
-├── scripts/          One-off/maintenance scripts (Swagger generator…)
+├── assets/           Fonts, brand mark and HR letter PDF templates
+├── scripts/          One-off/maintenance scripts: Swagger generator, createSuperAdmin,
+│                     encryptExistingData, migrations, demo seeders (run with `node src/scripts/<file>.js`)
 └── docs/             Swagger UI + generated OpenAPI spec
 docs/                 Project documentation (see below)
 Dockerfile            Production image
 buildspec.yml         CI/CD build steps (AWS CodeBuild)
 appspec.yml, deploy/  Deploy hooks + docker-compose/Caddy run on the server
-infra/                AWS setup guide, IAM policies, scripts, CloudFormation
+infra/                AWS setup guide, IAM policies, scripts, CloudFormation, self-hosted Jitsi
 ```
 
 ---
@@ -106,6 +136,13 @@ infra/                AWS setup guide, IAM policies, scripts, CloudFormation
 | [infra/README.md](infra/README.md) | Step-by-step AWS setup |
 
 ---
+
+## Docker
+
+```bash
+docker build -t nura-api .
+docker run --env-file .env -p 5000:5000 nura-api
+```
 
 ## Deployment
 
